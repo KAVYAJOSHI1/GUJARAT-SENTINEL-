@@ -1,65 +1,67 @@
-# Team Specification — PRAJIN
+# Implementation Specification — PRAJIN (Tracking & Correlation)
 
-## 1. Developer Profile & Module Ownership
-- **Member Name**: Prajin
-- **Module Ownership**: Vehicle Tracking + Cross-Camera Event Correlation
+---
+
+### 1. Ownership
+- **Developer Name**: Prajin
+- **Module Ownership**: Multi-Object Vehicle Tracking & Cross-Camera Event Correlation
 - **Git Branch**: `feature/prajin-tracking`
 
 ---
 
-## 2. Core Responsibilities
-- Implement multi-object tracking within individual camera feeds using **ByteTrack** (or OpenCV Kalman filter tracker).
-- Maintain local bounding box track IDs (`Track #1`, `Track #2`) per camera stream to prevent redundant ANPR OCR execution on every frame.
-- Implement **Cross-Camera Vehicle Identity Correlation**: map local track IDs to global normalized registration numbers (`GJ01AB1234`).
-- Calculate vehicle trajectory statistics: `first_seen`, `last_seen`, `total_sightings`, camera-to-camera movement sequence, and estimated transit times.
+### 2. Objective
+Implement local object tracking using ByteTrack within individual camera video feeds to maintain persistent track IDs, associate tracked vehicles with detected license plates, deduplicate redundant frame events, and construct cross-camera vehicle movement trajectories sorted chronologically by registration plate string.
 
 ---
 
-## 3. Tracking & Correlation Paradigm
+### 3. Responsibilities
+- Integrate ByteTrack multi-object tracker with Kavya's YOLO vehicle bounding box outputs.
+- Maintain persistent camera-local track IDs (`Track #1`, `Track #2`) per stream.
+- Bind extracted license plate numbers (`GJ01AB1234`) to local ByteTrack IDs.
+- Deduplicate detection events to ensure a single vehicle track emits only 1 consolidated event (instead of 30 events per second).
+- Implement the **Cross-Camera Correlation Engine**: sort detections across different cameras chronologically by normalized registration plate string.
 
+---
+
+### 4. Features to Implement
+1. **ByteTrack Integration**: Wrap ByteTrack Python library to accept YOLO bounding boxes `(x1, y1, x2, y2, score, class)`.
+2. **Track Life-Cycle Manager**: Handle track creation, track update across frames, and track termination when vehicle leaves camera FOV.
+3. **Track ↔ Plate Assocation**: Associate plate OCR candidate strings with the overlapping vehicle bounding box track ID.
+4. **Local Event Deduplicator**: Suppress duplicate AI event emissions for an active track until consensus plate is finalized.
+5. **Cross-Camera Trajectory Builder**: Correlate events sharing plate string `GJ01AB1234` into a chronological camera trajectory (`CAM-007 ➔ CAM-013 ➔ CAM-021 ➔ CAM-034`).
+
+---
+
+### 5. Module Architecture
 ```text
-Camera-Local Frame Stream
-   │
-   ▼
-ByteTrack Multi-Object Tracker ──> Assign Local Track ID (e.g., Track #42)
-   │
-   ▼
-Track ↔ Plate Association     ──> Bind Plate "GJ01AB1234" to Track #42
-   │
-   ▼
-Single Event Per Vehicle Track ──> Emit 1 Consolidated Event per Track (Not 30 frames/sec)
-   │
-   ▼
-Global Correlation Engine      ──> Aggregate "GJ01AB1234" Detections Across CAM-007 ➔ CAM-013 ➔ CAM-021
+YOLO Bounding Boxes & Video Frames
+ │
+ ▼
+ByteTrack Tracker ──► Assign Camera-Local Track ID (e.g. Track #42)
+ │
+ ▼
+Track ↔ Plate Matcher ──► Bind Plate String "GJ01AB1234" to Track #42
+ │
+ ▼
+Local Event Deduplicator ──► Emit 1 Consolidated Event per Completed Track
+ │
+ ▼
+Cross-Camera Correlation ──► Sort Detections by Plate String + Timestamp Across Cameras
 ```
 
-> [!IMPORTANT]
-> **Global Identity Rule**: Camera-local track IDs (e.g. `Track #42`) must **NEVER** be treated as global vehicle identities. Global cross-camera identity relies exclusively on the normalized registration plate string.
+---
+
+### 6. Technologies
+- **Python**: 3.10+
+- **Tracker**: ByteTrack (`bytetrack` / `lap`)
+- **Spatial Indexing**: NumPy, SciPy (Linear Sum Assignment / Hungarian Algorithm)
 
 ---
 
-## 4. Technology Stack
-- **Tracker**: ByteTrack / BoT-SORT / OpenCV MultiTracker
-- **Language**: Python 3.10+
-- **Data Structures**: Spatial-Temporal Indexing, Priority Queues
-
----
-
-## 5. Interface & Data Contracts
-
-### 5.1 Inputs
-- Vehicle detection bounding boxes from Kavya's YOLO model.
-- Timestamped plate extraction events from Kavya's OCR engine.
-
-### 5.2 Outputs
-- Enriched Event Objects containing `track_id`, `trajectory_points`, `first_seen`, `last_seen`, and camera sequence arrays sent to Vanshal's backend.
-
----
-
-## 6. Expected Directory Layout (`ai/tracking/`)
+### 7. Folder Structure
 ```text
 ai/tracking/
-├── tracker.py           # ByteTrack initialization & frame update
+├── tracker.py           # ByteTrack initialization & frame update wrapper
 ├── track_association.py # Track ID ↔ Plate matching logic
 ├── correlation.py       # Cross-camera timestamp trajectory builder
 └── README.md
@@ -67,22 +69,111 @@ ai/tracking/
 
 ---
 
-## 7. Development Priorities
-1. **Day 1**: Integrate ByteTrack wrapper with YOLO vehicle detection bounding boxes.
-2. **Day 2**: Implement Track ID ↔ ANPR plate association logic.
-3. **Day 3**: Build local track deduplication to avoid event spamming.
-4. **Day 4**: Build cross-camera chronological correlation and transit time calculators.
+### 8. Detailed Implementation Tasks
+1. Install ByteTrack dependencies (`lap`, `cython_bbox`).
+2. Implement `tracker.py` exposing `update_tracker(detections, frame)` returning tracked bounding boxes with persistent IDs.
+3. Implement `track_association.py` using Intersection-over-Union (IoU) to match plate crop bounding boxes to vehicle track bounding boxes.
+4. Implement track termination hook: when a track is lost for $> 30$ consecutive frames, trigger final multi-frame OCR consensus and emit single consolidated AI event.
+5. Implement `correlation.py` backend utility function `build_vehicle_trajectory(plate_number)` querying PostgreSQL `vehicle_events` sorted by `timestamp ASC`.
+6. Calculate trajectory statistics: `first_seen`, `last_seen`, `total_sightings`, and camera transit time intervals.
 
 ---
 
-## 8. Definition of Done (DoD) & Testing Requirements
-- [ ] Local ByteTrack maintains persistent track IDs for vehicles moving across a single camera view.
-- [ ] System emits a single consolidated event when a vehicle passes a camera (rather than firing events every frame).
-- [ ] Searching a plate string correctly correlates records across multiple distinct cameras in sequential order.
-- [ ] Code committed to `feature/prajin-tracking` and verified against `testing`.
+### 9. Input
+- Vehicle bounding boxes from Kavya's YOLO model.
+- License plate OCR candidate strings and bounding boxes.
 
 ---
 
-## 9. Inter-Member Dependencies
-- **Kavya**: Relies on Kavya's YOLO bounding boxes and ANPR OCR plate strings.
-- **Vanshal**: Supplies cross-camera trajectory data to Vanshal's database query services.
+### 10. Output
+- Enriched tracking event objects containing persistent `track_id`.
+- Chronologically ordered trajectory arrays for cross-camera plate queries.
+
+---
+
+### 11. APIs Produced / Supported
+- Internal tracking helper methods used by AI pipeline before posting to `/api/v1/events/ai-detection`.
+- Backend trajectory builder function supporting `GET /api/v1/vehicles/search?plate={plate}`.
+
+---
+
+### 12. Database Interaction
+Queries `vehicle_events` table indexed on `plate_number` and `timestamp`.
+
+---
+
+### 13. Dependencies on Other Members
+- **Kavya**: Depends on YOLO vehicle bounding boxes and ANPR OCR candidate text from Kavya.
+- **Vanshal**: Supplies cross-camera trajectory data structures to Vanshal's FastAPI vehicle search endpoints.
+
+---
+
+### 14. Integration Contract
+Must maintain global identity strictly via normalized registration plate strings as specified in `docs/ARCHITECTURE.md` Section 10.
+
+---
+
+### 15. Error Handling & Edge Cases
+- **Occlusion / Lost Track**: If a vehicle is temporarily occluded and assigned a new local Track ID (`Track #45`), global identity remains unified by matching the same plate string `GJ01AB1234`.
+- **Out-of-Order Frame Telemetry**: Sort events explicitly by PTS `timestamp ASC` during cross-camera trajectory reconstruction.
+- **Multiple Vehicles with Unreadable Plates**: Track IDs maintain visual separation even if plates are obscured.
+
+---
+
+### 16. Testing Requirements
+- Unit test IoU association between vehicle bounding box and plate crop bounding box.
+- Test cross-camera correlation logic with out-of-order event timestamps to verify correct sorting.
+
+---
+
+### 17. Performance Requirements
+- ByteTrack processing latency $< 5$ ms per frame.
+- Cross-camera trajectory query execution $< 50$ ms for 1,000+ historical events.
+
+---
+
+### 18. Day 1 Plan
+Setup ByteTrack Python wrapper and test local tracking on test video clip.
+
+---
+
+### 19. Day 2 Plan
+Implement Track ID ↔ Plate crop IoU association logic.
+
+---
+
+### 20. Day 3 Plan
+Implement local track deduplication hook (emit 1 event per track completion).
+
+---
+
+### 21. Day 4 Plan
+Build cross-camera trajectory builder function and verify integration against `testing`.
+
+---
+
+### 22. Definition of Done (DoD)
+- [ ] ByteTrack maintains persistent local track IDs for vehicles across continuous camera views.
+- [ ] Single consolidated event is emitted per vehicle track (preventing event spam).
+- [ ] Searching a plate string returns chronologically sorted sightings across different cameras.
+- [ ] Code committed to `feature/prajin-tracking` and verified on `testing`.
+
+---
+
+### 23. Deliverables
+- ByteTrack integration wrapper source code (`ai/tracking/`).
+- Cross-camera correlation trajectory builder utility.
+
+---
+
+### 24. What NOT to do
+- Do NOT treat camera-local Track IDs (e.g. `Track #42`) as global vehicle identities across different cameras.
+- Do NOT run heavy AI re-identification models on every frame during the initial PoC.
+- Do NOT push directly to `main`.
+
+---
+
+### 25. Merge Checklist
+- [ ] Local ByteTrack tracking verified on test stream
+- [ ] Cross-camera trajectory sorting verified
+- [ ] PR opened from `feature/prajin-tracking` to `testing`

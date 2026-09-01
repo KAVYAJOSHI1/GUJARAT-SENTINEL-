@@ -1,178 +1,160 @@
-# SENTINEL — System Architecture Specification
+# SENTINEL — Master System Architecture & Technical Blueprint
 
 ## Gujarat Police Innovation Hackathon 2026
 **Platform**: Sentinel CCTV Integration & Video Analytics Platform  
-**Architecture Paradigm**: Hybrid Architecture (Models 1–5 Integration)
+**System Type**: Hybrid Multi-Departmental CCTV Intelligence Engine  
+**Target Scale**: Proof-of-Concept (~50 Cameras) ➔ Statewide Deployment (~80,000 Cameras)
 
 ---
 
-# 1. Executive Summary & Vision
+# 1. Problem Statement
 
-SENTINEL is an enterprise-grade, modular, vendor-neutral CCTV intelligence and video analytics platform engineered to onboard multi-departmental government CCTV feeds, execute real-time AI computer vision (Vehicle Detection, ANPR, OCR, Tracking), correlate vehicle detections across heterogeneous camera grids, cross-reference detections against law enforcement watchlists, and provide interactive GIS visualization and investigative telemetry for state security operations.
+Modern law enforcement and urban traffic management across Gujarat face severe operational hurdles due to fragmented video surveillance infrastructure:
 
-The platform is designed to seamlessly scale from an initial **~50 camera proof-of-concept (PoC)** to a statewide infrastructure spanning **~80,000 cameras**.
+- **Fragmented Departmental Silos**: Separate camera deployments operated by Traffic Police, City Police, Municipal Corporations, Smart City authorities, Highways, and Ports without unified visibility.
+- **Heterogeneous Vendors & Hardware**: Mixed camera vendors (Hikvision, Dahua, Axis, Hanwha, CP Plus) with disparate native Video Management Systems (VMS) like Milestone and Genetec.
+- **Codec & Protocol Disparities**: Ingestion across H.264, H.265, MJPEG, RTSP, WebRTC, WHEP, and HLS protocols.
+- **Storage Isolation**: Local NVR/DVR storage without central indexing, forcing manual physical video retrieval during criminal investigations.
+- **Lack of Real-Time Vehicle Intelligence**: Inability to track suspect vehicles chronologically across multiple camera views or cross-reference detections against law enforcement watchlists in real-time.
+- **Scalability Barriers**: Legacy architectures fail when scaling from local city intersections to a statewide grid of ~80,000 cameras.
 
 ---
 
-# 2. Master System Architecture Flow
+# 2. Reference Model Strategy (Hybrid Architecture)
+
+To resolve these challenges, SENTINEL combines the core strengths of **Reference Models 1 through 5** into a single, cohesive **Hybrid Architecture**:
+
+```text
+                     REFERENCE MODELS INTEGRATION MATRIX
+                     
+┌──────────────────────────┐    ┌──────────────────────────┐    ┌──────────────────────────┐
+│   Model 1: Registry      │    │  Model 2: Unified View   │    │ Model 3: VMS Federation  │
+│  - PostGIS Spatial Reg.  │ ──>│  - Operator Command Hub  │ ──>│  - Protocol Abstraction  │
+│  - Department Metadata   │    │  - Real-Time AI Overlay  │    │  - RTSP/WebRTC/HLS Norm. │
+└──────────────────────────┘    └──────────────────────────┘    └──────────────────────────┘
+             │                                                               │
+             ▼                                                               v
+┌──────────────────────────┐                                    ┌──────────────────────────┐
+│ Model 4: Central AI Engine│ <───────────────────────────────── │   Model 5: Hybrid Scale  │
+│  - Watchlist Matching    │                                    │  - Edge/Regional Nodes   │
+│  - Vehicle Route Engine  │                                    │  - Kafka Event Pipeline  │
+└──────────────────────────┘                                    └──────────────────────────┘
+```
+
+### Why the Hybrid Model is Superior
+1. **Model 1 (Registry + GIS)** provides spatial metadata and physical camera inventory.
+2. **Model 2 (Unified Viewing)** provides the real-time command dashboard interface.
+3. **Model 3 (VMS Federation)** ensures vendor neutrality by wrapping heterogeneous cameras behind standardized ingestion interfaces (`/api/ingest`).
+4. **Model 4 (Central AI)** executes centralized ANPR consensus, cross-camera correlation, and watchlist matching.
+5. **Model 5 (Edge + Regional Architecture)** provides the roadmap to process streams near the edge, optimizing WAN bandwidth for statewide ~80,000 camera expansion.
+
+---
+
+# 3. Complete System Architecture
 
 ```text
                                 GOVERNANCE & CCTV GRID
                                 (Government Camera Feeds)
-                                           |
-                                           v
+                                           │
+                                           ▼
                                    CAMERA CATALOGUE
-                                           |
-                                           v
+                                           │
+                                           ▼
                                     /api/ingest
-                                           |
-                                           v
+                                           │
+                                           ▼
                                     CAMERA REGISTRY
                                     (PostGIS Metadata)
-                                           |
-                                           v
+                                           │
+                                           ▼
                                     STREAM MANAGER
                                     (RTSP over TCP)
-                                           |
-                                           v
-                                  VIDEO PROCESSING LAYER
-                                           |
-               +---------------------------+---------------------------+
-               |                           |                           |
-               v                           v                           v
+                                           │
+                                           ▼
+                                  VIDEO DECODER LAYER
+                                    (FFmpeg/OpenCV)
+                                           │
+                                           ▼
+                                  AI ANALYTICS PIPELINE
+                                           │
+               ┌───────────────────────────┼───────────────────────────┐
+               ▼                           ▼                           ▼
        VEHICLE DETECTION            PERSON DETECTION            OTHER ANALYTICS
        (YOLOv8 Classifiers)            (Pedestrian)              (Crowd/Motion)
-               |
-               v
+               │
+               ▼
         VEHICLE TRACKING
         (ByteTrack Multi-Object)
-               |
-               v
+               │
+               ▼
         PLATE DETECTION
         (ANPR Region Proposal)
-               |
-               v
+               │
+               ▼
              OCR
         (PaddleOCR Engine)
-               |
-               v
+               │
+               ▼
       VEHICLE REGISTRATION
         (Multi-Frame Consensus)
-               |
-               v
+               │
+               ▼
           EVENT ENGINE
-               |
-      +--------+--------+-----------------------+
-      |                 |                       |
-      v                 v                       v
+               │
+      ┌────────┴────────┬───────────────────────┐
+      ▼                 ▼                       ▼
  PostgreSQL         Watchlist               Evidence
  + PostGIS           Engine                 Storage
   Storage       (Critical Matches)         (MinIO/S3)
-      |                 |                       |
-      |                 v                       v
-      |               ALERT                  Metadata
-      |                 |                       |
-      +--------+--------+                       |
-               |                                |
-               v                                |
-     CROSS-CAMERA CORRELATION  <----------------+
-               |
-      +--------+--------+
-      |                 |
-      v                 v
+      │                 │                       │
+      │                 ▼                       ▼
+      │               ALERT                  Metadata
+      │                 │                       │
+      └────────┬────────┘                       │
+               │                                │
+               ▼                                │
+     CROSS-CAMERA CORRELATION  <────────────────┘
+               │
+      ┌────────┴────────┐
+      ▼                 ▼
      GIS          INVESTIGATION
    MAPPING           CONSOLE
-      |                 |
-      +--------+--------+
-               |
-               v
+      │                 │
+      └────────┬────────┘
+               │
+               ▼
          WEB DASHBOARD
       (React Command Center)
 ```
 
 ---
 
-# 3. Hybrid Architecture Framework (Models 1–5 Integration)
-
-The SENTINEL platform integrates the core advantages of Reference Models 1 through 5:
-
-## Model 1 — Registry & GIS Foundation
-- **Central Camera Registry**: Maintains comprehensive inventory of all camera assets across departments (Police, Traffic, Municipal, Highways).
-- **PostGIS Geospatial Metadata**: Stores precise latitude/longitude, mounting height, lens field of view, bearing angle, and coverage radii.
-- **Health Telemetry**: Tracks real-time status (Online, Offline, Reconnecting, Frame-Drop Rate).
-
-## Model 2 — Unified Viewing & Analytics
-- **Single Pane of Glass**: Aggregates live feeds and operational telemetry into a unified operator dashboard.
-- **Real-Time AI Overlay**: Overlays detection bounding boxes, tracking vectors, and recognized license plates onto video streams.
-- **Instant Event Feed**: Streams automated vehicle detections and critical alerts in real-time.
-
-## Model 3 — VMS Federation & Middleware
-- **Vendor & Codec Neutrality**: Normalizes streams from heterogeneous hardware (Hikvision, Dahua, Axis, Hanwha) and VMS platforms (Milestone, Genetec).
-- **Multi-Protocol Abstraction**: Ingests RTSP, WebRTC, WHEP, and HLS, abstracting physical stream quirks behind standard internal interfaces.
-
-## Model 4 — Central VMS & AI Platform
-- **Central Intelligence Hub**: Ingests visual telemetry from edge feeds to perform centralized ANPR matching and identity tracking.
-- **Watchlist Engine**: Real-time cross-referencing of extracted plate numbers against law enforcement databases.
-- **Vehicle Investigation Suite**: Chronological movement reconstruction, evidence snapshot generation, and audit trail retention.
-
-## Model 5 — Hybrid / Innovative Architecture
-- **Distributed Gateway Nodes**: Supports Regional Gateways and Edge AI devices (NVIDIA Jetson) to run lightweight detection at the edge.
-- **Bandwidth Optimization**: Transmits metadata (JSON events + keyframe crops) over WAN, requesting high-resolution stream clips only upon investigative query.
-- **Scalable Event Bus**: Uses Kafka/Redpanda message brokers for high-throughput event distribution across analytical workers.
-
----
-
-# 4. Team Module Ownership & Boundaries
+# 4. End-to-End Data Flow
 
 ```text
-+------------------------------------------------------------------------+
-|                                RISHIT                                  |
-|                 CCTV Ingestion & Stream Processing                     |
-|            - Catalogue Ingest (/api/ingest) & RTSP/TCP                 |
-|            - PTS Timing, Reconnection Backoff & Health                 |
-+-----------------------------------+------------------------------------+
-                                    |
-                                    v
-+------------------------------------------------------------------------+
-|                                 KAVYA                                  |
-|                          AI + ANPR / OCR                               |
-|            - Pretrained YOLO Vehicle & Plate Detection                 |
-|            - Image Preprocessing & Multi-Frame Consensus OCR           |
-+-----------------------------------+------------------------------------+
-                                    |
-                                    v
-+------------------------------------------------------------------------+
-|                                PRAJIN                                  |
-|               Vehicle Tracking & Cross-Camera Correlation              |
-|            - ByteTrack Local Track IDs & Vehicle Trajectory            |
-|            - Global Plate Identity Correlation across Cameras          |
-+-----------------------------------+------------------------------------+
-                                    |
-                                    v
-+------------------------------------------------------------------------+
-|                                VANSHAL                                 |
-|               Backend + DB + Watchlist + Alert Engine                  |
-|            - FastAPI REST/WS Services, PostgreSQL + PostGIS            |
-|            - Watchlist Lookup, Alert Dispatch, MinIO Evidence          |
-+-----------------------------------+------------------------------------+
-                                    |
-                  +-----------------+-----------------+
-                  |                                   |
-                  v                                   v
-+-----------------------------------+ +-----------------------------------+
-|               ISHA                | |             VISHAKHA              |
-|      Frontend + Main Dashboard    | |     GIS + Investigation + Reports |
-| - React UI & Navigation           | | - Interactive Leaflet/OpenLayers  |
-| - Live Grid & Alert Stream        | | - Vehicle Timeline & GIS Route    |
-+-----------------------------------+ +-----------------------------------+
+Camera ──> Stream ──> Frame ──> Detection ──> Tracking ──> ANPR ──> OCR ──> Event ──> Database ──> Watchlist ──> Alert ──> GIS ──> Investigation
 ```
+
+1. **Camera**: Physical hardware mounted at a road junction or facility.
+2. **Stream**: Live video transmission exposed via RTSP, WebRTC, or HLS.
+3. **Frame**: Decoded image array tagged with a Presentation Time Stamp (PTS).
+4. **Detection**: Bounding box proposals for vehicles (`car`, `truck`, `bus`, `motorcycle`).
+5. **Tracking**: Local persistent track ID (`Track #42`) assigned by ByteTrack across sequential frames.
+6. **ANPR**: License plate region proposal cropped from the vehicle bounding box.
+7. **OCR**: Optical character recognition extracting raw text characters.
+8. **Event**: Multi-frame consensus normalized plate payload emitted to the backend.
+9. **Database**: Spatial-temporal indexing in PostgreSQL + PostGIS.
+10. **Watchlist**: Real-time cross-referencing against blacklisted registration numbers.
+11. **Alert**: Sub-second alert dispatch pushed over WebSockets to operator screens.
+12. **GIS**: Plotting detection pins and animated route polylines on Leaflet maps.
+13. **Investigation**: Chronological journey reconstruction, evidence snapshot review, and PDF report export.
 
 ---
 
-# 5. Government Feed Integration Specifications
+# 5. Government Feed Integration & Sandbox Rules
 
-## 5.1 Catalogue Ingestion Endpoint
-The stream subsystem consumes government camera sources via the standardized endpoint `/api/ingest`:
+## 5.1 Sandbox Endpoint `/api/ingest`
+Stream ingestion reads camera URLs dynamically from `/api/ingest`:
 
 ```json
 {
@@ -191,46 +173,191 @@ The stream subsystem consumes government camera sources via the standardized end
 }
 ```
 
-## 5.2 Stream Protocols & Rules
-1. **RTSP over TCP**: Forced for all AI processing to eliminate packet loss and UDP frame tearing.
-2. **PTS (Presentation Time Stamp) Synchronization**: Frame synchronization relies strictly on PTS timing instead of declared stream FPS.
-3. **Resilience & Non-Fatal Errors**: Decoder join warnings and missing initial keyframes are caught gracefully without crashing the processing loop.
-4. **Exponential Backoff Reconnection Engine**:
-   $$\text{Backoff Interval} = \min(2^n, 30) \text{ seconds}$$
-   Sequence: `2s -> 4s -> 8s -> 16s -> 30s (Max)`
+## 5.2 Stream Protocol Utilization
+```text
+RTSP (over TCP)  ──> Internal AI Analytics & Video Processing
+WebRTC / WHEP    ──> Low-Latency Browser Live View Preview
+HLS              ──> Fallback & Mobile Playback
+```
+
+## 5.3 Technical Ingestion Requirements
+- **RTSP over TCP**: Forced via `-rtsp_transport tcp` to eliminate UDP packet loss and visual artifacting.
+- **PTS Timestamping**: Frame rates are calculated from PTS timestamps; systems must **NEVER** rely on `CAP_PROP_FPS` or wall-clock arrival times.
+- **Decoder Resilience**: Non-fatal decoder join warnings (e.g. missing initial I-frames) are handled without crashing the capture thread.
+- **Exponential Backoff Reconnect**:
+  $$\text{Interval} = \min(2^n, 30) \text{ seconds} \quad (n \in [1, 5] \implies 2\text{s}, 4\text{s}, 8\text{s}, 16\text{s}, 30\text{s})$$
+- **Live Consumption Policy**: Feeds are consumed live-only; no local archiving of full video streams or attempt to publish streams back to government gateways.
 
 ---
 
-# 6. Hero Demonstration Workflow
-
-The primary hackathon demonstration follows an end-to-end vehicle tracking flow:
+# 6. AI Analytics Pipeline Architecture
 
 ```text
-Operator Enters Target Plate: "GJ01AB1234"
-                    │
-                    ▼
-Search Event Index Across All Integrated Cameras
-                    │
-                    ▼
-Generate Chronological Movement Profile:
-  • 10:02:14 AM ➔ CAM-007 (SG Highway)
-  • 10:09:31 AM ➔ CAM-013 (Iscon Cross Road)
-  • 10:18:07 AM ➔ CAM-021 (Pakwan Flyover)
-  • 10:31:22 AM ➔ CAM-034 (Gandhinagar Entry)
-                    │
-                    ▼
-Render Interactive GIS Route & Vector Trajectory
-                    │
-                    ▼
-Display High-Resolution Snapshot Evidence & Plate Crops
-                    │
-                    ▼
-Watchlist Cross-Reference Match ➔ CRITICAL ALERT DISPATCH
+Frame ──> Vehicle Detector (YOLOv8) ──> ByteTrack Tracker ──> Plate Locator ──> Plate Crop ──> Preprocessing ──> PaddleOCR ──> Multi-Frame Voting ──> Event JSON
+```
+
+### 6.1 Mandatory PoC Pipeline
+- **Vehicle Detection**: Pretrained YOLOv8 detector identifying `car`, `motorcycle`, `truck`, `bus`, `auto-rickshaw`.
+- **Vehicle Tracking**: ByteTrack maintaining local track IDs (`Track #42`) within individual camera views.
+- **Plate Detection**: Dedicated license plate detection region proposal model.
+- **OCR Engine**: PaddleOCR extracting characters from preprocessed plate crops (grayscale, contrast stretching, deskewing).
+- **Multi-Frame Consensus**: Voting algorithm across sequential frames of a track to eliminate single-frame OCR misreads.
+
+### 6.2 Optional / Bonus Pipeline Features
+- **Vehicle Re-ID**: Feature vector embedding (ResNet/OSNet) for appearance-based tracking when license plates are obscured.
+- **Pedestrian & Crowd Analytics**: Pedestrian counting and intrusion detection overlays.
+
+---
+
+# 7. Database Architecture (PostgreSQL + PostGIS)
+
+```sql
+-- 1. Cameras Registry Table
+CREATE TABLE cameras (
+    camera_id VARCHAR(64) PRIMARY KEY,
+    name VARCHAR(128) NOT NULL,
+    department VARCHAR(64) NOT NULL,
+    location GEOMETRY(Point, 4326) NOT NULL,
+    rtsp_url TEXT NOT NULL,
+    webrtc_url TEXT,
+    hls_url TEXT,
+    codec VARCHAR(16) NOT NULL DEFAULT 'H.264',
+    status VARCHAR(32) NOT NULL DEFAULT 'ONLINE',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 2. Vehicle Events Table
+CREATE TABLE vehicle_events (
+    event_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    camera_id VARCHAR(64) REFERENCES cameras(camera_id) ON DELETE CASCADE,
+    track_id INT NOT NULL,
+    plate_number VARCHAR(32) NOT NULL,
+    raw_ocr_text VARCHAR(32),
+    confidence FLOAT NOT NULL,
+    vehicle_type VARCHAR(32) NOT NULL,
+    timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+    evidence_path TEXT NOT NULL,
+    plate_crop_path TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 3. Watchlist Table
+CREATE TABLE watchlist (
+    watchlist_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    plate_number VARCHAR(32) UNIQUE NOT NULL,
+    category VARCHAR(64) NOT NULL,
+    priority VARCHAR(16) NOT NULL CHECK (priority IN ('CRITICAL', 'HIGH', 'MEDIUM')),
+    reason TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 4. Alerts Table
+CREATE TABLE alerts (
+    alert_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    event_id UUID REFERENCES vehicle_events(event_id) ON DELETE CASCADE,
+    watchlist_id UUID REFERENCES watchlist(watchlist_id) ON DELETE CASCADE,
+    priority VARCHAR(16) NOT NULL,
+    acknowledged BOOLEAN DEFAULT FALSE,
+    acknowledged_by VARCHAR(64),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Indexes for High-Performance Queries
+CREATE INDEX idx_vehicle_events_plate ON vehicle_events(plate_number);
+CREATE INDEX idx_vehicle_events_timestamp ON vehicle_events(timestamp DESC);
+CREATE INDEX idx_vehicle_events_camera ON vehicle_events(camera_id);
+CREATE INDEX idx_cameras_location ON cameras USING GIST (location);
+```
+
+### Production Partitioning Strategy
+For statewide scaling, `vehicle_events` is range-partitioned monthly by `timestamp`:
+```sql
+CREATE TABLE vehicle_events_2026_09 PARTITION OF vehicle_events
+    FOR VALUES FROM ('2026-09-01') TO ('2026-10-01');
 ```
 
 ---
 
-# 7. Enterprise Scalability (50 to 80,000 Cameras)
+# 8. Tiered Evidence Storage Strategy
+
+> [!IMPORTANT]
+> **Rule**: Raw video clips and snapshot image files must **NEVER** be stored as binary BLOBs inside PostgreSQL.
+
+```text
+AI Event ──► PostgreSQL (Relational Metadata & File References)
+         └──► MinIO / S3 Object Storage (Image Snapshots & Plate Crops)
+```
+
+### Storage Tiers & Retention Policies
+1. **Hot Tier (0–7 Days)**: NVMe SSD storage for instant image snapshot and plate crop rendering.
+2. **Warm Tier (7–30 Days)**: Standard MinIO / S3 Object Storage bucket for ongoing investigations.
+3. **Cold Tier (30+ Days)**: Compressed Glacier object storage / archival storage for long-term legal evidence retention.
+
+---
+
+# 9. Watchlist & Alert Cooldown Engine
+
+```text
+Detected Plate: "GJ01AB1234"
+         │
+         ▼
+Plate String Normalization (Upper, Strip Spaces/Hyphens)
+         │
+         ▼
+Query Watchlist Index
+         │
+    ┌────┴────┐
+    ▼         ▼
+No Match    Match Detected
+    │         │
+    ▼         ▼
+Normal     Check Cooldown Engine (Same Plate + Same Camera within 5 Mins?)
+Event         │
+         ┌────┴────┐
+         ▼         ▼
+        Yes       No
+         │         │
+         ▼         ▼
+      Suppress  Create Alert Record + Dispatch WebSocket Payload
+```
+
+---
+
+# 10. Cross-Camera Vehicle Intelligence
+
+- **Primary Identity**: Normalized license plate registration string (`GJ01AB1234`).
+- **Supporting Identity**: Vehicle visual feature embedding (Color, Make, Model, Re-ID embedding).
+
+> [!WARNING]
+> Camera-local ByteTrack Track IDs (e.g. `Track #42`) are transient to a single camera stream and must **NEVER** be used as global vehicle identities across cameras.
+
+---
+
+# 11. GIS Architecture
+
+- **Engine**: Leaflet.js / OpenLayers on frontend; PostGIS spatial geometry on backend.
+- **Layers**:
+  1. Camera Registry Layer (Online green pins, offline red pins).
+  2. Vehicle Sightings Layer (Chronological sequence numbers 1, 2, 3...).
+  3. Route Trajectory Polyline (Animated direction arrows connecting sightings).
+  4. Alert Overlay (Flashing red markers for critical watchlist matches).
+
+---
+
+# 12. Security Architecture
+
+```text
+User ──(HTTPS/TLS 1.3)──> API Gateway ──(JWT Bearer)──> RBAC Enforcer ──> Microservices ──> PostgreSQL
+```
+
+- **Transport**: TLS 1.3 encryption across REST APIs and WebSockets.
+- **Authentication**: JWT tokens (15-min expiry) with refresh token rotation.
+- **RBAC Roles**: `Admin` (System config), `Investigator` (Vehicle search & reports), `Operator` (Live view & alert acknowledgment).
+- **Audit Trail**: Every vehicle query, watchlist edit, and evidence download is recorded in `audit_logs`.
+
+---
+
+# 13. Statewide Scalability (50 ➔ 80,000 Cameras)
 
 ```text
 +-----------------------+     +-----------------------+     +-----------------------+
@@ -241,44 +368,31 @@ Watchlist Cross-Reference Match ➔ CRITICAL ALERT DISPATCH
 +-----------------------+     +-----------------------+     +-----------------------+
 ```
 
-### Key Scaling Pillars:
-1. **Edge Processing**: Regional gateways run lightweight YOLO detection; frame metadata and plate crops are sent to the central cloud.
-2. **Event-Driven Architecture**: High-volume detections publish to a Kafka message broker, decoupling video ingestion from analytical database writing.
-3. **Tiered Evidence Storage**:
-   - **Hot Storage (0–7 Days)**: Fast SSD NVMe for instant snapshot retrieval.
-   - **Warm Storage (7–30 Days)**: MinIO / Cloud Object Storage.
-   - **Cold Storage (30+ Days)**: Compressed archive / Glacier storage.
+### Statewide Production Architecture Diagram
+```text
+CCTV Cameras (80k) ──► Edge AI Gateways ──► Regional Kafka Bus ──► Central GPU Worker Pools ──► PostGIS Cluster
+```
 
 ---
 
-# 8. Security Architecture
+# 14. Infrastructure Capacity Planning
 
-```text
-User ──(HTTPS)──> API Gateway ──(JWT Auth)──> RBAC Authorization ──> Internal Microservices ──> PostgreSQL
-```
-
-- **Transport Security**: TLS 1.3 encryption across all public REST and WebRTC/RTSP channels.
-- **Authentication**: OAuth2 JWT Bearer tokens with 15-minute expiration and secure refresh cycles.
-- **Role-Based Access Control (RBAC)**:
-  - `Admin`: System configuration, camera onboarding, user management.
-  - `Investigator`: Vehicle search, history reconstruction, report export.
-  - `Operator`: Live view monitoring, alert acknowledgment.
-- **Audit Logging**: Immutable logging of all vehicle searches, watchlist additions, and evidence downloads.
+Hardware sizing depends strictly on benchmark metrics:
+- Resolution (1080p vs 4K)
+- Bitrate (2 Mbps vs 8 Mbps)
+- Ingestion FPS (15 FPS vs 30 FPS)
+- AI Processing Skip Rate (Process every 3rd frame)
+- Model Type (YOLOv8n vs YOLOv8m)
+- GPU Type (NVIDIA T4 vs A100 / Jetson Orin)
 
 ---
 
-# 9. Government Database Integration Readiness
+# 15. Failure Recovery Matrix
 
-To ensure compliance with Gujarat Police infrastructure, SENTINEL implements an **Adapter Architecture** for seamless integration with national/state databases:
-
-```text
-                             SENTINEL PLATFORM
-                                     |
-               +---------------------+---------------------+
-               |                     |                     |
-               v                     v                     v
-         VAHAN ADAPTER       eGujCop ADAPTER        SARTHI ADAPTER
-        (Vehicle Owner)      (Criminal Records)    (Driver Licenses)
-```
-
-In the PoC environment, adapter interfaces query internal representative database tables, seamlessly swappable for production REST/SOAP government endpoints.
+| Failure Mode | Detection Signal | Automated Recovery Strategy |
+| :--- | :--- | :--- |
+| **Camera Disconnect** | RTSP read timeout | Exponential backoff reconnect (`2s -> 4s -> 8s -> 16s -> 30s`) |
+| **Decoder Crash** | FFmpeg exit code $\neq 0$ | Respawn worker thread, skip corrupted frame, resume PTS |
+| **OCR Failure / Blur** | Confidence $< 0.50$ | Discard low-confidence OCR, rely on multi-frame consensus |
+| **Database Disconnect** | DB connection pool error | Cache events in local Redis / memory buffer, flush on reconnect |
+| **MinIO Storage Down** | HTTP 500 on snapshot save | Store snapshot to local scratch disk fallback |
