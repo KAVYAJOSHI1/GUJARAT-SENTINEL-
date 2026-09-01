@@ -190,7 +190,7 @@ Detailed contract schemas are documented in [`docs/API_CONTRACTS.md`](docs/API_C
    ```bash
    git checkout feature/<your-branch-name>
    ```
-2. Develop module features according to your specification in `docs/team/<YOUR_NAME>.md`.
+2. Develop module features according to your execution guide in `DEVELOPER_README.md`.
 3. Test locally using unit tests and mock video samples.
 4. Push your branch and open a Pull Request into `testing`:
    ```bash
