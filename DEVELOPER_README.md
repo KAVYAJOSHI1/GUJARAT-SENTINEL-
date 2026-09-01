@@ -1,126 +1,208 @@
 # DEVELOPER EXECUTION GUIDE — VISHAKHA
 
-## 1. Developer Details
+---
+
+### 1. Developer Details
 - **Developer Name**: Vishakha
 - **Role**: GIS Mapping & Vehicle Investigation Console Engineer
 - **Git Branch**: `feature/vishakha-investigation`
 
 ---
 
-## 2. Mission
-Vishakha is responsible for building the GIS mapping interface and the Hero Feature Vehicle Investigation console (`/investigation`). Officers use this console to query vehicle registration numbers (`GJ01AB1234`), visualize chronological movement trajectories across Gujarat camera junctions, view high-res evidence snapshots, and export PDF/CSV investigative reports.
+### 2. Project Objective
+Build the GIS Mapping and Hero Feature Vehicle Investigation console (`/investigation`) for the **SENTINEL** platform. Enable law enforcement officers to enter a target registration plate (e.g. `GJ01AB1234`), render its chronological trajectory across Gujarat CCTV junctions on a map, view snapshot evidence, and generate downloadable PDF investigation reports.
 
 ---
 
-## 3. Exact Features Owned
-- **Interactive GIS Map (`/map`)**: Leaflet map component with dark-mode tiles, PostGIS camera markers, department filters, and alert overlays.
-- **Vehicle Search Console (`/investigation`)**: Search plate input, date range filters, first-seen/last-seen metrics, and total sighting counters.
-- **Chronological Movement Timeline**: Sighting cards sorted sequentially by timestamp.
-- **Route Trajectory Renderer**: Leaflet polyline vector layer with direction arrows connecting camera coordinates in sequence.
-- **Evidence Viewer Modal**: Modal window displaying snapshot image, cropped plate image, camera name, and confidence score.
-- **PDF/CSV Report Exporter**: Button generating client-side downloadable PDF vehicle history reports.
+### 3. Exact Responsibility
+You own the GIS mapping components (`frontend/src/components/gis/`) and the vehicle investigation screen (`frontend/src/pages/InvestigationPage.jsx`). You are responsible for Leaflet map integration, dark-mode tile rendering, camera marker placement, chronological sighting timeline cards, polyline trajectory vector mapping with direction arrows, evidence snapshot viewer modals, search filters, and client-side PDF/CSV report generation.
 
 ---
 
-## 4. Files You Should Work On
-```text
-frontend/src/
-├── components/gis/
-│   ├── GisMap.jsx
-│   ├── CameraMarker.jsx
-│   ├── RoutePolyline.jsx
-│   ├── EvidenceModal.jsx
-│   └── SightingTimeline.jsx
-├── pages/
-│   ├── MapPage.jsx
-│   └── InvestigationPage.jsx
-├── services/
-│   ├── gisService.js
-│   └── ReportExporter.js
-```
+### 4. Exact Features to Build
+1. **Interactive GIS Map (`/map`)**: Leaflet map component rendering CartoDB dark tiles, PostGIS camera pins, alert overlays, and zoom controls.
+2. **Vehicle Search Console (`/investigation`)**: Search input box supporting plate string lookups (`GJ01AB1234`), date range filters, and sighting metric summaries.
+3. **Vehicle Profile Summary Card**: Display First Seen, Last Seen, Total Sightings, Camera Count, and Alert Trigger counters for queried plate string.
+4. **Chronological Movement Timeline**: Vertical timeline component listing camera sightings sorted sequentially by timestamp (`ASC`).
+5. **Route Trajectory Vector Overlay**: Leaflet polyline layer connecting camera coordinates in order of appearance with directional arrows.
+6. **Evidence Viewer Modal**: Modal window displaying high-res snapshot image, cropped plate image, camera metadata, and OCR confidence.
+7. **Client-Side PDF/CSV Exporter**: Export button invoking jsPDF to compile a structured vehicle movement report.
 
 ---
 
-## 5. Technologies
-- **Map Library**: Leaflet.js / React-Leaflet (`react-leaflet`)
-- **Tile Provider**: CartoDB Dark Matter tiles
-- **Report Generation**: jsPDF (`jspdf`) / HTML2Canvas
-- **Framework**: React.js
+### 5. What NOT to Build
+- Do NOT build main command dashboard stat widgets or navigation header (owned by Isha).
+- Do NOT build AI inference models, YOLO detection, or OCR (owned by Kavya).
+- Do NOT build multi-object tracking algorithms or Re-ID (owned by Prajin).
+- Do NOT build RTSP video ingestion workers or stream decoders (owned by Rishit).
+- Do NOT build database migrations or SQL tables (owned by Vanshal).
 
 ---
 
-## 6. Input
-- **GeoJSON Camera Collection**: `GET /api/v1/cameras/geojson`
+### 6. Technologies
+- **Core Stack**: React 18+ (bootstrapped with Vite)
+- **Map Engine**: Leaflet.js / React-Leaflet (`react-leaflet`, `leaflet`)
+- **Map Tiles**: CartoDB Dark Matter tiles (`https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png`)
+- **Report Generation**: jsPDF (`jspdf`) & HTML2Canvas
+
+---
+
+### 7. Recommended Models / Libraries
+- `leaflet` & `react-leaflet`
+- `leaflet-polylinedecorator` (for route direction arrows)
+- `jspdf`
+- `lucide-react`
+
+---
+
+### 8. Input
+- **GeoJSON Camera Inventory Endpoint**: `GET /api/v1/cameras/geojson`
 - **Vehicle History Search API**: `GET /api/v1/vehicles/search?plate={plate_number}`
-- **Evidence Snapshot API**: `GET /api/v1/vehicles/evidence/{event_id}`
+- **Evidence Snapshot File API**: `GET /api/v1/vehicles/evidence/{event_id}`
 
 ---
 
-## 7. Processing Pipeline
+### 9. Processing Pipeline
 ```text
-1. User enters plate "GJ01AB1234" in Investigation Console
+1. User enters plate string "GJ01AB1234" in Investigation Console
 2. Fetch GET /api/v1/vehicles/search?plate=GJ01AB1234
 3. Parse JSON Response ──► Extract Sightings Array & PostGIS Lat/Long Coordinates
 4. Render SightingTimeline.jsx Cards sorted by Timestamp ASC
-5. Render Leaflet Polyline connecting Camera Coordinates with Direction Arrows
+5. Draw Leaflet Polyline connecting Camera Coordinates with Direction Arrow Overlays
 6. Click Sighting Card ──► Open EvidenceModal.jsx displaying Snapshot & Crop
-7. Click Export Report ──► Invoke jsPDF ReportExporter.js ──► Download PDF File
+7. Click "Export PDF Report" ──► Invoke jsPDF ReportExporter.js ──► Download PDF File
 ```
 
 ---
 
-## 8. Output
-- Interactive GIS map with camera pins and animated polyline trajectory vectors.
-- Searchable investigation timeline view.
-- Downloadable PDF/CSV investigative reports.
+### 10. Output
+- Interactive Leaflet map with PostGIS camera markers and animated route vectors.
+- Searchable vehicle timeline interface.
+- Client-side downloadable PDF vehicle history report (`GJ01AB1234_Report.pdf`).
 
 ---
 
-## 9. API Contract Reference
-All API calls must strictly adhere to **`docs/API_CONTRACTS.md`**:
-- **Vehicle History Schema**: `docs/API_CONTRACTS.md#4-vehicle-history-response-schema`
+### 11. Required API Contract
+Must strictly comply with `testing` integration contracts documented in `docs/API_CONTRACTS.md`:
+- **Vehicle History Response Schema**: `docs/API_CONTRACTS.md#4-vehicle-history-response-schema`
 - **Camera Schema**: `docs/API_CONTRACTS.md#1-camera-object-schema`
 
 ---
 
-## 10. Integration Dependencies
-- **Upstream Providers**:
-  - **Vanshal (`feature/vanshal-backend`)**: Provides PostGIS GeoJSON endpoints and vehicle search trajectory API (`/api/v1/vehicles/search`).
-  - **Prajin (`feature/prajin-tracking`)**: Supplies cross-camera trajectory data structures.
-- **Downstream Consumers**:
-  - **Isha (`feature/isha-frontend`)**: Embeds GIS map component and investigation link inside main command dashboard.
+### 12. Database Interaction
+No direct database interaction. Query Vanshal's PostGIS spatial REST APIs for GeoJSON feature collections and vehicle sighting trajectories.
 
 ---
 
-## 11. Testing Requirements
-- Test Leaflet map rendering with 50+ camera pins.
+### 13. Integration Dependencies
+- **Upstream Providers**:
+  - **Vanshal (`feature/vanshal-backend`)**: Supplies vehicle search trajectory endpoint (`/api/v1/vehicles/search`) and PostGIS GeoJSON feeds.
+  - **Prajin (`feature/prajin-tracking`)**: Supplies cross-camera trajectory data structures.
+- **Downstream Consumers**:
+  - **Isha (`feature/isha-frontend`)**: Isha's main dashboard camera links route directly into your GIS Map view.
+
+---
+
+### 14. Exact Implementation Steps
+1. Create GIS component folder structure (`frontend/src/components/gis/`).
+2. Install `leaflet`, `react-leaflet`, `jspdf`.
+3. Create `GisMap.jsx` initializing Leaflet map container with CartoDB dark tiles centered on Gujarat (Lat `23.0225`, Long `72.5714`).
+4. Build `CameraMarker.jsx` displaying camera status markers.
+5. Create `InvestigationPage.jsx` with search bar and vehicle profile summary card.
+6. Create `SightingTimeline.jsx` rendering chronological sighting cards.
+7. Create `RoutePolyline.jsx` connecting camera coordinates in timestamp order.
+8. Create `EvidenceModal.jsx` displaying full snapshot and cropped plate image.
+9. Implement `ReportExporter.js` generating PDF reports.
+
+---
+
+### 15. Error Handling
+- **Plate Not Found**: Render empty state card "No recorded sightings found for plate GJ01AB1234".
+- **Invalid Plate Format**: Show validation alert "Please enter a valid registration number (e.g. GJ01AB1234)".
+- **Missing Snapshot Image**: Display placeholder image "Evidence snapshot unavailable".
+
+---
+
+### 16. Testing Requirements
+- Test Leaflet map rendering with 50+ camera pins without UI lag.
 - Test route polyline vector rendering with out-of-order timestamps to verify correct spatial connection.
 - Test PDF generation service to ensure clean layout without text truncation.
 
 ---
 
-## 12. Definition of Done (DoD)
-- [ ] GIS map displays camera pins fetched from backend PostGIS GeoJSON.
-- [ ] Searching `GJ01AB1234` renders sequential camera pins connected by polyline arrows.
+### 17. Performance Requirements
+- Map initial render time $< 1.0$ second.
+- Trajectory polyline rendering $< 100$ ms for 20+ camera sightings.
+- Client-side PDF generation $< 2.0$ seconds.
+
+---
+
+### 18. Day 1 Tasks
+Setup Leaflet map component with CartoDB dark tiles, add Gujarat coordinates, render static camera pins from mock GeoJSON data.
+
+---
+
+### 19. Day 2 Tasks
+Build `InvestigationPage` search interface, connect to backend `/api/v1/vehicles/search?plate=GJ01AB1234`, render vehicle profile summary card.
+
+---
+
+### 20. Day 3 Tasks
+Build `SightingTimeline` and `RoutePolyline` components, render vector polyline connecting camera pins with direction arrows.
+
+---
+
+### 21. Day 4 Tasks
+Build `EvidenceModal` snapshot viewer, build `ReportExporter.js` for PDF generation, run integration tests, and optimize map performance.
+
+---
+
+### 22. Definition of Done (DoD)
+- [ ] GIS map accurately renders PostGIS camera markers on dark tiles.
+- [ ] Searching `GJ01AB1234` renders sequential camera pins connected by polyline vector arrows.
+- [ ] Timeline cards list sightings chronologically (`ASC`).
 - [ ] Clicking a sighting card opens evidence modal displaying snapshot image and plate crop.
-- [ ] Client-side PDF exporter generates a clean vehicle history summary report.
+- [ ] PDF report exporter generates a clean vehicle history summary file.
 - [ ] Code committed to `feature/vishakha-investigation` and Pull Request opened to `testing`.
 
 ---
 
-## 13. Git Branching Instructions
+### 23. Git Workflow
 ```bash
 # 1. Work exclusively on your feature branch
 git checkout feature/vishakha-investigation
 
-# 2. Commit changes
-git add .
-git commit -m "feat(gis): build vehicle investigation console and trajectory route map"
+# 2. Add implementation files as you build
+git add frontend/src/components/gis/
 
-# 3. Push to GitHub
+# 3. Commit changes
+git commit -m "feat(gis): implement Leaflet route polyline and investigation search console"
+
+# 4. Push to GitHub
 git push origin feature/vishakha-investigation
 
-# 4. Open Pull Request on GitHub:
+# 5. Open Pull Request on GitHub:
 # feature/vishakha-investigation  ──►  testing (Central Integration Branch)
 # NEVER push directly to main!
 ```
+
+---
+
+### 24. What Must Be Demonstrated Before PR
+1. GIS map displaying 50 camera pins with dark tiles.
+2. Vehicle search for `GJ01AB1234` displaying vehicle profile summary card.
+3. Polyline route vector on map connecting 4 sequential camera sightings with arrows.
+4. Downloadable PDF report generated upon clicking "Export PDF".
+
+---
+
+### 25. Shared Technical Reference
+For central system specifications, hybrid architecture decisions, and database schemas, refer to the integration blueprints on `testing`:
+- `docs/ARCHITECTURE.md`
+- `docs/API_CONTRACTS.md`
+- `docs/TESTING.md`
+
+---
+
+### 26. Final Workspace Rule
+This branch starts with **ONLY** `DEVELOPER_README.md`. As developer Vishakha, you will create the GIS implementation files inside `frontend/src/` as you code. Do NOT commit unnecessary root scaffold files.
