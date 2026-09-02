@@ -7,31 +7,33 @@ logger = logging.getLogger("ImagePreprocessor")
 class ImagePreprocessor:
     """
     Image Preprocessor module for license plate character enhancement.
-    Applies CLAHE, grayscale conversion, Gaussian blurring, and contrast stretching.
+    Applies CLAHE, grayscale conversion, Gaussian blurring, and optimal scaling for OCR.
     """
 
-    def __init__(self, clip_limit: float = 3.0, tile_grid_size: tuple = (8, 8)):
+    def __init__(self, clip_limit: float = 2.5, tile_grid_size: tuple = (8, 8), target_height: int = 48):
         self.clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
+        self.target_height = target_height
 
     def preprocess(self, plate_crop: np.ndarray) -> np.ndarray:
         """
-        Enhance image quality of license plate crop for OCR.
+        Enhance image quality of license plate crop for OCR while standardizing dimensions.
 
         :param plate_crop: BGR or Grayscale crop numpy array
-        :return: Preprocessed BGR or Grayscale image array ready for OCR
+        :return: Preprocessed BGR image array ready for OCR
         """
         if plate_crop is None or plate_crop.size == 0:
             return plate_crop
 
         h, w = plate_crop.shape[:2]
+        if h < 8 or w < 16:
+            return plate_crop
 
-        # Upscale small crops to ensure minimum height for OCR recognition
-        min_height = 80
-        if h < min_height:
-            scale = min_height / float(h)
-            new_w = int(w * scale)
-            new_h = min_height
-            plate_crop = cv2.resize(plate_crop, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
+        # Standardize crop height for fast, high-accuracy OCR inferencing
+        if h != self.target_height:
+            scale = self.target_height / float(h)
+            new_w = min(250, max(60, int(w * scale)))
+            interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_CUBIC
+            plate_crop = cv2.resize(plate_crop, (new_w, self.target_height), interpolation=interp)
 
         # Convert to grayscale
         if len(plate_crop.shape) == 3:

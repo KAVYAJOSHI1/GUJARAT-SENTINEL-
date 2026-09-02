@@ -37,10 +37,15 @@ class OCREngine:
         """
         Perform OCR on license plate image crop.
 
-        :param image: Enhanced license plate BGR/Grayscale crop array
+        :param image: Enhanced license plate BGR crop array
         :return: Dict containing {"raw_text": str, "confidence": float}
         """
         if image is None or image.size == 0:
+            return {"raw_text": "UNKNOWN", "confidence": 0.0}
+
+        h, w = image.shape[:2]
+        # Fast filter for unpromising / tiny crops
+        if h < 12 or w < 24:
             return {"raw_text": "UNKNOWN", "confidence": 0.0}
 
         # 1. Try PaddleOCR
@@ -61,7 +66,7 @@ class OCREngine:
                         avg_conf = sum(conf_scores) / len(conf_scores)
                         return {"raw_text": full_raw_text, "confidence": round(avg_conf, 4)}
             except Exception as e:
-                logger.warning(f"PaddleOCR inference error: {e}")
+                logger.debug(f"PaddleOCR inference exception: {e}")
 
         # 2. Try EasyOCR fallback
         if self.easy_ocr is not None:
@@ -79,7 +84,7 @@ class OCREngine:
                         avg_conf = sum(conf_scores) / len(conf_scores)
                         return {"raw_text": full_raw_text, "confidence": round(avg_conf, 4)}
             except Exception as e:
-                logger.warning(f"EasyOCR inference error: {e}")
+                logger.debug(f"EasyOCR inference exception: {e}")
 
         # 3. Default fallback if image has insufficient clarity
         return {"raw_text": "UNKNOWN", "confidence": 0.0}

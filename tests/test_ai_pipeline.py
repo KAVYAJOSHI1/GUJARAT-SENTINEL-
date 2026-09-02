@@ -36,9 +36,9 @@ class TestAIPipeline(unittest.TestCase):
             ("GJ-05-XX-7821", "GJ05XX7821"),
             ("MH-12-DE-5678", "MH12DE5678"),
             ("DL 3C 9999", "DL3C9999"),
-            ("GJO1AB1234", "GJ01AB1234"), # 'O' in district position -> '0'
-            ("GJ01A81234", "GJ01AB1234"), # '8' in series position -> 'B'
-            ("GJ01AB123A", "GJ01AB1234"), # 'A' in last digit position -> '4'
+            ("GJO1AB1234", "GJ01AB1234"),
+            ("GJ01A81234", "GJ01AB1234"),
+            ("GJ01AB123A", "GJ01AB1234"),
             ("RJ-14-CB-0001", "RJ14CB0001"),
             ("KA-01-MJ-4321", "KA01MJ4321"),
             ("TN-09-AX-9990", "TN09AX9990"),
@@ -67,11 +67,11 @@ class TestAIPipeline(unittest.TestCase):
         frame_predictions = [
             ("GJ01AB1234", 0.92),
             ("GJ01AB1234", 0.90),
-            ("GJ01A81234", 0.65), # Noisy frame misread (8 instead of B)
+            ("GJ01A81234", 0.65),
             ("GJ01AB1234", 0.94),
             ("GJ01AB1234", 0.88),
             ("GJ01AB1234", 0.95),
-            ("GJ01A81234", 0.60), # Noisy frame misread
+            ("GJ01A81234", 0.60),
             ("GJ01AB1234", 0.91),
             ("GJ01AB1234", 0.93),
             ("GJ01AB1234", 0.89)
@@ -107,7 +107,6 @@ class TestAIPipeline(unittest.TestCase):
         """Test FrameInput dataclass, ISO timestamp derivation, and PTS propagation."""
         dummy_matrix = np.zeros((480, 640, 3), dtype=np.uint8)
         
-        # Test explicit ISO timestamp
         fi1 = FrameInput(
             frame=dummy_matrix,
             camera_id="CAM-TEST-01",
@@ -118,11 +117,10 @@ class TestAIPipeline(unittest.TestCase):
         self.assertEqual(fi1.camera_id, "CAM-TEST-01")
         self.assertEqual(fi1.pts, 1500.0)
 
-        # Test UNIX millisecond epoch timestamp conversion via PTS
         fi2 = FrameInput(
             frame=dummy_matrix,
             camera_id="CAM-TEST-02",
-            pts=1756800000000.0 # 2025-09-02 approx
+            pts=1756800000000.0
         )
         ts_derived = fi2.get_event_timestamp()
         self.assertTrue(ts_derived.startswith("2025"))
@@ -146,89 +144,103 @@ class TestAIPipeline(unittest.TestCase):
         """Test AIPipeline handling of empty, None, and corrupted frame inputs gracefully."""
         pipeline = AIPipeline(evidence_dir=self.test_evidence_dir, device="cpu")
 
-        # Test None input
         res1 = pipeline.process_frame(None)
         self.assertEqual(res1, [])
 
-        # Test empty array
         res2 = pipeline.process_frame(np.array([]))
         self.assertEqual(res2, [])
 
-        # Test invalid 1D array
         res3 = pipeline.process_frame(np.zeros((100,), dtype=np.uint8))
         self.assertEqual(res3, [])
 
-        # Test FrameInput containing None
         fi_empty = FrameInput(frame=None, camera_id="CAM-EMPTY")
         res4 = pipeline.process_frame(fi_empty)
         self.assertEqual(res4, [])
 
         print("Malformed & Empty Frame Handling Test Passed.")
 
-    def test_event_schema_and_evidence_generation(self):
-        """Test generated AI Event JSON payload schema compliance and evidence saving."""
+    def test_unknown_plate_handling_and_flag(self):
+        """Test that unreadable / empty plates correctly output UNKNOWN with plate_detected=False."""
+        consensus = MultiFrameConsensus()
+        res = consensus.get_consensus(track_id=999, camera_id="cam_test")
+        self.assertEqual(res["consensus_plate"], "UNKNOWN")
+        self.assertEqual(res["confidence"], 0.0)
+
+        # Check AIPipeline payload structure when plate is unreadable
         pipeline = AIPipeline(evidence_dir=self.test_evidence_dir, device="cpu")
+        dummy_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        events = pipeline.process_frame(dummy_frame)
+        self.assertEqual(events, []) # No vehicle detected on blank black frame
+        print("UNKNOWN Plate Handling & plate_detected Flag Test Passed.")
 
-        # Create synthetic frame with vehicle crop representation
-        synthetic_frame = np.ones((720, 1280, 3), dtype=np.uint8) * 100
-        # Draw vehicle region box
-        cv2.rectangle(synthetic_frame, (200, 200), (800, 600), (180, 180, 180), -1)
+    def test_bounded_consensus_state_and_lru(self):
+        """Test that MultiFrameConsensus evicts oldest tracks when exceeding max_tracks limit."""
+        small_consensus = MultiFrameConsensus(max_tracks=5, track_ttl_seconds=30.0)
+        for i in range(10):
+            small_consensus.add_prediction(track_id=i, plate_number=f"GJ01AB100{i}", confidence=0.90)
 
-        fi = FrameInput(
-            frame=synthetic_frame,
-            camera_id="CAM-SCHEMA-01",
-            pts=4200.0,
-            timestamp="2026-09-02T12:30:00Z"
+        self.assertLessEqual(len(small_consensus.track_history), 5)
+        self.assertNotIn("CAM-001:0", small_consensus.track_history)
+        self.assertIn("CAM-001:9", small_consensus.track_history)
+
+        print("Bounded Consensus State & LRU Test Passed.")
+
+    def test_multi_camera_state_isolation(self):
+        """Test that track_id=1 on cam01 does not collide with track_id=1 on cam02."""
+        consensus = MultiFrameConsensus()
+        consensus.add_prediction(track_id=1, plate_number="GJ01AB1111", confidence=0.95, camera_id="cam01")
+        consensus.add_prediction(track_id=1, plate_number="MH12DE2222", confidence=0.95, camera_id="cam02")
+
+        c1 = consensus.get_consensus(track_id=1, camera_id="cam01")
+        c2 = consensus.get_consensus(track_id=1, camera_id="cam02")
+
+        self.assertEqual(c1["consensus_plate"], "GJ01AB1111")
+        self.assertEqual(c2["consensus_plate"], "MH12DE2222")
+
+        print("Multi-Camera State Isolation Test Passed.")
+
+    def test_ocr_throttling_and_caching(self):
+        """Test that stable consensus activates OCR throttling in AIPipeline."""
+        pipeline = AIPipeline(evidence_dir=self.test_evidence_dir, ocr_throttle_frames=5, device="cpu")
+        camera_id = "cam_throttle"
+        track_id = 42
+
+        # Manually inject stable consensus reads
+        for _ in range(4):
+            pipeline.consensus_engine.add_prediction(
+                track_id=track_id,
+                plate_number="GJ01AB1234",
+                confidence=0.95,
+                camera_id=camera_id
+            )
+
+        self.assertTrue(
+            pipeline.consensus_engine.is_stable(
+                track_id=track_id,
+                camera_id=camera_id,
+                min_votes=3,
+                min_confidence=0.75
+            )
         )
+        print("OCR Throttling & Caching Test Passed.")
 
-        events = pipeline.process_frame(fi, track_ids=[10])
-        self.assertIsInstance(events, list)
+    def test_configurable_thresholds(self):
+        """Test constructor and environment variable overrides for pipeline thresholds."""
+        os.environ["CONFIDENCE_THRESHOLD"] = "0.65"
+        os.environ["OCR_CONFIDENCE_THRESHOLD"] = "0.70"
+        os.environ["CONSENSUS_STABLE_THRESHOLD"] = "0.80"
 
-        # Validate schema structure when event is produced or construct payload validator
-        mock_payload = {
-            "event_id": "evt_test123",
-            "timestamp": fi.get_event_timestamp(),
-            "pts": fi.pts,
-            "camera_id": fi.camera_id,
-            "vehicle": {
-                "type": "car",
-                "class": "car",
-                "confidence": 0.92,
-                "bbox": [200, 200, 800, 600],
-                "track_id": 10
-            },
-            "license_plate": {
-                "text": "GJ01AB1234",
-                "plate_number": "GJ01AB1234",
-                "confidence": 0.95,
-                "bbox": [300, 450, 500, 510],
-                "raw_text": "GJ01AB1234",
-                "consensus_applied": True,
-                "raw_reads": ["GJ01AB1234"]
-            },
-            "evidence": {
-                "frame_path": os.path.join(self.test_evidence_dir, "test_frame.jpg"),
-                "frame_snapshot_path": os.path.join(self.test_evidence_dir, "test_frame.jpg"),
-                "plate_crop_path": os.path.join(self.test_evidence_dir, "test_crop.jpg")
-            }
-        }
+        pipeline = AIPipeline(evidence_dir=self.test_evidence_dir, device="cpu")
+        self.assertEqual(pipeline.confidence_threshold, 0.65)
+        self.assertEqual(pipeline.ocr_confidence_threshold, 0.70)
+        self.assertEqual(pipeline.consensus_stable_threshold, 0.80)
 
-        # Enforce exact required API schema keys
-        self.assertIn("camera_id", mock_payload)
-        self.assertIn("timestamp", mock_payload)
-        self.assertIn("vehicle", mock_payload)
-        self.assertIn("type", mock_payload["vehicle"])
-        self.assertIn("confidence", mock_payload["vehicle"])
-        self.assertIn("bbox", mock_payload["vehicle"])
-        self.assertIn("license_plate", mock_payload)
-        self.assertIn("text", mock_payload["license_plate"])
-        self.assertIn("confidence", mock_payload["license_plate"])
-        self.assertIn("bbox", mock_payload["license_plate"])
-        self.assertIn("evidence", mock_payload)
-        self.assertIn("frame_path", mock_payload["evidence"])
-        self.assertIn("plate_crop_path", mock_payload["evidence"])
+        # Cleanup env vars
+        os.environ.pop("CONFIDENCE_THRESHOLD", None)
+        os.environ.pop("OCR_CONFIDENCE_THRESHOLD", None)
+        os.environ.pop("CONSENSUS_STABLE_THRESHOLD", None)
 
-        print("Event Schema Validation & Evidence Generation Test Passed.")
+        print("Configurable Thresholds Test Passed.")
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,7 +1,6 @@
 import os
 import cv2
 import time
-import json
 import uuid
 import logging
 import requests
@@ -23,6 +22,8 @@ class AIPipeline:
     End-to-End SENTINEL AI Computer Vision Analytics Pipeline.
     Processes video frames, detects vehicles, crops license plates, applies preprocessing,
     runs OCR, normalizes text, computes multi-frame consensus, saves evidence, and dispatches JSON events.
+    Optimized for high-throughput live RTSP streams via smart OCR temporal throttling,
+    bounded multi-camera track memory, and low-latency pre-filtering.
     """
 
     def __init__(
@@ -30,6 +31,9 @@ class AIPipeline:
         backend_url: Optional[str] = None,
         evidence_dir: Optional[str] = None,
         confidence_threshold: Optional[float] = None,
+        ocr_confidence_threshold: Optional[float] = None,
+        consensus_stable_threshold: Optional[float] = None,
+        ocr_throttle_frames: Optional[int] = None,
         device: str = "cpu"
     ):
         """
@@ -40,30 +44,40 @@ class AIPipeline:
         )
         self.evidence_dir = evidence_dir or os.getenv("SENTINEL_EVIDENCE_DIR", "evidence")
 
+        # Configurable Confidence & Throttling Thresholds
         conf_env = os.getenv("CONFIDENCE_THRESHOLD") or os.getenv("SENTINEL_CONFIDENCE_THRESHOLD")
-        if confidence_threshold is not None:
-            self.confidence_threshold = confidence_threshold
-        elif conf_env:
-            try:
-                self.confidence_threshold = float(conf_env)
-            except ValueError:
-                self.confidence_threshold = 0.50
-        else:
-            self.confidence_threshold = 0.50
+        self.confidence_threshold = confidence_threshold or (float(conf_env) if conf_env else 0.50)
+
+        ocr_conf_env = os.getenv("OCR_CONFIDENCE_THRESHOLD")
+        self.ocr_confidence_threshold = ocr_confidence_threshold or (float(ocr_conf_env) if ocr_conf_env else 0.50)
+
+        stable_env = os.getenv("CONSENSUS_STABLE_THRESHOLD")
+        self.consensus_stable_threshold = consensus_stable_threshold or (float(stable_env) if stable_env else 0.75)
+
+        throttle_env = os.getenv("OCR_THROTTLE_FRAMES")
+        self.ocr_throttle_frames = ocr_throttle_frames or (int(throttle_env) if throttle_env else 10)
 
         # Ensure evidence directory exists
         os.makedirs(self.evidence_dir, exist_ok=True)
 
-        logger.info(f"Initializing SENTINEL AI Pipeline components (conf threshold: {self.confidence_threshold})...")
+        logger.info(
+            f"Initializing SENTINEL AI Pipeline (conf_thresh: {self.confidence_threshold}, "
+            f"ocr_thresh: {self.ocr_confidence_threshold}, stable_thresh: {self.consensus_stable_threshold}, "
+            f"ocr_throttle: {self.ocr_throttle_frames})..."
+        )
         self.vehicle_detector = VehicleDetector(conf_threshold=self.confidence_threshold, device=device)
         self.plate_locator = PlateLocator()
         self.preprocessor = ImagePreprocessor()
         self.ocr_engine = OCREngine()
         self.normalizer = PlateNormalizer()
-        self.consensus_engine = MultiFrameConsensus()
+        self.consensus_engine = MultiFrameConsensus(min_confidence_threshold=self.ocr_confidence_threshold)
 
         # In-memory buffer for retry on API unreachability
         self.event_buffer: List[Dict[str, Any]] = []
+
+        # Track OCR throttling counter and saved evidence state: key -> count / filename
+        self.track_ocr_counter: Dict[str, int] = {}
+        self.saved_evidence_tracks: Dict[str, str] = {}
 
         # Performance & Benchmark Statistics
         self.stats = {
@@ -71,6 +85,7 @@ class AIPipeline:
             "processed_frames": 0,
             "total_vehicles": 0,
             "total_detections": 0,
+            "ocr_skipped_count": 0,
             "vehicle_detection_time_ms": 0.0,
             "ocr_time_ms": 0.0,
             "total_pipeline_time_ms": 0.0
@@ -89,7 +104,7 @@ class AIPipeline:
         Process a single video stream frame through the entire SENTINEL AI pipeline.
 
         :param frame_input: Either a FrameInput object or raw BGR numpy ndarray
-        :param camera_id: Identifier of the camera stream
+        :param camera_id: Identifier of the camera stream (multi-camera state isolated)
         :param frame_timestamp: ISO timestamp string or UNIX epoch string
         :param pts: Stream presentation timestamp (PTS)
         :param track_ids: Optional list of ByteTrack IDs matching detected vehicles
@@ -154,6 +169,7 @@ class AIPipeline:
             vehicle_conf = det["confidence"]
             vehicle_bbox = det["bbox"]
             track_id = track_ids[idx] if (track_ids and idx < len(track_ids)) else idx + 1
+            track_key = f"{camera_id}:{track_id}"
 
             # Crop vehicle region
             try:
@@ -174,31 +190,59 @@ class AIPipeline:
             px1, py1, px2, py2 = rel_plate_bbox
             abs_plate_bbox = [vx1 + px1, vy1 + py1, vx1 + px2, vy1 + py2]
 
-            # Step 3: Image Preprocessing
-            enhanced_plate = self.preprocessor.preprocess(plate_crop)
-
-            # Step 4: OCR Engine
-            t_ocr0 = time.time()
-            ocr_res = self.ocr_engine.extract_text(enhanced_plate)
-            t_ocr = (time.time() - t_ocr0) * 1000.0
-            self.stats["ocr_time_ms"] += t_ocr
-
-            raw_text = ocr_res["raw_text"]
-            ocr_conf = ocr_res["confidence"]
-
-            # Step 5: Plate Normalization
-            normalized_plate = self.normalizer.normalize(raw_text)
-
-            # Step 6: Multi-Frame Consensus Voting
-            consensus_res = self.consensus_engine.add_prediction(
+            # Step 3: Check Smart OCR Throttling
+            # If vehicle track already reached a stable consensus plate, throttle expensive OCR calls
+            is_stable = self.consensus_engine.is_stable(
                 track_id=track_id,
-                plate_number=normalized_plate,
-                confidence=ocr_conf
+                camera_id=camera_id,
+                min_votes=3,
+                min_confidence=self.consensus_stable_threshold
             )
-            final_plate = consensus_res["consensus_plate"]
-            final_conf = consensus_res["confidence"]
 
-            # Step 7: Save Evidence Snapshots
+            skip_ocr = False
+            if is_stable:
+                curr_count = self.track_ocr_counter.get(track_key, 0) + 1
+                self.track_ocr_counter[track_key] = curr_count
+                if (curr_count % self.ocr_throttle_frames) != 0:
+                    skip_ocr = True
+
+            if skip_ocr:
+                # Reuse cached stable consensus result
+                self.stats["ocr_skipped_count"] += 1
+                consensus_res = self.consensus_engine.get_consensus(track_id, camera_id=camera_id)
+                final_plate = consensus_res["consensus_plate"]
+                final_conf = consensus_res["confidence"]
+                raw_text = final_plate
+                enhanced_plate = plate_crop
+            else:
+                # Step 4: Image Preprocessing & OCR Engine
+                enhanced_plate = self.preprocessor.preprocess(plate_crop)
+
+                t_ocr0 = time.time()
+                ocr_res = self.ocr_engine.extract_text(enhanced_plate)
+                t_ocr = (time.time() - t_ocr0) * 1000.0
+                self.stats["ocr_time_ms"] += t_ocr
+
+                raw_text = ocr_res["raw_text"]
+                ocr_conf = ocr_res["confidence"]
+
+                # Step 5: Plate Normalization
+                normalized_plate = self.normalizer.normalize(raw_text)
+
+                # Step 6: Multi-Frame Consensus Voting
+                consensus_res = self.consensus_engine.add_prediction(
+                    track_id=track_id,
+                    plate_number=normalized_plate,
+                    confidence=ocr_conf,
+                    camera_id=camera_id
+                )
+                final_plate = consensus_res["consensus_plate"]
+                final_conf = consensus_res["confidence"]
+
+            # Determine whether a valid license plate was successfully recognized
+            plate_detected = bool(final_plate != "UNKNOWN" and final_conf > 0.0)
+
+            # Step 7: Save Evidence Snapshots (Optimized to avoid redundant disk writes per frame)
             ts_str = str(int(time.time()))
             snapshot_filename = f"{camera_id}_{ts_str}_tr{track_id}_{final_plate}.jpg"
             crop_filename = f"{camera_id}_{ts_str}_tr{track_id}_{final_plate}_crop.jpg"
@@ -206,11 +250,19 @@ class AIPipeline:
             snapshot_path = os.path.join(self.evidence_dir, snapshot_filename)
             crop_path = os.path.join(self.evidence_dir, crop_filename)
 
-            try:
-                cv2.imwrite(snapshot_path, frame)
-                cv2.imwrite(crop_path, enhanced_plate)
-            except Exception as e:
-                logger.error(f"Failed to write evidence files: {e}")
+            # Write evidence to disk if new track or readable plate detected
+            evidence_key = f"{track_key}:{final_plate}"
+            if evidence_key not in self.saved_evidence_tracks:
+                try:
+                    cv2.imwrite(snapshot_path, frame)
+                    cv2.imwrite(crop_path, enhanced_plate)
+                    self.saved_evidence_tracks[evidence_key] = snapshot_path
+                except Exception as e:
+                    logger.error(f"Failed to write evidence files: {e}")
+            else:
+                # Use previously saved evidence path for consistency
+                snapshot_path = self.saved_evidence_tracks[evidence_key]
+                crop_path = snapshot_path.replace(".jpg", "_crop.jpg")
 
             # Step 8: Build Structured AI Detection Event JSON Payload
             event_payload = {
@@ -226,13 +278,14 @@ class AIPipeline:
                     "track_id": track_id
                 },
                 "license_plate": {
+                    "plate_detected": plate_detected,
                     "text": final_plate,
                     "plate_number": final_plate,
-                    "confidence": final_conf,
+                    "confidence": final_conf if plate_detected else 0.0,
                     "bbox": abs_plate_bbox,
                     "raw_text": raw_text,
-                    "consensus_applied": len(consensus_res["raw_reads"]) > 1,
-                    "raw_reads": consensus_res["raw_reads"]
+                    "consensus_applied": len(consensus_res.get("raw_reads", [])) > 1,
+                    "raw_reads": consensus_res.get("raw_reads", [])
                 },
                 "evidence": {
                     "frame_path": snapshot_path,
@@ -267,6 +320,7 @@ class AIPipeline:
             "processed_frames": self.stats["processed_frames"],
             "total_vehicles_detected": self.stats["total_vehicles"],
             "total_ai_events_generated": self.stats["total_detections"],
+            "ocr_skipped_count": self.stats["ocr_skipped_count"],
             "avg_vehicle_detection_ms": round(avg_yolo_ms, 2),
             "avg_ocr_ms": round(avg_ocr_ms, 2),
             "avg_pipeline_latency_ms": round(avg_total_ms, 2),
