@@ -64,6 +64,11 @@ class CameraRecord:
     hls_url: Optional[str] = None          # NOT YET in either confirmed source
     raw: Dict[str, Any] = field(default_factory=dict)  # original payload, for audit
 
+    @property
+    def rtsp_url(self) -> Optional[str]:
+        """Alias for stream_url for backwards compatibility."""
+        return self.stream_url
+
 
 @dataclass
 class FrameEnvelope:

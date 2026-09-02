@@ -108,6 +108,10 @@ def _parse_location(raw_location: Any) -> Optional[CameraLocation]:
 
 
 def _validate_record(raw: Dict[str, Any]) -> Optional[CameraRecord]:
+    if not isinstance(raw, dict):
+        logger.warning("Skipping non-dict camera record: %s", raw)
+        return None
+
     # Source #1 calls the identifier "camera_id"; source #2 calls it "id".
     # Whichever is present wins; camera_id is preferred if a record somehow
     # has both.
