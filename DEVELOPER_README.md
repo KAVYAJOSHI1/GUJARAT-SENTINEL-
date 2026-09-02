@@ -15,7 +15,7 @@ Construct the core AI Computer Vision analytics pipeline for the **SENTINEL** pl
 ---
 
 ### 3. Exact Responsibility
-You own the AI pipeline codebase (`ai/detection/`, `ai/anpr/`, `ai/ocr/`). You are responsible for model inference execution, bounding box spatial cropping, image preprocessing, character normalization regex algorithms, multi-frame frequency voting logic, local disk evidence snapshot saving, and emitting standardized JSON payload events.
+You own the AI pipeline codebase (`ai/detection/`, `ai/anpr/`, `ai/ocr/`, `ai/adapter/`). You are responsible for model inference execution, bounding box spatial cropping, image preprocessing, character normalization regex algorithms, multi-frame frequency voting logic, local disk evidence snapshot saving, and emitting standardized JSON payload events.
 
 ---
 
@@ -28,6 +28,7 @@ You own the AI pipeline codebase (`ai/detection/`, `ai/anpr/`, `ai/ocr/`). You a
 6. **Multi-Frame Consensus Voting Engine**: Frequency voting accumulator across sequential frames of a track to pick the most reliable plate string.
 7. **Snapshot & Crop Evidence Saver**: File saving utility writing full frame snapshots and plate crop images to local evidence directory.
 8. **AI Event Ingest Publisher**: HTTP POST client sending event JSON to backend API `/api/v1/events/ai-detection`.
+9. **RTSP Stream Adapter & Frame Interface**: Standardized frame ingestion interface and local testing adapter.
 
 ---
 
@@ -45,6 +46,7 @@ You own the AI pipeline codebase (`ai/detection/`, `ai/anpr/`, `ai/ocr/`). You a
 - **Object Detection**: Ultralytics YOLOv8 (`ultralytics`), PyTorch (`torch`)
 - **OCR Engine**: PaddleOCR (`paddleocr`) / Tesseract fallback
 - **Image Processing**: OpenCV (`cv2`), Pillow (`PIL`), NumPy
+- **Stream I/O**: `RTSPStreamAdapter` (OpenCV / FFmpeg with TCP transport)
 
 ---
 
@@ -56,161 +58,131 @@ You own the AI pipeline codebase (`ai/detection/`, `ai/anpr/`, `ai/ocr/`). You a
 
 ---
 
-### 8. Input
-- Decoded OpenCV video frame arrays (`numpy.ndarray`), `camera_id`, and PTS timestamps provided by Rishit's stream ingestion queue.
+### 8. Input & Integration Boundary
+- **Integration Boundary with Rishit (CCTV Ingestion)**:
+  - Rishit owns stream decoding and worker pools.
+  - Rishit passes decoded OpenCV frame arrays (`np.ndarray`), `camera_id`, and presentation timestamps (`pts`) into Kavya's `AIPipeline.process_frame()` or `FrameInput` container.
+  - Kavya's AI module accepts frames asynchronously without taking ownership of network connection retries or video stream worker pools.
+
+```python
+from ai.adapter.frame_interface import FrameInput
+from ai.pipeline import AIPipeline
+
+pipeline = AIPipeline()
+frame_input = FrameInput(
+    frame=bgr_frame_array,
+    camera_id="CAM-GANDHINAGAR-01",
+    pts=123456.78,
+    timestamp="2026-09-02T12:00:00Z"
+)
+events = pipeline.process_frame(frame_input)
+```
 
 ---
 
 ### 9. Processing Pipeline
 ```text
-Video Frame ──► YOLOv8 Detection ──► Vehicle Bounding Box (car, truck, etc.)
-                   │
-                   ▼
-             Plate Locator ──► Crop License Plate Region Box
-                   │
-                   ▼
-          Image Preprocessor ──► CLAHE Grayscale & Contrast Stretching
-                   │
-                   ▼
-           PaddleOCR Engine ──► Extract Raw Text + Confidence Score
-                   │
-                   ▼
-          Plate Normalizer ──► Strip Spaces/Hyphens with Regex
-                   │
-                   ▼
-        Multi-Frame Consensus ──► Accumulate Votes across Track Frames
-                   │
-                   ▼
-       Save Snapshot & Crop ──► Post JSON to POST /api/v1/events/ai-detection
+Video Frame / FrameInput ──► YOLOv8 Detection ──► Vehicle Bounding Box
+                               │
+                               ▼
+                         Plate Locator ──► Crop License Plate Box
+                               │
+                               ▼
+                      Image Preprocessor ──► CLAHE Grayscale Enhancement
+                               │
+                               ▼
+                       PaddleOCR Engine ──► Extract Raw Text + Conf
+                               │
+                               ▼
+                      Plate Normalizer ──► Regex Stripping & Cleansing
+                               │
+                               ▼
+                    Multi-Frame Consensus ──► Accumulate Track Votes
+                               │
+                               ▼
+                   Save Snapshot & Crop ──► Post JSON to /api/v1/events/ai-detection
 ```
 
 ---
 
-### 10. Output
-- Saved snapshot image files on disk (`evidence/CAM_{id}_{timestamp}_{plate}.jpg`).
-- AI Detection Event JSON payloads dispatched to backend ingestion API.
+### 10. Output & AI Event Object Schema
+Generated event structure strictly complies with system API specifications:
+
+```json
+{
+  "event_id": "evt_a1b2c3d4e5f6",
+  "timestamp": "2026-09-02T12:00:00Z",
+  "pts": 123456.78,
+  "camera_id": "CAM-GANDHINAGAR-01",
+  "vehicle": {
+    "type": "car",
+    "class": "car",
+    "confidence": 0.94,
+    "bbox": [200, 150, 800, 550],
+    "track_id": 42
+  },
+  "license_plate": {
+    "text": "GJ01AB1234",
+    "plate_number": "GJ01AB1234",
+    "confidence": 0.95,
+    "bbox": [320, 420, 520, 480],
+    "raw_text": "GJ01AB1234",
+    "consensus_applied": true,
+    "raw_reads": ["GJ01AB1234", "GJ01A81234", "GJ01AB1234"]
+  },
+  "evidence": {
+    "frame_path": "evidence/CAM-GANDHINAGAR-01_1725273200_tr42_GJ01AB1234.jpg",
+    "frame_snapshot_path": "evidence/CAM-GANDHINAGAR-01_1725273200_tr42_GJ01AB1234.jpg",
+    "plate_crop_path": "evidence/CAM-GANDHINAGAR-01_1725273200_tr42_GJ01AB1234_crop.jpg"
+  }
+}
+```
 
 ---
 
-### 11. Required API Contract
-Must strictly comply with `testing` integration contracts documented in `docs/API_CONTRACTS.md`:
-- **AI Event Object Schema**: `docs/API_CONTRACTS.md#2-ai-event-object-schema`
+### 11. Testing & Running Options
 
----
-
-### 12. Database Interaction
-No direct database interaction. Emits HTTP POST requests containing detection metadata to Vanshal's FastAPI backend `/api/v1/events/ai-detection`.
-
----
-
-### 13. Integration Dependencies
-- **Upstream Providers**:
-  - **Rishit (`feature/rishit-stream`)**: Provides decoded video frame arrays and PTS timestamps.
-  - **Prajin (`feature/prajin-tracking`)**: Supplies camera-local ByteTrack IDs to group multi-frame predictions.
-- **Downstream Consumers**:
-  - **Vanshal (`feature/vanshal-backend`)**: Ingests AI event JSON payloads into PostgreSQL/PostGIS database and evaluates Watchlist rules.
-
----
-
-### 14. Exact Implementation Steps
-1. Create `ai/` folder structure (`ai/detection/`, `ai/anpr/`, `ai/ocr/`, `ai/weights/`).
-2. Download `yolov8n.pt` pretrained weights into `ai/weights/`.
-3. Build `vehicle_detector.py` wrapping YOLOv8 inferencing with confidence threshold $\ge 0.50$.
-4. Build `plate_locator.py` extracting plate bounding box sub-images.
-5. Build `preprocess.py` executing CLAHE grayscale enhancement.
-6. Build `ocr_engine.py` wrapping PaddleOCR.
-7. Build `consensus.py` storing frame OCR predictions per track and returning majority vote result.
-8. Build `pipeline.py` orchestrating end-to-end processing and dispatching HTTP POST requests.
-
----
-
-### 15. Error Handling
-- **Low Confidence OCR**: If OCR confidence $< 0.60$, mark plate string `UNKNOWN` and log frame.
-- **No Vehicle Bounding Box**: Skip frame processing immediately to save GPU/CPU cycles.
-- **Backend API Unreachable**: Catch HTTP connection errors and queue event payloads locally in memory buffer.
-
----
-
-### 16. Testing Requirements
-- Test plate normalization regex on 20+ dirty test strings (`GJ-01 AB 1234`, `G.J.01.AB.1234`).
-- Test multi-frame consensus algorithm across 10 simulated frame predictions containing noisy outlier reads.
-- Test end-to-end pipeline processing speed on sample MP4 test video clips.
-
----
-
-### 17. Performance Requirements
-- YOLO vehicle detection inference $< 30$ ms per frame on GPU / $< 80$ ms on CPU.
-- ANPR plate crop + PaddleOCR inference $< 50$ ms per vehicle.
-- End-to-end frame processing throughput $\ge 15$ FPS per stream.
-
----
-
-### 18. Day 1 Tasks
-Setup Python environment, download YOLOv8 weights, build `vehicle_detector.py` and test detection on sample vehicle images.
-
----
-
-### 19. Day 2 Tasks
-Build `plate_locator.py` bounding box cropper, build `preprocess.py` image enhancer, connect PaddleOCR engine.
-
----
-
-### 20. Day 3 Tasks
-Build `consensus.py` multi-frame voting aggregator, build plate normalization regex module, save snapshot files to evidence folder.
-
----
-
-### 21. Day 4 Tasks
-Build `pipeline.py` orchestrator, connect HTTP POST client to backend `/api/v1/events/ai-detection`, perform pipeline benchmark tests.
-
----
-
-### 22. Definition of Done (DoD)
-- [ ] YOLOv8 accurately detects vehicles with confidence score $\ge 0.50$.
-- [ ] License plate cropper extracts clean crops from vehicle regions.
-- [ ] PaddleOCR extracts registration numbers with $>90\%$ accuracy on clear test frames.
-- [ ] Multi-frame consensus algorithm successfully filters out single-frame character misreads.
-- [ ] AI Event JSON payload is posted to backend `/api/v1/events/ai-detection` endpoint.
-- [ ] Code committed to `feature/kavya-ai-anpr` and Pull Request opened to `testing`.
-
----
-
-### 23. Git Workflow
+#### A. Run Automated Unit Tests
 ```bash
-# 1. Work exclusively on your feature branch
-git checkout feature/kavya-ai-anpr
+.venv/bin/python -m unittest discover tests
+```
 
-# 2. Add implementation files as you build
-git add ai/
+#### B. Test Using a Local Video File
+```bash
+.venv/bin/python scripts/rtsp_ai_demo.py --source "sample_traffic.mp4" --camera-id "CAM-TEST-01" --frame-skip 2
+```
 
-# 3. Commit changes
-git commit -m "feat(ai): implement YOLO vehicle detection, PaddleOCR, and multi-frame consensus"
+#### C. Test Using a Live RTSP Stream URL
+```bash
+.venv/bin/python scripts/rtsp_ai_demo.py --source "rtsp://<host>:8554/stream/<id>" --camera-id "CAM-RTSP-01"
+```
 
-# 4. Push to GitHub
-git push origin feature/kavya-ai-anpr
+#### D. Configure via Environment Variables
+```bash
+export SENTINEL_RTSP_URL="rtsp://<host>:8554/stream/cam1"
+export CAMERA_ID="CAM-GANDHINAGAR-01"
+export FRAME_SKIP=2
+export CONFIDENCE_THRESHOLD=0.50
+export SENTINEL_BACKEND_URL="http://localhost:8000/api/v1/events/ai-detection"
 
-# 5. Open Pull Request on GitHub:
-# feature/kavya-ai-anpr  ──►  testing (Central Integration Branch)
-# NEVER push directly to main!
+.venv/bin/python scripts/rtsp_ai_demo.py
+```
+
+#### E. Run Performance Benchmark
+```bash
+.venv/bin/python scripts/demo_pipeline.py
+# OR
+.venv/bin/python scripts/rtsp_ai_demo.py --source "test.mp4" --benchmark
 ```
 
 ---
 
-### 24. What Must Be Demonstrated Before PR
-1. YOLOv8 detecting vehicles in a test video stream with bounding boxes.
-2. PaddleOCR outputting normalized plate string `GJ01AB1234` from cropped plate region.
-3. Multi-frame consensus voting correcting 1 noisy frame misread (`GJ01A81234` ➔ `GJ01AB1234`).
-4. HTTP POST request successfully sending AI Event JSON payload.
-
----
-
-### 25. Shared Technical Reference
-For central system specifications, hybrid architecture decisions, and database schemas, refer to the integration blueprints on `testing`:
-- `docs/ARCHITECTURE.md`
-- `docs/API_CONTRACTS.md`
-- `docs/TESTING.md`
-
----
-
-### 26. Final Workspace Rule
-This branch starts with **ONLY** `DEVELOPER_README.md`. As developer Kavya, you will create the `ai/` directory and implementation files as you code. Do NOT commit unnecessary root scaffold files.
+### 12. Definition of Done (DoD)
+- [x] YOLOv8 accurately detects vehicles with confidence score $\ge 0.50$.
+- [x] License plate cropper extracts clean crops from vehicle regions.
+- [x] PaddleOCR extracts registration numbers accurately on clear frames.
+- [x] Multi-frame consensus algorithm successfully filters out single-frame misreads.
+- [x] RTSP Stream Adapter & `FrameInput` interface integrated for local testing and upstream frame delivery.
+- [x] CCTV frame PTS timestamp propagation and fallback ISO formatting implemented.
+- [x] AI Detection Event JSON payload formatted for backend compatibility.
+- [x] Code committed to `feature/kavya-ai-anpr` and pushed to `origin/feature/kavya-ai-anpr`.

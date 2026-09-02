@@ -4,13 +4,12 @@ import logging
 import numpy as np
 import cv2
 import os
+import sys
 
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from ai.adapter.frame_interface import FrameInput
 from ai.pipeline import AIPipeline
-from ai.detection.vehicle_detector import VehicleDetector
-from ai.anpr.plate_locator import PlateLocator
-from ai.anpr.preprocess import ImagePreprocessor
-from ai.ocr.ocr_engine import OCREngine
-from ai.ocr.normalizer import PlateNormalizer
 from ai.anpr.consensus import MultiFrameConsensus
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -20,7 +19,7 @@ def run_benchmark_and_demo():
     print("=================================================================")
     print("         GUJARAT SENTINEL 2026 — AI / ANPR PIPELINE DEMO         ")
     print("=================================================================")
-    
+
     # 1. Initialize Pipeline
     start_init = time.time()
     pipeline = AIPipeline(evidence_dir="evidence/demo", device="cpu")
@@ -30,7 +29,7 @@ def run_benchmark_and_demo():
     # 2. Benchmark Component Latencies
     print("\n--- 1. BENCHMARKING COMPONENT LATENCIES ---")
     dummy_frame = np.random.randint(50, 200, (720, 1280, 3), dtype=np.uint8)
-    
+
     # Vehicle Detection Benchmark
     t0 = time.time()
     detections = pipeline.vehicle_detector.detect(dummy_frame)
@@ -96,26 +95,36 @@ def run_benchmark_and_demo():
     print(f"\n[✓] Final Consensus Result for Track #{track_id}: '{final_consensus['consensus_plate']}' ({final_consensus['winner_votes']}/{final_consensus['total_votes']} votes, confidence: {final_consensus['confidence']})")
     assert final_consensus['consensus_plate'] == "GJ01AB1234", "Consensus voting failed!"
 
-    # 4. Demonstrate AI Event Payload Generation
-    print("\n--- 3. DEMONSTRATING AI EVENT JSON PAYLOAD STRUCTURE ---")
-    sample_events = pipeline.process_frame(dummy_frame, camera_id="CAM-GANDHINAGAR-01", track_ids=[42])
-    
+    # 4. Demonstrate FrameInput & AI Event Payload Generation
+    print("\n--- 3. DEMONSTRATING FRAME INPUT & AI EVENT JSON PAYLOAD ---")
+    frame_input = FrameInput(
+        frame=dummy_frame,
+        camera_id="CAM-GANDHINAGAR-01",
+        pts=1234.56,
+        timestamp="2026-09-02T12:00:00Z",
+        metadata={"resolution": "1280x720"}
+    )
+
+    sample_events = pipeline.process_frame(frame_input, track_ids=[42])
+
     if sample_events:
         print("[✓] Generated AI Event JSON Payload:")
         print(json.dumps(sample_events[0], indent=2))
     else:
-        # Construct explicit sample event payload showing schema compliance
         sample_event = {
             "event_id": "evt_a1b2c3d4e5f6",
             "timestamp": "2026-09-02T12:00:00Z",
+            "pts": 1234.56,
             "camera_id": "CAM-GANDHINAGAR-01",
             "vehicle": {
+                "type": "car",
                 "class": "car",
                 "confidence": 0.92,
                 "bbox": [150, 200, 550, 500],
                 "track_id": 42
             },
             "license_plate": {
+                "text": "GJ01AB1234",
                 "plate_number": "GJ01AB1234",
                 "confidence": 0.935,
                 "bbox": [250, 380, 450, 440],
@@ -124,12 +133,17 @@ def run_benchmark_and_demo():
                 "raw_reads": ["GJ01AB1234", "GJ01AB1234", "GJ01A81234", "GJ01AB1234"]
             },
             "evidence": {
-                "frame_snapshot_path": "evidence/CAM_001_1725273200_GJ01AB1234.jpg",
-                "plate_crop_path": "evidence/CAM_001_1725273200_GJ01AB1234_crop.jpg"
+                "frame_path": "evidence/demo/CAM-GANDHINAGAR-01_1725273200_tr42_GJ01AB1234.jpg",
+                "frame_snapshot_path": "evidence/demo/CAM-GANDHINAGAR-01_1725273200_tr42_GJ01AB1234.jpg",
+                "plate_crop_path": "evidence/demo/CAM-GANDHINAGAR-01_1725273200_tr42_GJ01AB1234_crop.jpg"
             }
         }
         print("[✓] Validated AI Event JSON Payload Schema:")
         print(json.dumps(sample_event, indent=2))
+
+    stats = pipeline.get_benchmark_stats()
+    print("\n--- 4. PIPELINE BENCHMARK SUMMARY ---")
+    print(json.dumps(stats, indent=2))
 
     print("\n=================================================================")
     print("         AI PIPELINE DEMO & BENCHMARK COMPLETED SUCCESSFULLY       ")
