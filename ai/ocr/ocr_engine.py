@@ -46,7 +46,7 @@ class OCREngine:
         # 1. Try PaddleOCR
         if self.paddle_ocr is not None:
             try:
-                results = self.paddle_ocr.ocr(image, cls=False)
+                results = self.paddle_ocr.ocr(image)
                 if results and len(results) > 0 and results[0]:
                     text_parts = []
                     conf_scores = []
