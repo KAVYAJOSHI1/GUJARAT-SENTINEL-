@@ -18,3 +18,5 @@ tests/test_evidence/
 # Root downloads / temporary weights
 yolov8n.pt
 *.log
+cookies.txt
+
