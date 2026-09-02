@@ -60,7 +60,7 @@ You own the AI pipeline codebase (`ai/detection/`, `ai/anpr/`, `ai/ocr/`, `ai/ad
 
 ### 8. Input & Integration Boundary
 - **Integration Boundary with Rishit (CCTV Ingestion)**:
-  - Rishit owns stream decoding and worker pools.
+  - Rishit owns stream decoding, connection retries, and worker pools.
   - Rishit passes decoded OpenCV frame arrays (`np.ndarray`), `camera_id`, and presentation timestamps (`pts`) into Kavya's `AIPipeline.process_frame()` or `FrameInput` container.
   - Kavya's AI module accepts frames asynchronously without taking ownership of network connection retries or video stream worker pools.
 
@@ -71,9 +71,9 @@ from ai.pipeline import AIPipeline
 pipeline = AIPipeline()
 frame_input = FrameInput(
     frame=bgr_frame_array,
-    camera_id="CAM-GANDHINAGAR-01",
-    pts=123456.78,
-    timestamp="2026-09-02T12:00:00Z"
+    camera_id="cam04",
+    pts=1560.0,
+    timestamp="2026-09-02T08:33:24Z"
 )
 events = pipeline.process_frame(frame_input)
 ```
@@ -110,37 +110,68 @@ Generated event structure strictly complies with system API specifications:
 
 ```json
 {
-  "event_id": "evt_a1b2c3d4e5f6",
-  "timestamp": "2026-09-02T12:00:00Z",
-  "pts": 123456.78,
-  "camera_id": "CAM-GANDHINAGAR-01",
+  "event_id": "evt_3308d7c240af",
+  "timestamp": "2026-09-02T08:33:24Z",
+  "pts": 1560.0,
+  "camera_id": "cam04",
   "vehicle": {
     "type": "car",
     "class": "car",
-    "confidence": 0.94,
-    "bbox": [200, 150, 800, 550],
-    "track_id": 42
+    "confidence": 0.50,
+    "bbox": [634, 181, 737, 250],
+    "track_id": 1
   },
   "license_plate": {
-    "text": "GJ01AB1234",
-    "plate_number": "GJ01AB1234",
-    "confidence": 0.95,
-    "bbox": [320, 420, 520, 480],
-    "raw_text": "GJ01AB1234",
-    "consensus_applied": true,
-    "raw_reads": ["GJ01AB1234", "GJ01A81234", "GJ01AB1234"]
+    "text": "UNKNOWN",
+    "plate_number": "UNKNOWN",
+    "confidence": 0.0,
+    "bbox": [0, 0, 0, 0],
+    "raw_text": "UNKNOWN",
+    "consensus_applied": false,
+    "raw_reads": []
   },
   "evidence": {
-    "frame_path": "evidence/CAM-GANDHINAGAR-01_1725273200_tr42_GJ01AB1234.jpg",
-    "frame_snapshot_path": "evidence/CAM-GANDHINAGAR-01_1725273200_tr42_GJ01AB1234.jpg",
-    "plate_crop_path": "evidence/CAM-GANDHINAGAR-01_1725273200_tr42_GJ01AB1234_crop.jpg"
+    "frame_path": "evidence/rtsp_demo/cam04_1788338004_tr1_UNKNOWN.jpg",
+    "frame_snapshot_path": "evidence/rtsp_demo/cam04_1788338004_tr1_UNKNOWN.jpg",
+    "plate_crop_path": "evidence/rtsp_demo/cam04_1788338004_tr1_UNKNOWN_crop.jpg"
   }
 }
 ```
 
 ---
 
-### 11. Testing & Running Options
+### 11. Sentinel Gujarat Camera Grid Integration Procedure
+
+#### A. Camera Catalogue Endpoint
+- Catalogue URL: `https://cctv.corp8.cloud/cameras.json`
+- Web portal requires session authentication (`302 /auth/login`).
+
+#### B. Direct RTSP Ingestion Stream Pattern
+- RTSP Endpoint: `rtsp://<host>:8554/stream/<camera_id>`
+- Example: `rtsp://103.250.160.189:8554/stream/cam04`
+- Protocol: RTSP over TCP (`rtsp_transport;tcp`)
+
+#### C. Running Live Smoke Test against Sentinel Stream
+```bash
+.venv/bin/python scripts/rtsp_ai_demo.py \
+  --source "rtsp://103.250.160.189:8554/stream/cam04" \
+  --camera-id "cam04" \
+  --max-frames 60 \
+  --benchmark
+```
+
+#### D. Live Smoke Test Validation Results
+- **Tested Camera**: `cam04` (H.264, 1920x1080 @ 25 FPS) & `cam06` (H.265 / HEVC, 1920x1080 @ 25 FPS).
+- **RTSP Connectivity**: Success (`isOpened: True`, TCP transport verified).
+- **Frames Processed**: 60 frames on `cam04`, 10 frames on `cam06`.
+- **Detections**: 4 vehicle detections on `cam04` (`car`), 27 vehicle detections on `cam06` (`motorcycle`, `car`).
+- **PTS Timestamping**: Stream PTS preserved (`pts=1560.0`, `1680.0`, etc.) and ISO 8601 timestamps derived accurately.
+- **Evidence Files**: Snapshots and vehicle crops saved to `evidence/rtsp_demo/`.
+- **Known Limitations**: Distant vehicles in wide CCTV view did not yield legible plate characters; OCR appropriately returned `UNKNOWN` (conf 0.0).
+
+---
+
+### 12. Testing & Running Options
 
 #### A. Run Automated Unit Tests
 ```bash
@@ -152,37 +183,26 @@ Generated event structure strictly complies with system API specifications:
 .venv/bin/python scripts/rtsp_ai_demo.py --source "sample_traffic.mp4" --camera-id "CAM-TEST-01" --frame-skip 2
 ```
 
-#### C. Test Using a Live RTSP Stream URL
+#### C. Configure via Environment Variables
 ```bash
-.venv/bin/python scripts/rtsp_ai_demo.py --source "rtsp://<host>:8554/stream/<id>" --camera-id "CAM-RTSP-01"
-```
-
-#### D. Configure via Environment Variables
-```bash
-export SENTINEL_RTSP_URL="rtsp://<host>:8554/stream/cam1"
-export CAMERA_ID="CAM-GANDHINAGAR-01"
-export FRAME_SKIP=2
+export SENTINEL_RTSP_URL="rtsp://103.250.160.189:8554/stream/cam04"
+export CAMERA_ID="cam04"
+export FRAME_SKIP=0
 export CONFIDENCE_THRESHOLD=0.50
 export SENTINEL_BACKEND_URL="http://localhost:8000/api/v1/events/ai-detection"
 
-.venv/bin/python scripts/rtsp_ai_demo.py
-```
-
-#### E. Run Performance Benchmark
-```bash
-.venv/bin/python scripts/demo_pipeline.py
-# OR
-.venv/bin/python scripts/rtsp_ai_demo.py --source "test.mp4" --benchmark
+.venv/bin/python scripts/rtsp_ai_demo.py --max-frames 60 --benchmark
 ```
 
 ---
 
-### 12. Definition of Done (DoD)
+### 13. Definition of Done (DoD)
 - [x] YOLOv8 accurately detects vehicles with confidence score $\ge 0.50$.
 - [x] License plate cropper extracts clean crops from vehicle regions.
 - [x] PaddleOCR extracts registration numbers accurately on clear frames.
 - [x] Multi-frame consensus algorithm successfully filters out single-frame misreads.
 - [x] RTSP Stream Adapter & `FrameInput` interface integrated for local testing and upstream frame delivery.
+- [x] Tested against live Sentinel Gujarat camera grid (`cam04` H.264 & `cam06` H.265).
 - [x] CCTV frame PTS timestamp propagation and fallback ISO formatting implemented.
 - [x] AI Detection Event JSON payload formatted for backend compatibility.
 - [x] Code committed to `feature/kavya-ai-anpr` and pushed to `origin/feature/kavya-ai-anpr`.
