@@ -19,4 +19,3 @@ tests/test_evidence/
 yolov8n.pt
 *.log
 cookies.txt
-
