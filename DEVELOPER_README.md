@@ -125,7 +125,7 @@ No direct database interaction. Streams status telemetry to Vanshal's FastAPI ba
 ### 16. Testing Requirements
 - Test RTSP capture against a local test video server (e.g. MediaMTX / `rtsp-simple-server`).
 - Simulate network disconnect (kill RTSP server) and verify exponential backoff retry timestamps (`2s -> 4s -> 8s -> 16s -> 30s`).
-- Test decoding H.264 vs H.265 video streams.
+- Test decoding H.264 vs H.265 video streams. 
 
 ---
 
@@ -203,3 +203,5 @@ For central system specifications, hybrid architecture decisions, and database s
 
 ### 26. Final Workspace Rule
 This branch starts with **ONLY** `DEVELOPER_README.md`. As developer Rishit, you will create the `ingestion/` directory and implementation files as you code. Do NOT commit unnecessary root scaffold files.
+
+### Test push
