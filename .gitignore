@@ -1,0 +1,20 @@
+# Virtual environment
+.venv/
+env/
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Evidence snapshots & test artifacts
+evidence/*
+!evidence/.gitkeep
+tests/test_evidence/
+
+# Root downloads / temporary weights
+yolov8n.pt
+*.log
