@@ -3,7 +3,7 @@ uvicorn[standard]==0.30.6
 sqlalchemy==2.0.35
 sqlmodel==0.0.22
 geoalchemy2==0.15.2
-psycopg2-binary==2.9.9
+psycopg2-binary==2.9.10
 alembic==1.13.2
 minio==7.2.9
 python-jose[cryptography]==3.3.0
