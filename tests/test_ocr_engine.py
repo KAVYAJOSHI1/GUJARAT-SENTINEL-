@@ -16,6 +16,7 @@ try:
 except Exception:  # pragma: no cover
     cv2 = None
 
+from ai.anpr.preprocess import ImagePreprocessor
 from ai.ocr.normalizer import PlateNormalizer
 from ai.ocr.ocr_engine import OCREngine
 
@@ -136,6 +137,59 @@ class TestOCRUnknownGuards(unittest.TestCase):
         )
         self.assertEqual(parts, ["GJ01AB1234"])
         self.assertEqual(confs, [0.95])
+
+
+class TestPreprocessVariants(unittest.TestCase):
+    def setUp(self):
+        self.pre = ImagePreprocessor()
+
+    def test_quality_gate_rejects_flat_crop(self):
+        self.assertFalse(self.pre.quality_ok(np.full((40, 120, 3), 128, np.uint8)))
+        self.assertEqual(self.pre.variants(np.full((40, 120, 3), 128, np.uint8)), [])
+
+    def test_quality_gate_rejects_tiny_crop(self):
+        self.assertFalse(self.pre.quality_ok(np.random.randint(0, 255, (6, 8, 3), dtype=np.uint8)))
+
+    def test_variants_on_textured_crop(self):
+        img = np.full((50, 200, 3), 240, np.uint8)
+        cv2.putText(img, "GJ01AB1234", (6, 36), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 0), 2)
+        vs = self.pre.variants(img, max_variants=4)
+        self.assertEqual(len(vs), 4)
+        for v in vs:
+            self.assertEqual(v.ndim, 3)
+            self.assertGreaterEqual(v.shape[0], self.pre.ocr_height - 1)
+
+    def test_max_variants_respected(self):
+        img = np.full((50, 200, 3), 240, np.uint8)
+        cv2.putText(img, "MH12AB1234", (6, 36), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 0), 2)
+        self.assertEqual(len(self.pre.variants(img, max_variants=2)), 2)
+
+
+class TestExtractBest(unittest.TestCase):
+    def test_prefers_valid_plate_format(self):
+        eng = OCREngine()
+        eng._initialised = True
+        eng._paddle = None
+
+        class _Easy:
+            def __init__(self, seq):
+                self.seq = list(seq)
+            def readtext(self, *_a, **_k):
+                t, c = self.seq.pop(0)
+                return [([[0, 0], [1, 0], [1, 1], [0, 1]], t, c)]
+
+        # variant 0: high conf but ill-formed; variant 1: lower conf, valid plate
+        eng._easy = _Easy([("999999", 0.96), ("GJ01AB1234", 0.72)])
+        eng._recompute_active()
+        v = np.zeros((40, 160, 3), np.uint8)
+        res = eng.extract_best([v, v.copy()], PlateNormalizer())
+        self.assertEqual(res["raw_text"], "GJ01AB1234")
+        self.assertEqual(res["variant"], 1)
+        self.assertGreater(res["format_score"], 0.9)
+
+    def test_empty_variants_returns_unknown(self):
+        eng = OCREngine()
+        self.assertEqual(eng.extract_best([], PlateNormalizer())["raw_text"], "UNKNOWN")
 
 
 if __name__ == "__main__":

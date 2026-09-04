@@ -180,6 +180,42 @@ class OCREngine:
     # ------------------------------------------------------------------ #
     #  public API                                                         #
     # ------------------------------------------------------------------ #
+    def extract_best(
+        self,
+        images: List[np.ndarray],
+        normalizer: Any = None,
+    ) -> Dict[str, Any]:
+        """Run OCR on several preprocessing variants and return the best read.
+
+        Scoring per variant:  ``ocr_conf * (0.4 + 0.6 * format_score(normalised))``
+        so a well-formed Indian plate at medium confidence beats a garbage
+        string at high confidence. Empty ``images`` (quality gate failed) ->
+        ``UNKNOWN``.
+        """
+        if not images:
+            return {"raw_text": "UNKNOWN", "confidence": 0.0, "variant": -1, "format_score": 0.0}
+
+        best = {"raw_text": "UNKNOWN", "confidence": 0.0, "variant": -1, "format_score": 0.0}
+        best_score = -1.0
+        for idx, img in enumerate(images):
+            res = self.extract_text(img)
+            raw = res.get("raw_text", "UNKNOWN")
+            conf = float(res.get("confidence", 0.0))
+            if raw == "UNKNOWN":
+                continue
+            fmt = 0.0
+            if normalizer is not None:
+                try:
+                    fmt = float(normalizer.format_score(normalizer.normalize(raw)))
+                except Exception:  # noqa: BLE001
+                    fmt = 0.0
+            score = conf * (0.4 + 0.6 * fmt)
+            if score > best_score:
+                best_score = score
+                best = {"raw_text": raw, "confidence": round(conf, 4),
+                        "variant": idx, "format_score": round(fmt, 3)}
+        return best
+
     def extract_text(self, image: np.ndarray) -> Dict[str, Any]:
         """
         Run OCR on a (preprocessed) license-plate crop.

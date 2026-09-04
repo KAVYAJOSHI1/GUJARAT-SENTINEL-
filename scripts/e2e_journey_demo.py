@@ -72,12 +72,14 @@ def _find_bus():
     raise SystemExit("could not locate ultralytics assets/bus.jpg")
 
 
-def _render_plate(text, w=340, h=86):
-    img = np.full((h, w, 3), 246, np.uint8)
-    cv2.rectangle(img, (3, 3), (w - 4, h - 4), (12, 12, 12), 3)
-    f = cv2.FONT_HERSHEY_DUPLEX
-    (tw, th), _ = cv2.getTextSize(text, f, 1.9, 4)
-    cv2.putText(img, text, ((w - tw) // 2, (h + th) // 2), f, 1.9, (6, 6, 6), 4, cv2.LINE_AA)
+def _render_plate(text, w=560, h=150):
+    """A clean, OCR-legible white plate. The plate PIXELS are synthetic; the
+    system still reads whatever it reads (this is disclosed in the report)."""
+    img = np.full((h, w, 3), 255, np.uint8)
+    cv2.rectangle(img, (4, 4), (w - 5, h - 5), (0, 0, 0), 4)
+    f = cv2.FONT_HERSHEY_SIMPLEX
+    (tw, th), _ = cv2.getTextSize(text, f, 2.6, 6)
+    cv2.putText(img, text, ((w - tw) // 2, (h + th) // 2), f, 2.6, (0, 0, 0), 6, cv2.LINE_AA)
     return img
 
 
