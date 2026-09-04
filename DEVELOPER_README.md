@@ -155,6 +155,116 @@ w.stop(); w.join()
 - [x] Enriched GIS camera registry dataset populated for all 30 cameras (`data/camera_registry.json`).
 - [x] All 19 unit tests passing on central `testing` integration branch.
 
+---
+
+### 10. Mock Cameras (Local Dev / Demo Source)
+
+**What this is.** `trafficdataset/` (git-ignored, ~1.7GB, not committed) holds
+a downloaded set of real Anand, Gujarat traffic clips (`Videos/Videos/video1.MOV`
+… `video104.MOV`, 1920x1080 H.264 @ 30fps, 5-11s each) donated by the user for
+demoing this system at scale without depending on the real Sentinel RTSP feed
+or venue internet. **These are LOCAL MOCK CAMERAS, not a live government
+feed** — the dashboard always shows them behind a visible `MOCK` badge (never
+alongside cam04/cam06 unlabelled). They are a *pure addition*: nothing about
+the real cam01-cam30 registry, RTSP credentials, or ingestion behavior
+changes because this exists.
+
+**How it works, architecturally.** A mock camera is exactly a `CameraRecord`
+whose `stream_url` is a local file path instead of an `rtsp://` URL. That's
+the entire trick — `ingestion/stream_manager.py`'s `StreamWorker` already
+opens any URL via `cv2.VideoCapture(url, cv2.CAP_FFMPEG)`, and a local path
+opens the exact same way an RTSP URL does. The only new behavior, gated by
+`_is_local_source()` (true only for non-`rtsp://`/`http(s)://` sources, so it
+never touches a real camera):
+  - **Real-time pacing** — frames are throttled to the source clip's own fps
+    (or `--fps` override) so playback runs at wall-clock speed, not "as fast
+    as the decoder can go".
+  - **Clean EOF looping** — end-of-clip reopens the file and continues from
+    frame 0, like a continuous live feed, without going through the
+    RTSP reconnect/backoff ladder (no `RECONNECTING` flicker). The loop
+    resets `seq_num`, which is what makes the *existing*
+    `FrameConsumer._check_reconnect()` discontinuity check reset that
+    camera's ByteTrack tracker automatically on every loop boundary — no new
+    pipeline code was needed for that.
+
+Every mock-camera frame goes through the identical
+`StreamManager → FrameConsumer → AIPipeline (YOLO → ByteTrack → OCR) → POST
+/api/v1/events/ai-detection → PostgreSQL → dashboard/GIS` chain real cameras
+use. Detections, track IDs, and plates are real — a mock camera never
+fabricates an event. The Anand clips are wide dashcam-angle footage, so
+plates usually come back `UNKNOWN`, exactly like the real overhead junction
+cameras — that is the correct, honest result, not a bug.
+
+**Setup.**
+```bash
+# one-time (or again after adding new videos): scan trafficdataset/ and
+# write data/trafficdataset_camera_registry.json (git-ignored — embeds local
+# absolute paths, same reason data/mock_camera_registry.json is ignored)
+.venv/bin/python scripts/generate_mock_camera_registry.py --count 3
+```
+Each selected clip becomes one `MOCK_CAM0N` entry at a distinct demo location
+around Anand ("Anand Traffic Junction – Mock Camera 0N"), with the same
+entry shape (`camera_id`, `name`, `rtsp_url`, `latitude`, `longitude`,
+`status`, …) the real registry already uses — no new loader code. `--count`
+defaults to 3; the dataset has 104 usable clips, but registering 104 fake
+cameras would misrepresent the demo, so the number is always explicit and
+small. `--videos video7.MOV,video12.MOV` picks specific clips instead.
+
+**Running.**
+```bash
+# every configured mock camera
+.venv/bin/python scripts/run_mock_cameras.py
+
+# specific ones, adjust pacing/looping
+.venv/bin/python scripts/run_mock_cameras.py --cameras MOCK_CAM01,MOCK_CAM02 --fps 15
+.venv/bin/python scripts/run_mock_cameras.py --no-loop --duration 30
+
+# REAL cam04/cam06 + MOCK cameras together, in ONE process (see below)
+.venv/bin/python scripts/run_mock_cameras.py --with-real cam04,cam06
+```
+`scripts/run_mock_cameras.py` is a thin wrapper around the existing
+`scripts/run_pipeline_service.py::PipelineService` — it does not run a second
+AI pipeline. `--registry` also accepts a comma-separated list of registry
+files directly if you'd rather drive it from `run_pipeline_service.py`:
+```bash
+.venv/bin/python scripts/run_pipeline_service.py \
+  --registry data/camera_registry.json,data/trafficdataset_camera_registry.json \
+  --cameras cam04,cam06,MOCK_CAM01,MOCK_CAM02
+```
+
+**Why one process for real+mock.** Two separate Python processes each
+loading their own `AIPipeline` (YOLO/torch/OpenCV) have been observed to
+crash into each other at interpreter shutdown on this machine (results still
+deliver fine beforehand — only teardown is affected). Running real and mock
+cameras as more `StreamWorker`s inside the *same* process/`AIPipeline`
+sidesteps that entirely, and is the supported way to demo both together.
+
+**Adding another video / mapping a video to a camera.** Drop additional
+clips into `trafficdataset/Videos/Videos/` (or point `--videos-dir`
+elsewhere) and re-run `generate_mock_camera_registry.py`, or hand-edit the
+generated JSON — `source_video` / `rtsp_url` is the only field that actually
+selects the clip a `MOCK_CAM0N` plays.
+
+**REAL vs MOCK, everywhere.** No backend schema change was made for this —
+`MOCK_CAM0N` is a naming convention (like `cam04` already is), not a new
+field. The dashboard derives the `MOCK` badge and REAL/MOCK counts purely
+from the camera `code` prefix (`frontend/src/services/api.js::isMockCamera`),
+so a real Sentinel camera is never mislabeled and nothing changes for a
+mock-camera-free run.
+
+**In-dashboard playback.** Unlike real Sentinel RTSP feeds (Basic-auth,
+no CORS HLS — genuinely can't be embedded), a mock camera *is* just a local
+file, so `CameraCard.jsx` plays it directly via `GET
+/api/v1/cameras/{id}/mock-video`. The source `.MOV` clips are a QuickTime
+container most browsers won't decode in `<video>` even though the H.264
+codec inside is standard, so `generate_mock_camera_registry.py` also
+losslessly remuxes each selected clip into a real H.264-in-MP4 file
+(`trafficdataset/_previews/<code>.mp4`, via the optional `av` dependency —
+no re-encode, pixels untouched) that the backend prefers whenever present,
+falling back to the raw `.MOV` otherwise.
+
+Never commit `trafficdataset/` or `data/trafficdataset_camera_registry.json`
+(both git-ignored) — no credentials live in either.
 
 ---
 

@@ -215,3 +215,12 @@
   background: #e0574c;
   color: #fff;
 }
+/* The sighting currently selected/playing in journey mode (InvestigationPage
+   §Play Journey / timeline↔map sync) — a strong halo so it reads instantly
+   against the rest of the numbered trail. */
+.gis-seq-marker.is-journey-active {
+  background: #d9a441;
+  color: #0b0f14;
+  box-shadow: 0 0 0 3px rgba(217, 164, 65, 0.9), 0 0 18px 4px rgba(217, 164, 65, 0.65);
+  border-color: #e5e9ee;
+}
