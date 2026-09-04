@@ -132,6 +132,7 @@ class FrameConsumer(threading.Thread):
         camera_names: Optional[Dict[str, str]] = None,
         stop_event: Optional[threading.Event] = None,
         poll_timeout_s: float = 1.0,
+        frame_skip: int = 0,
     ) -> None:
         super().__init__(name="ai-frame-consumer", daemon=True)
         self._q = frame_queue
@@ -140,8 +141,11 @@ class FrameConsumer(threading.Thread):
         self._camera_names = camera_names or {}
         self._stop_event = stop_event or threading.Event()
         self._poll_timeout_s = poll_timeout_s
+        self._frame_skip = max(0, int(frame_skip))
         self._last_seq: Dict[str, int] = {}
+        self._frame_counter: Dict[str, int] = {}
         self.frames_processed = 0
+        self.frames_skipped = 0
         self.events_emitted = 0
 
     def stop(self) -> None:
@@ -179,6 +183,15 @@ class FrameConsumer(threading.Thread):
             try:
                 camera_id = getattr(envelope, "camera_id", "CAM-UNKNOWN")
                 self._check_reconnect(camera_id, getattr(envelope, "seq_num", None))
+
+                # per-camera frame sampling (process 1 of every frame_skip+1)
+                if self._frame_skip:
+                    n = self._frame_counter.get(camera_id, 0)
+                    self._frame_counter[camera_id] = n + 1
+                    if n % (self._frame_skip + 1) != 0:
+                        self.frames_skipped += 1
+                        continue
+
                 frame_input = envelope_to_frame_input(
                     envelope, camera_name=self._camera_names.get(camera_id)
                 )
