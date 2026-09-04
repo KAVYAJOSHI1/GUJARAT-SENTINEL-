@@ -14,6 +14,7 @@ from ai.anpr.preprocess import ImagePreprocessor
 from ai.anpr.consensus import MultiFrameConsensus
 from ai.ocr.ocr_engine import OCREngine
 from ai.ocr.normalizer import PlateNormalizer
+from ai.tracking.tracker import ByteTrackTracker
 
 logger = logging.getLogger("AIPipeline")
 
@@ -75,6 +76,11 @@ class AIPipeline:
         # In-memory buffer for retry on API unreachability
         self.event_buffer: List[Dict[str, Any]] = []
 
+        # One ByteTrack tracker per camera feed -> track IDs are camera-local and
+        # persistent across frames. State cannot leak between cameras because each
+        # camera_id gets its own ByteTrackTracker instance (see _get_tracker).
+        self._trackers: Dict[str, ByteTrackTracker] = {}
+
         # Track OCR throttling counter and saved evidence state: key -> count / filename
         self.track_ocr_counter: Dict[str, int] = {}
         self.saved_evidence_tracks: Dict[str, str] = {}
@@ -90,6 +96,41 @@ class AIPipeline:
             "ocr_time_ms": 0.0,
             "total_pipeline_time_ms": 0.0
         }
+
+    # ------------------------------------------------------------------ #
+    #  Per-camera ByteTrack tracker registry                              #
+    # ------------------------------------------------------------------ #
+    def _get_tracker(self, camera_id: str) -> ByteTrackTracker:
+        """Return the ByteTrack tracker owning ``camera_id`` (created on first use).
+
+        One instance per camera => camera-local, persistent track IDs, and no
+        cross-camera state leakage.
+        """
+        tracker = self._trackers.get(camera_id)
+        if tracker is None:
+            # track_thresh sits below the detector's own confidence gate so every
+            # detection the detector already accepted is treated as high-score;
+            # new_track_thresh == detector threshold so any accepted detection can
+            # start a track.
+            low = max(0.05, self.confidence_threshold - 0.25)
+            tracker = ByteTrackTracker(
+                track_thresh=low,
+                new_track_thresh=self.confidence_threshold,
+                match_thresh=0.85,
+                track_buffer=30,
+                frame_rate=30,
+            )
+            self._trackers[camera_id] = tracker
+        return tracker
+
+    def reset_camera(self, camera_id: str) -> None:
+        """Drop tracker + per-track bookkeeping for a camera (e.g. on stream
+        reconnect / discontinuity). Other cameras are untouched."""
+        self._trackers.pop(camera_id, None)
+        prefix = f"{camera_id}:"
+        for d in (self.track_ocr_counter, self.saved_evidence_tracks):
+            for k in [k for k in d if k.startswith(prefix)]:
+                d.pop(k, None)
 
     def process_frame(
         self,
@@ -107,7 +148,10 @@ class AIPipeline:
         :param camera_id: Identifier of the camera stream (multi-camera state isolated)
         :param frame_timestamp: ISO timestamp string or UNIX epoch string
         :param pts: Stream presentation timestamp (PTS)
-        :param track_ids: Optional list of ByteTrack IDs matching detected vehicles
+        :param track_ids: Optional explicit track-id override (one per detection,
+                          in detection order). When omitted (the normal case) the
+                          pipeline runs detections through a per-camera
+                          ByteTrackTracker and uses its persistent IDs.
         :param metadata: Additional frame metadata
         :return: List of generated AI Detection Event dictionaries
         """
@@ -158,17 +202,54 @@ class AIPipeline:
         self.stats["vehicle_detection_time_ms"] += t_det
 
         if not detections:
+            # Advance this camera's tracker on empty frames too, so lost tracks
+            # age out and short occlusions are bridged by the Kalman predictor.
+            if track_ids is None and camera_id in self._trackers:
+                try:
+                    self._trackers[camera_id].update([])
+                except Exception as e:
+                    logger.error(f"ByteTrack update failed on {camera_id}: {e}")
             t_total = (time.time() - t_start) * 1000.0
             self.stats["total_pipeline_time_ms"] += t_total
             return []
 
         self.stats["total_vehicles"] += len(detections)
 
-        for idx, det in enumerate(detections):
-            vehicle_class = det["class"]
-            vehicle_conf = det["confidence"]
-            vehicle_bbox = det["bbox"]
-            track_id = track_ids[idx] if (track_ids and idx < len(track_ids)) else idx + 1
+        # Step 1b: Persistent multi-object tracking (ByteTrack).
+        # Default path: run detections through this camera's own tracker so
+        # track_id is STABLE across consecutive frames. Legacy path: an explicit
+        # `track_ids` list (e.g. an external tracker) overrides.
+        if track_ids is not None:
+            tracked_vehicles = [
+                {
+                    "class": det["class"],
+                    "confidence": det["confidence"],
+                    "bbox": det["bbox"],
+                    "track_id": track_ids[idx] if idx < len(track_ids) else idx + 1,
+                }
+                for idx, det in enumerate(detections)
+            ]
+        else:
+            try:
+                online = self._get_tracker(camera_id).update(detections)
+            except Exception as e:  # tracker must never take down the pipeline
+                logger.error(f"ByteTrack update failed on {camera_id}: {e}")
+                online = []
+            tracked_vehicles = [
+                {
+                    "class": t.get("class") or "vehicle",
+                    "confidence": float(t.get("score", 0.0)),
+                    "bbox": [int(round(v)) for v in t["bbox"]],
+                    "track_id": t["track_id"],
+                }
+                for t in online
+            ]
+
+        for vehicle in tracked_vehicles:
+            vehicle_class = vehicle["class"]
+            vehicle_conf = vehicle["confidence"]
+            vehicle_bbox = vehicle["bbox"]
+            track_id = vehicle["track_id"]
             track_key = f"{camera_id}:{track_id}"
 
             # Crop vehicle region
