@@ -8,9 +8,10 @@ import os
 import unittest
 
 DB_URL = os.getenv("SENTINEL_TEST_DATABASE_URL")
+INGEST_KEY = "sentinel-test-ingest-key"  # same value the other DB-gated module uses
 if DB_URL:
     os.environ["DATABASE_URL"] = DB_URL
-    os.environ["INGEST_API_KEY"] = "unit-test-key"
+    os.environ.setdefault("INGEST_API_KEY", INGEST_KEY)
 
 _EVENT = {
     "camera_id": "cam-auth-test",
@@ -32,6 +33,8 @@ class TestIngestAuth(unittest.TestCase):
         importlib.reload(cfg)
         import app.database as dbm
         importlib.reload(dbm)
+        from app.api import deps as _deps
+        cls.ingest_key = _deps.settings.INGEST_API_KEY or INGEST_KEY
         from app.main import app
         from app.database import SessionLocal
         from app.core.security import hash_password
@@ -54,13 +57,13 @@ class TestIngestAuth(unittest.TestCase):
         return self.client.post("/api/v1/events/ai-detection", json=_EVENT, headers=headers)
 
     def test_valid_key_accepted(self):
-        r = self._post({"X-Ingest-Key": "unit-test-key"})
+        r = self._post({"X-Ingest-Key": self.ingest_key})
         self.assertEqual(r.status_code, 201, r.text)
 
     def test_invalid_key_rejected(self):
         r = self._post({"X-Ingest-Key": "wrong-key"})
         self.assertEqual(r.status_code, 401)
-        self.assertNotIn("unit-test-key", r.text)
+        self.assertNotIn(self.ingest_key, r.text)
 
     def test_missing_credentials_rejected(self):
         r = self._post({})

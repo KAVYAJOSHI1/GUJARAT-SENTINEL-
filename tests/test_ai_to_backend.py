@@ -18,10 +18,11 @@ import unittest
 import numpy as np
 
 DB_URL = os.getenv("SENTINEL_TEST_DATABASE_URL")
-
+# shared across the DB-gated test modules so import order does not matter
+INGEST_KEY = "sentinel-test-ingest-key"
 if DB_URL:
     os.environ["DATABASE_URL"] = DB_URL
-    os.environ.setdefault("INGEST_API_KEY", "test-ingest-key")
+    os.environ.setdefault("INGEST_API_KEY", INGEST_KEY)
 
 
 def _box(cx, cy, w=120, h=90):
@@ -34,11 +35,17 @@ class TestAIToBackend(unittest.TestCase):
     def setUpClass(cls):
         import importlib
 
+        os.environ["DATABASE_URL"] = DB_URL
+
         from fastapi.testclient import TestClient
         import app.config as config_mod
         importlib.reload(config_mod)
         import app.database as db_mod
         importlib.reload(db_mod)
+        # the key the running app actually validates against (deps.py bound
+        # `settings` at its own import; use that, not the reloaded module)
+        from app.api import deps as _deps
+        cls.ingest_key = _deps.settings.INGEST_API_KEY or INGEST_KEY
 
         from app.main import app as fastapi_app
         from app.database import SessionLocal
@@ -70,7 +77,7 @@ class TestAIToBackend(unittest.TestCase):
         import ai.pipeline as pmod
 
         pipe = AIPipeline(evidence_dir="tests/_tmp_e2e_ev", device="cpu")
-        pipe.ingest_api_key = "test-ingest-key"
+        pipe.ingest_api_key = self.ingest_key
         # deterministic scenario: stub YOLO + single-pass OCR (this suite tests
         # the AI->backend contract, not OCR quality)
         pipe.multivariant_ocr = False
