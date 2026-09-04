@@ -59,6 +59,11 @@ minio_data/
 postgres_data/
 tests/test_evidence/
 
+# Generated local demo assets (scripts/make_mock_demo_videos.py) — large
+# binary video files + a machine-local registry with absolute paths.
+demo_assets/
+data/mock_camera_registry.json
+
 # Environment & Local Secrets
 .env
 .env.local
