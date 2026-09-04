@@ -1,21 +1,37 @@
-"""Password hashing and JWT issuance / verification."""
+"""Password hashing and JWT issuance / verification.
+
+Password hashing uses the maintained ``bcrypt`` package directly. The old
+``passlib`` 1.7.x + ``bcrypt`` >= 4.1 combination raised
+``AttributeError: module 'bcrypt' has no attribute '__about__'`` at import;
+calling bcrypt directly avoids that entirely and needs no version pin.
+"""
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import bcrypt
 from jose import jwt, JWTError
-from passlib.context import CryptContext
 
 from app.config import settings
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# bcrypt hashes at most 72 bytes of the password.
+_BCRYPT_MAX_BYTES = 72
+
+
+def _to_bytes(password: str) -> bytes:
+    return password.encode("utf-8")[:_BCRYPT_MAX_BYTES]
 
 
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    return bcrypt.hashpw(_to_bytes(password), bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+    if not hashed_password:
+        return False
+    try:
+        return bcrypt.checkpw(_to_bytes(plain_password), hashed_password.encode("utf-8"))
+    except (ValueError, TypeError):
+        return False
 
 
 def create_access_token(subject: str, role: str, expires_minutes: Optional[int] = None) -> str:

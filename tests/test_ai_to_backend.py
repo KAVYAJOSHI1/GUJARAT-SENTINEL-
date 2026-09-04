@@ -71,6 +71,9 @@ class TestAIToBackend(unittest.TestCase):
 
         pipe = AIPipeline(evidence_dir="tests/_tmp_e2e_ev", device="cpu")
         pipe.ingest_api_key = "test-ingest-key"
+        # deterministic scenario: stub YOLO + single-pass OCR (this suite tests
+        # the AI->backend contract, not OCR quality)
+        pipe.multivariant_ocr = False
         pipe.vehicle_detector.detect = lambda frame: [
             {"bbox": _box(200, 240), "confidence": 0.9, "class": "car"}
         ]
