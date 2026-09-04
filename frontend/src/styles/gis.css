@@ -89,21 +89,32 @@
   border: 2px solid #12161c;
   box-shadow: 0 0 0 1px rgba(229, 233, 238, 0.25);
 }
+/* Status convention (command-center palette, kept in sync with theme.js
+   CAMERA_STATUS_COLOR): GREEN = online, RED = offline, AMBER = active
+   incident (an unacknowledged alert on an otherwise-live camera). */
 .gis-cam-marker.is-active {
   background: #3fb37f;
 }
 .gis-cam-marker.is-alert {
-  background: #e0574c;
-  box-shadow: 0 0 0 1px rgba(224, 87, 76, 0.35), 0 0 10px rgba(224, 87, 76, 0.6);
+  background: #d9a441;
+  box-shadow: 0 0 0 1px rgba(217, 164, 65, 0.4), 0 0 10px rgba(217, 164, 65, 0.6);
 }
 .gis-cam-marker.is-offline {
-  background: #8993a1;
+  background: #e0574c;
 }
 /* Context markers around a highlighted one — recede so the selection pops. */
 .gis-cam-marker.is-dim {
   opacity: 0.45;
   box-shadow: none;
   border-color: #12161c;
+}
+/* LOCAL MOCK camera (trafficdataset demo source) — a dashed violet ring so
+   it is never mistaken for a real Sentinel government feed on the map,
+   independent of its online/offline/incident colour. */
+.gis-cam-marker.is-mock {
+  border-style: dashed;
+  border-color: #9b8cee;
+  box-shadow: 0 0 0 1px rgba(155, 140, 238, 0.5);
 }
 
 /* Spotlighted camera — the one the console was opened on
@@ -131,10 +142,10 @@
   background: #3fb37f;
 }
 .gis-cam-focus-core.is-alert {
-  background: #e0574c;
+  background: #d9a441;
 }
 .gis-cam-focus-core.is-offline {
-  background: #8993a1;
+  background: #e0574c;
 }
 .gis-cam-focus-ring,
 .gis-cam-focus-ring::after {

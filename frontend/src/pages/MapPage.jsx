@@ -58,8 +58,8 @@ export default function MapPage() {
         </div>
         <div style={{ display: "flex", gap: 14, fontSize: 12, color: C.muted }}>
           <span>{counts.total} cameras</span>
-          <span style={{ color: C.red }}>{counts.alert} in alert</span>
-          <span>{counts.offline} offline</span>
+          <span style={{ color: C.amber }}>{counts.alert} active incident</span>
+          <span style={{ color: C.red }}>{counts.offline} offline</span>
           {live === false && <span style={{ color: C.amber }}>simulated</span>}
         </div>
       </div>

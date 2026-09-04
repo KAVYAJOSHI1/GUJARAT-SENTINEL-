@@ -1,8 +1,30 @@
+import { useState } from "react";
 import { BellRing } from "lucide-react";
 import { C } from "../theme.js";
 import AlertRow from "./AlertRow.jsx";
 import EmptyState from "./ui/EmptyState.jsx";
 import { SkeletonRows } from "./ui/Skeleton.jsx";
+import EvidenceModal from "./gis/EvidenceModal.jsx";
+
+// An Alert -> the shape EvidenceModal already expects for an investigation
+// sighting, so "View evidence" on an incident card reuses the exact same
+// viewer InvestigationPage uses for a vehicle-journey sighting, instead of a
+// second evidence UI.
+function alertToSighting(alert) {
+  if (!alert) return null;
+  return {
+    eventId: alert.eventId,
+    cameraId: alert.cam,
+    cameraName: alert.camName || alert.cam,
+    timestamp: alert.ts || alert.time,
+    lat: alert.lat,
+    lng: alert.lng,
+    snapshotUrl: null,
+    plateCropUrl: null,
+    ocrConfidence: NaN,
+    vehicleType: null,
+  };
+}
 
 // Scrollable alert list with header actions. Used both inline on the dashboard
 // and inside the slide-over <AlertDrawer/> (README §4.4).
@@ -15,6 +37,8 @@ export default function AlertFeed({
   maxHeight = 520,
   title = "Active Alerts",
 }) {
+  const [viewing, setViewing] = useState(null);
+
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
       <div
@@ -60,9 +84,15 @@ export default function AlertFeed({
         ) : alerts.length === 0 ? (
           <EmptyState icon={BellRing} title="No active alerts" hint="Incoming detections will appear here in real time." />
         ) : (
-          alerts.map((a) => <AlertRow key={a.id} alert={a} onAck={onAck} />)
+          alerts.map((a) => <AlertRow key={a.id} alert={a} onAck={onAck} onViewEvidence={setViewing} />)
         )}
       </div>
+
+      <EvidenceModal
+        sighting={alertToSighting(viewing)}
+        plate={viewing?.vehicle || ""}
+        onClose={() => setViewing(null)}
+      />
     </div>
   );
 }

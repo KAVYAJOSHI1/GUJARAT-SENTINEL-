@@ -97,6 +97,16 @@ export function evidenceUrl(eventId) {
   return t ? `${base}?token=${encodeURIComponent(t)}` : base;
 }
 
+// Proxied raw video for one MOCK_CAM* camera, usable as <video src>. Real
+// Sentinel cameras never resolve here (backend refuses any non-MOCK code) --
+// their feed genuinely can't be embedded (Basic-auth RTSP, no CORS HLS).
+export function mockVideoUrl(cameraId) {
+  if (!cameraId) return null;
+  const t = getToken();
+  const base = `${API_BASE}/cameras/${encodeURIComponent(cameraId)}/mock-video`;
+  return t ? `${base}?token=${encodeURIComponent(t)}` : base;
+}
+
 // ─── Normalisers ────────────────────────────────────────────────────────────
 const pick = (obj, keys, fallback) => {
   for (const k of keys) if (obj?.[k] !== undefined && obj[k] !== null) return obj[k];
@@ -123,14 +133,25 @@ function zoneFromAddress(addr, fallback) {
   return parts.length >= 3 ? parts[parts.length - 3] : fallback;
 }
 
+// A camera is a LOCAL MOCK source (trafficdataset demo feed) iff its code
+// carries the MOCK_ prefix the registry generator assigns (MOCK_CAM01, ...).
+// Deliberately a naming convention, not a new backend field/schema change --
+// see DEVELOPER_README.md "Mock cameras" for why. Never used to label a real
+// Sentinel feed as mock or vice versa.
+export function isMockCamera(codeOrId) {
+  return /^mock[_-]?cam/i.test(String(codeOrId || ""));
+}
+
 export function normalizeCamera(raw) {
   const lat = Number(pick(raw, ["lat", "latitude", "location_lat"], NaN));
   const lng = Number(pick(raw, ["lng", "lon", "longitude", "location_lng"], NaN));
   const coords = raw?.location?.coordinates; // GeoJSON [lng, lat]
+  const id = String(pick(raw, ["code", "camera_id", "cam_id", "id"], "CAM-?"));
   return {
-    id: String(pick(raw, ["code", "camera_id", "cam_id", "id"], "CAM-?")),
+    id,
     uuid: pick(raw, ["id"], null),
     code: pick(raw, ["code", "camera_id"], null),
+    isMock: isMockCamera(id),
     name: pick(raw, ["name", "label", "location_name"], "Unnamed camera"),
     zone: zoneFromAddress(pick(raw, ["location_desc"], null), pick(raw, ["zone", "sector", "area"], "—")),
     locationDesc: pick(raw, ["location_desc"], null),
@@ -146,10 +167,20 @@ export function normalizeCamera(raw) {
 
 export function normalizeAlert(raw) {
   const status = String(pick(raw, ["status"], "")).toUpperCase();
+  const lat = Number(pick(raw, ["latitude", "lat"], NaN));
+  const lng = Number(pick(raw, ["longitude", "lng", "lon"], NaN));
   return {
     id: pick(raw, ["id", "alert_id", "event_id"], `alert-${Date.now()}`),
-    type: String(pick(raw, ["type", "alert_type", "category"], "WATCHLIST")).toUpperCase(),
+    // The event behind this alert — lets the UI pull the real evidence
+    // snapshot via the existing evidence proxy (GET /vehicles/evidence/{id}),
+    // same mechanism DetectionRow already uses.
+    eventId: pick(raw, ["vehicle_event_id", "eventId", "event_id"], null),
+    type: String(pick(raw, ["type", "alert_type", "category"], "WATCHLIST MATCH")).toUpperCase(),
     cam: String(pick(raw, ["cam", "camera_code", "camera_id", "cam_id", "source"], "CAM-?")),
+    camName: pick(raw, ["camera_name", "cam_name"], null),
+    locationDesc: pick(raw, ["location_desc", "locationDesc"], null),
+    lat: Number.isFinite(lat) ? lat : null,
+    lng: Number.isFinite(lng) ? lng : null,
     vehicle: pick(
       raw,
       ["vehicle", "plate", "plate_number_normalized", "plate_number", "registration"],
@@ -159,6 +190,7 @@ export function normalizeAlert(raw) {
       pick(raw, ["severity", "priority_level", "priority", "level"], "medium")
     ).toLowerCase(),
     msg: pick(raw, ["msg", "message", "description", "detail", "offense_category"], "Watchlist hit"),
+    ts: pick(raw, ["timestamp", "created_at", "time"], null),
     time:
       pick(raw, ["time", "timestamp", "created_at"], null) != null
         ? formatTime(pick(raw, ["time", "timestamp", "created_at"], null))
@@ -178,6 +210,7 @@ export function normalizeDetection(raw) {
     plate: pick(raw, ["plate", "plate_number", "plate_number_normalized"], "UNKNOWN"),
     cam: String(pick(raw, ["camera_code", "camera_id", "cam"], "CAM-?")),
     camName: pick(raw, ["camera_name", "cam_name"], null),
+    locationDesc: pick(raw, ["location_desc", "locationDesc"], null),
     vehicleType: pick(raw, ["vehicle_type", "vehicleType", "type"], null),
     trackId: pick(raw, ["track_id", "trackId"], null),
     confidence: pick(raw, ["confidence_score", "confidence"], null),
@@ -196,10 +229,22 @@ function formatTime(value) {
 }
 
 function normalizeStats(raw) {
+  const totalCameras = pick(raw, ["totalCameras", "total_cameras", "cameras_total"], MOCK_STATS.totalCameras);
+  const onlineFeeds = pick(raw, ["onlineFeeds", "online_feeds", "cameras_online"], MOCK_STATS.onlineFeeds);
+  const degradedCameras = pick(raw, ["degradedCameras", "degraded_cameras"], 0);
   return {
-    totalCameras: pick(raw, ["totalCameras", "total_cameras", "cameras_total"], MOCK_STATS.totalCameras),
-    onlineFeeds: pick(raw, ["onlineFeeds", "online_feeds", "cameras_online"], MOCK_STATS.onlineFeeds),
+    totalCameras,
+    onlineFeeds,
+    // Backend didn't add offline_cameras until this UI pass — fall back to
+    // the arithmetic so older API responses still render a sane value.
+    offlineCameras: pick(
+      raw,
+      ["offlineCameras", "offline_cameras"],
+      Math.max(0, totalCameras - onlineFeeds - degradedCameras)
+    ),
+    degradedCameras,
     activeAlerts: pick(raw, ["activeAlerts", "active_alerts", "alerts_active"], MOCK_STATS.activeAlerts),
+    watchlistMatches: pick(raw, ["watchlistMatches", "watchlist_matches"], MOCK_STATS.activeAlerts),
     todaysDetections: pick(raw, ["todaysDetections", "todays_detections", "detections_today"], MOCK_STATS.todaysDetections),
     anprReadsPerHour: pick(raw, ["anprReadsPerHour", "anpr_reads_per_hour"], MOCK_STATS.anprReadsPerHour),
     zonesOnline: pick(raw, ["zonesOnline", "zones_online"], MOCK_STATS.zonesOnline),

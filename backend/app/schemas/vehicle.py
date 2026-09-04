@@ -10,6 +10,7 @@ class VehicleSighting(BaseModel):
     camera_id: str
     camera_code: Optional[str] = None
     camera_name: Optional[str] = None
+    location_desc: Optional[str] = None
     timestamp: datetime
     latitude: Optional[float]
     longitude: Optional[float]

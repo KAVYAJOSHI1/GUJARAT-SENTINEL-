@@ -33,5 +33,18 @@ export const SEVERITY_COLOR = {
   low: C.muted,
 };
 
+// Camera/GIS marker status colours (command-center convention):
+//   GREEN  = online / normal
+//   RED    = offline (camera down — the serious, "needs attention" state)
+//   AMBER  = active incident (an unacknowledged alert on an otherwise-live
+//            camera — distinct from a hard offline failure)
+//   accent (blue) = selected / focused, handled separately by callers
+export const CAMERA_STATUS_COLOR = {
+  active: C.green,
+  alert: C.amber,
+  degraded: C.amber,
+  offline: C.red,
+};
+
 export const LOGO_URL =
   "https://sentinel.gujarat.gov.in/public/logos/gujarat%20police%20logo.png";

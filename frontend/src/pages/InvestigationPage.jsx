@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useOutletContext, useSearchParams } from "react-router-dom";
 import { Download, FileSpreadsheet, MapPin, MapPinned, Radio, Search } from "lucide-react";
-import { C } from "../theme.js";
+import { C, CAMERA_STATUS_COLOR } from "../theme.js";
+import { useToast } from "../context/ToastContext.jsx";
 import ErrorBanner from "../components/ui/ErrorBanner.jsx";
 import EmptyState from "../components/ui/EmptyState.jsx";
 import GisMap from "../components/gis/GisMap.jsx";
@@ -23,6 +24,7 @@ import { formatPlate } from "../utils/plate.js";
 // Layout:  search bar → vehicle profile + export → [ timeline | GIS map ] → evidence modal
 export default function InvestigationPage() {
   const { cameras: layoutCameras = [], backendLive, loading: layoutLoading } = useOutletContext() || {};
+  const { push } = useToast();
   const [params, setParams] = useSearchParams();
   const camParam = params.get("cam");
   const plateParam = params.get("plate");
@@ -61,7 +63,18 @@ export default function InvestigationPage() {
     setLive(res.live);
     setSelected(null);
     setLoading(false);
-  }, []);
+
+    const n = res.data?.sightings?.length || 0;
+    const plateLabel = formatPlate(res.data?.plate || plate);
+    if (n > 0) {
+      push({
+        id: `search-${plateLabel}-${Date.now()}`,
+        title: "Vehicle found",
+        msg: `Vehicle ${plateLabel} found across ${n} camera sighting${n === 1 ? "" : "s"}.`,
+        severity: res.data?.watchlistHit ? "high" : "medium",
+      });
+    }
+  }, [push]);
 
   // Auto-run when arriving with ?plate= (deep link / dashboard hand-off), once.
   useEffect(() => {
@@ -201,11 +214,8 @@ export default function InvestigationPage() {
                 fontWeight: 700,
                 borderRadius: 3,
                 padding: "1px 6px",
-                color:
-                  focusCamera.status === "alert" ? C.red : focusCamera.status === "offline" ? C.muted : C.green,
-                border: `1px solid ${
-                  focusCamera.status === "alert" ? C.red : focusCamera.status === "offline" ? C.muted : C.green
-                }55`,
+                color: CAMERA_STATUS_COLOR[focusCamera.status] || C.green,
+                border: `1px solid ${CAMERA_STATUS_COLOR[focusCamera.status] || C.green}55`,
               }}
             >
               {focusCamera.status}
