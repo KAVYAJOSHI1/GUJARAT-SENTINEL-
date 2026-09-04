@@ -37,6 +37,7 @@ def search_vehicle(
             VehicleEvent,
             Camera.name,
             Camera.code,
+            Camera.location_desc,
             ST_Y(Camera.location),
             ST_X(Camera.location),
         )
@@ -53,6 +54,7 @@ def search_vehicle(
             camera_id=ev.camera_id,
             camera_code=camera_code,
             camera_name=camera_name,
+            location_desc=location_desc,
             timestamp=ev.timestamp,
             # prefer the event's own fix; fall back to the camera's location
             latitude=ev.latitude if ev.latitude is not None else cam_lat,
@@ -63,7 +65,7 @@ def search_vehicle(
             vehicle_type=ev.vehicle_type,
             plate_number=ev.plate_number,
         )
-        for ev, camera_name, camera_code, cam_lat, cam_lon in rows
+        for ev, camera_name, camera_code, location_desc, cam_lat, cam_lon in rows
     ]
 
     is_watchlisted = (
@@ -96,6 +98,7 @@ def recent_vehicle_events(
             VehicleEvent,
             Camera.name,
             Camera.code,
+            Camera.location_desc,
             ST_Y(Camera.location),
             ST_X(Camera.location),
         )
@@ -109,6 +112,7 @@ def recent_vehicle_events(
             camera_id=ev.camera_id,
             camera_code=code,
             camera_name=name,
+            location_desc=location_desc,
             timestamp=ev.timestamp,
             latitude=ev.latitude if ev.latitude is not None else cam_lat,
             longitude=ev.longitude if ev.longitude is not None else cam_lon,
@@ -118,7 +122,7 @@ def recent_vehicle_events(
             vehicle_type=ev.vehicle_type,
             plate_number=ev.plate_number,
         )
-        for ev, name, code, cam_lat, cam_lon in db.execute(stmt).all()
+        for ev, name, code, location_desc, cam_lat, cam_lon in db.execute(stmt).all()
     ]
 
 
@@ -152,6 +156,11 @@ def get_evidence(
 
     if url.startswith(("http://", "https://")):
         return RedirectResponse(url)
-    if url.startswith("file://") and os.path.isfile(url[7:]):
-        return FileResponse(url[7:])
+    # ai/pipeline.py writes plain absolute filesystem paths (os.path.abspath),
+    # not file:// URIs -- accept both so local evidence (real cameras' own
+    # evidence/live/ and mock cameras' evidence/mock/ alike) actually opens
+    # instead of 404ing here every time.
+    local_path = url[7:] if url.startswith("file://") else url
+    if os.path.isabs(local_path) and os.path.isfile(local_path):
+        return FileResponse(local_path)
     raise NotFoundError("Evidence file", event_id)

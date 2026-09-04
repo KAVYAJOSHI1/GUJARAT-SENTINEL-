@@ -28,6 +28,7 @@ export function useSentinelData() {
   const [backendLive, setBackendLive] = useState(true);
   const [retrying, setRetrying] = useState(false);
   const [wsStatus, setWsStatus] = useState("connecting");
+  const [lastRefresh, setLastRefresh] = useState(null);
 
   const seenIds = useRef(new Set());
   const alertsRef = useRef([]);
@@ -49,6 +50,7 @@ export function useSentinelData() {
     setBackendLive(s.live || c.live || a.live);
     setLoading(false);
     setRetrying(false);
+    setLastRefresh(new Date());
   }, []);
 
   useEffect(() => {
@@ -66,6 +68,7 @@ export function useSentinelData() {
       setCameras(c.data);
       setDetections(d.data);
       setBackendLive((prev) => s.live || c.live || prev);
+      setLastRefresh(new Date());
     }, 10000);
     return () => clearInterval(id);
   }, []);
@@ -120,15 +123,41 @@ export function useSentinelData() {
     return map;
   }, [detections]);
 
+  // Total detections seen per camera in the currently-loaded feed (README
+  // task §7 — "Vehicle detections: X" on each camera card). Derived from the
+  // same already-fetched list, no extra request.
+  const detectionCountByCamera = useMemo(() => {
+    const map = {};
+    for (const d of detections) map[d.cam] = (map[d.cam] || 0) + 1;
+    return map;
+  }, [detections]);
+
+  // Overlay an "alert" status onto any camera carrying an unacknowledged
+  // alert, so the command-center / camera grid / GIS map can all show the
+  // AMBER "active incident" state (README task §4/§7) from ONE computation
+  // instead of every consumer re-deriving it. Never overrides "offline" --
+  // a dead camera stays visually offline (RED) even if it also has a stale
+  // unacked alert on record.
+  const camerasWithIncidentStatus = useMemo(() => {
+    if (!alerts.length) return cameras;
+    const alertCams = new Set(alerts.filter((a) => !a.ack).map((a) => a.cam));
+    if (!alertCams.size) return cameras;
+    return cameras.map((c) =>
+      alertCams.has(c.id) && c.status !== "offline" ? { ...c, status: "alert" } : c
+    );
+  }, [cameras, alerts]);
+
   return {
     stats,
-    cameras,
+    cameras: camerasWithIncidentStatus,
     alerts,
     detections,
     latestDetectionByCamera,
+    detectionCountByCamera,
     loading,
     backendLive,
     retrying,
+    lastRefresh,
     wsStatus,
     unackCount,
     critCount,

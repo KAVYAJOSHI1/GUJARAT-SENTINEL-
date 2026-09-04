@@ -1,5 +1,6 @@
 """Alerts API — list recent alerts and acknowledge/resolve them."""
 from fastapi import APIRouter, Depends, Query
+from geoalchemy2.functions import ST_X, ST_Y
 from sqlalchemy import select
 from sqlmodel import Session
 
@@ -7,6 +8,7 @@ from app.api.deps import get_current_user
 from app.core.exceptions import NotFoundError
 from app.database import get_db
 from app.models.alert import Alert
+from app.models.camera import Camera
 from app.schemas.alert import AlertAcknowledge, AlertRead
 from app.schemas.auth import CurrentUser
 
@@ -20,10 +22,37 @@ def list_alerts(
     db: Session = Depends(get_db),
     _=Depends(get_current_user),
 ):
-    stmt = select(Alert).order_by(Alert.created_at.desc()).limit(limit)
+    # Joined with Camera (same pattern as vehicles.py) so the incident UI can
+    # show the human camera code/name/location instead of a bare UUID.
+    stmt = (
+        select(Alert, Camera.code, Camera.name, Camera.location_desc, ST_Y(Camera.location), ST_X(Camera.location))
+        .join(Camera, Camera.id == Alert.camera_id, isouter=True)
+        .order_by(Alert.created_at.desc())
+        .limit(limit)
+    )
     if status_filter:
         stmt = stmt.where(Alert.status == status_filter)
-    return db.execute(stmt).scalars().all()
+    rows = db.execute(stmt).all()
+    return [
+        AlertRead(
+            id=a.id,
+            plate_number=a.plate_number,
+            plate_number_normalized=a.plate_number_normalized,
+            camera_id=a.camera_id,
+            camera_code=code,
+            camera_name=name,
+            location_desc=location_desc,
+            latitude=lat,
+            longitude=lon,
+            vehicle_event_id=a.vehicle_event_id,
+            watchlist_id=a.watchlist_id,
+            priority_level=a.priority_level,
+            status=a.status,
+            snapshot_url=a.snapshot_url,
+            created_at=a.created_at,
+        )
+        for a, code, name, location_desc, lat, lon in rows
+    ]
 
 
 @router.patch("/{alert_id}", response_model=AlertRead)

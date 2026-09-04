@@ -10,6 +10,7 @@ const TABS = [
   { to: "/", label: "Overview", end: true },
   { to: "/cameras", label: "Cameras" },
   { to: "/alerts", label: "Alerts" },
+  { to: "/map", label: "Map" },
 ];
 
 export default function Navbar({ wsStatus, unackCount = 0, critCount = 0 }) {

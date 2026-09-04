@@ -1,14 +1,34 @@
+import { useState } from "react";
 import { ScanLine } from "lucide-react";
 import { C } from "../theme.js";
 import DetectionRow from "./DetectionRow.jsx";
 import EmptyState from "./ui/EmptyState.jsx";
 import { SkeletonRows } from "./ui/Skeleton.jsx";
+import EvidenceModal from "./gis/EvidenceModal.jsx";
+
+function detectionToSighting(det) {
+  if (!det) return null;
+  return {
+    eventId: det.id,
+    cameraId: det.cam,
+    cameraName: det.camName || det.cam,
+    timestamp: det.ts || det.time,
+    lat: det.lat,
+    lng: det.lng,
+    snapshotUrl: det.snapshotUrl || null,
+    plateCropUrl: null,
+    ocrConfidence: det.confidence,
+    vehicleType: det.vehicleType,
+  };
+}
 
 // Live feed of consolidated AI detection events (one row per completed
 // camera+track, not one per frame — the backend already de-duplicates this).
 // This is the panel that makes the pipeline visible end to end: camera ->
 // vehicle detection -> ByteTrack -> AI event -> backend, shown as it happens.
 export default function DetectionFeed({ detections = [], loading = false, maxHeight = 420 }) {
+  const [viewing, setViewing] = useState(null);
+
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
       <div
@@ -39,9 +59,15 @@ export default function DetectionFeed({ detections = [], loading = false, maxHei
             hint="Start the ingestion pipeline against a Sentinel camera to see live events here."
           />
         ) : (
-          detections.map((d) => <DetectionRow key={d.id} det={d} />)
+          detections.map((d) => <DetectionRow key={d.id} det={d} onViewEvidence={setViewing} />)
         )}
       </div>
+
+      <EvidenceModal
+        sighting={detectionToSighting(viewing)}
+        plate={viewing?.plate && viewing.plate !== "UNKNOWN" ? viewing.plate : "UNKNOWN PLATE"}
+        onClose={() => setViewing(null)}
+      />
     </div>
   );
 }

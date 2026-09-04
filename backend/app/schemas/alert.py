@@ -12,6 +12,14 @@ class AlertRead(BaseModel):
     plate_number: str
     plate_number_normalized: Optional[str] = None
     camera_id: str
+    # Enrichment joined from cameras (not stored on Alert itself) so the
+    # incident/alert UI can show "cam04 — Paldi Circle" instead of a bare
+    # backend UUID. None when the camera has since been removed.
+    camera_code: Optional[str] = None
+    camera_name: Optional[str] = None
+    location_desc: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
     vehicle_event_id: str
     watchlist_id: str
     priority_level: PriorityLevel
