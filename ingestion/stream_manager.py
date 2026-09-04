@@ -228,9 +228,18 @@ class StreamManager:
 
         with self._lock:
             for camera_id in list(self._workers):
-                if camera_id not in incoming or not incoming[camera_id].stream_url:
+                worker = self._workers[camera_id]
+                removed = camera_id not in incoming or not incoming[camera_id].stream_url
+                dead = not worker.is_alive()
+                if removed:
                     logger.info("Camera %s removed or has no stream URL, stopping worker", camera_id)
                     self._workers.pop(camera_id).stop()
+                elif dead:
+                    # A worker thread that exited on its own (unrecoverable open
+                    # failure) -- drop it so the loop below restarts it. Other
+                    # cameras are unaffected.
+                    logger.warning("Camera %s worker died, will restart", camera_id)
+                    self._workers.pop(camera_id, None)
 
             for camera_id, camera in incoming.items():
                 if not camera.stream_url:

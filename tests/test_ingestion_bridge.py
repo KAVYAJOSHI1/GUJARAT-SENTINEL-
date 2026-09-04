@@ -112,6 +112,23 @@ class TestQueueConsumer(unittest.TestCase):
         process_queue_once(q, pipe, max_frames=10)
         self.assertEqual(pipe.resets, [])
 
+    def test_frame_skip_samples_per_camera(self):
+        q = queue.Queue()
+        pipe = _RecordingPipeline()
+        for i in range(1, 10):
+            q.put(_envelope("cam04", seq=i))
+        stop = threading.Event()
+        c = FrameConsumer(q, pipe, stop_event=stop, poll_timeout_s=0.1, frame_skip=2)
+        c.start()
+        deadline = time.time() + 5
+        while q.qsize() and time.time() < deadline:
+            time.sleep(0.05)
+        stop.set()
+        c.join(timeout=3)
+        # frame_skip=2 -> process 1 of every 3 -> frames 1,4,7 of 9
+        self.assertEqual(len(pipe.seen), 3)
+        self.assertEqual(c.frames_skipped, 6)
+
 
 class _OneShotWorker(StreamWorker):
     """Real StreamWorker, but a file EOF stops it instead of re-looping the
