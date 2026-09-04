@@ -25,7 +25,14 @@ class MinioService:
         self._client: Minio | None = None
         self._bucket = settings.MINIO_BUCKET
         self._fallback_dir = settings.LOCAL_EVIDENCE_FALLBACK_DIR
-        os.makedirs(self._fallback_dir, exist_ok=True)
+        try:
+            os.makedirs(self._fallback_dir, exist_ok=True)
+        except OSError as exc:  # not writable here -> fall back to a temp dir
+            import tempfile
+            logger.warning("evidence fallback dir %s unusable (%s); using tempdir",
+                           self._fallback_dir, exc)
+            self._fallback_dir = os.path.join(tempfile.gettempdir(), "sentinel-evidence")
+            os.makedirs(self._fallback_dir, exist_ok=True)
         self._connect_and_ensure_bucket()
 
     def _connect_and_ensure_bucket(self) -> None:

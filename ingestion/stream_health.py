@@ -69,10 +69,14 @@ class _CameraTelemetry:
 
         if len(self.pts_history) >= 2:
             history = list(self.pts_history)
-            pts_deltas = [b - a for a, b in zip(history, history[1:])]
-            avg_delta_ms = sum(pts_deltas) / len(pts_deltas)
-            self.metrics.measured_fps = 1000.0 / avg_delta_ms if avg_delta_ms > 0 else 0.0
-            self.metrics.pts_jitter_ms = pstdev(pts_deltas) if len(pts_deltas) > 1 else 0.0
+            # Ignore sub-millisecond / non-positive gaps (H.265 B-frame PTS
+            # reordering can produce them) so measured_fps stays sane.
+            pts_deltas = [b - a for a, b in zip(history, history[1:]) if (b - a) >= 1.0]
+            if pts_deltas:
+                avg_delta_ms = sum(pts_deltas) / len(pts_deltas)
+                fps = 1000.0 / avg_delta_ms if avg_delta_ms > 0 else 0.0
+                self.metrics.measured_fps = min(fps, 240.0)  # clamp to a plausible ceiling
+                self.metrics.pts_jitter_ms = pstdev(pts_deltas) if len(pts_deltas) > 1 else 0.0
 
         self.metrics.last_pts_ms = pts_ms
         self.metrics.status = StreamStatus.ONLINE
