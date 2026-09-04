@@ -1,0 +1,30 @@
+# SENTINEL — AI / ANPR + Stream Ingestion subsystem dependencies
+# (ai/ and ingestion/ packages, merged in from the `testing` branch).
+# Backend API deps live in backend/requirements.txt.
+#
+# Install:  pip install -r requirements-ai.txt
+# Python:   3.10 - 3.13
+
+# --- Core CV / numerics ---
+numpy>=1.26,<3
+opencv-python>=4.8
+
+# --- Object detection (YOLOv8) ---
+ultralytics>=8.3
+# torch is pulled in transitively by ultralytics; pin a CPU build explicitly
+# on machines without CUDA if the default wheel is too large:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+torch>=2.2
+
+# --- HTTP (catalogue ingest, health push, backend event dispatch) ---
+requests>=2.31
+
+# --- Optional local health telemetry API (ingestion/stream_health.py) ---
+fastapi>=0.110
+uvicorn[standard]>=0.29
+
+# --- Optional OCR engines (ai/ocr/ocr_engine.py) ---
+# The pipeline falls back to a contour-based OCR if neither is installed,
+# but real plate reading needs one of these:
+# paddleocr>=2.7
+# easyocr>=1.7
