@@ -7,6 +7,15 @@ from typing import Generator, Optional, Union, Dict, Any
 
 from ai.adapter.frame_interface import FrameInput
 
+try:
+    from ingestion.rtsp_auth import apply_rtsp_credentials, redact_rtsp_url
+except Exception:  # ingestion package not importable in some minimal contexts
+    def apply_rtsp_credentials(url, username=None, password=None):
+        return url
+
+    def redact_rtsp_url(url):
+        return url
+
 logger = logging.getLogger("RTSPStreamAdapter")
 
 class RTSPStreamAdapter:
@@ -23,7 +32,9 @@ class RTSPStreamAdapter:
         frame_skip: int = 0,
         use_tcp: bool = True,
         max_reconnect_retries: int = 3,
-        reconnect_backoff_sec: float = 1.0
+        reconnect_backoff_sec: float = 1.0,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
     ):
         """
         :param source: RTSP URL (rtsp://...), video file path, or camera index integer.
@@ -32,6 +43,9 @@ class RTSPStreamAdapter:
         :param use_tcp: Force TCP transport for RTSP streams to eliminate UDP packet dropouts.
         :param max_reconnect_retries: Maximum reconnection attempts on stream interruption.
         :param reconnect_backoff_sec: Backoff delay in seconds between reconnection attempts.
+        :param username/password: RTSP Basic-auth credentials. When omitted, the
+            SENTINEL_RTSP_USERNAME / SENTINEL_RTSP_PASSWORD env vars are used.
+            Never logged.
         """
         self.source = source
         self.camera_id = camera_id
@@ -42,27 +56,34 @@ class RTSPStreamAdapter:
         self.cap: Optional[cv2.VideoCapture] = None
         self.stream_start_time: float = time.time()
 
-        if self.use_tcp and isinstance(self.source, str) and self.source.startswith("rtsp://"):
+        # Resolve the connectable source once. `_display_source` is the ONLY
+        # form that is ever logged.
+        if isinstance(self.source, str) and self.source.lower().startswith("rtsp://"):
+            self._connect_source = apply_rtsp_credentials(self.source, username, password)
+        else:
+            self._connect_source = self.source
+        self._display_source = redact_rtsp_url(str(self.source))
+
+        if self.use_tcp and isinstance(self.source, str) and self.source.lower().startswith("rtsp://"):
             os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
 
     def connect(self) -> bool:
         """Initialize OpenCV VideoCapture connection."""
         try:
-            if isinstance(self.source, str) and self.source.isdigit():
-                source_val = int(self.source)
-            else:
-                source_val = self.source
+            src = self._connect_source
+            if isinstance(src, str) and src.isdigit():
+                src = int(src)
 
-            self.cap = cv2.VideoCapture(source_val)
+            self.cap = cv2.VideoCapture(src)
             if not self.cap.isOpened():
-                logger.error(f"Failed to open video source: {self.source}")
+                logger.error("Failed to open video source: %s", self._display_source)
                 return False
 
             self.stream_start_time = time.time()
-            logger.info(f"Successfully connected to video stream/source: {self.source}")
+            logger.info("Successfully connected to video stream/source: %s", self._display_source)
             return True
         except Exception as e:
-            logger.error(f"Error opening video stream source '{self.source}': {e}")
+            logger.error("Error opening video stream source '%s': %s", self._display_source, e)
             return False
 
     def stream_frames(
@@ -88,12 +109,12 @@ class RTSPStreamAdapter:
             if not ret or frame is None or frame.size == 0:
                 consecutive_errors += 1
                 logger.warning(
-                    f"Read failure or empty frame from '{self.source}' "
+                    f"Read failure or empty frame from '{self._display_source}' "
                     f"(attempt {consecutive_errors}/{self.max_reconnect_retries})."
                 )
 
                 if consecutive_errors > self.max_reconnect_retries:
-                    logger.info(f"Max reconnect attempts reached for '{self.source}'. Stopping generator.")
+                    logger.info(f"Max reconnect attempts reached for '{self._display_source}'. Stopping generator.")
                     break
 
                 # Backoff before retrying
@@ -133,7 +154,7 @@ class RTSPStreamAdapter:
                     "frame_index": frame_count,
                     "resolution": f"{width}x{height}",
                     "stream_fps": fps if fps > 0 else None,
-                    "source": str(self.source)
+                    "source": self._display_source
                 }
             )
 
@@ -151,7 +172,7 @@ class RTSPStreamAdapter:
         if self.cap:
             try:
                 self.cap.release()
-                logger.info(f"Released video capture source '{self.source}'.")
+                logger.info(f"Released video capture source '{self._display_source}'.")
             except Exception as e:
                 logger.warning(f"Error releasing video source: {e}")
             finally:

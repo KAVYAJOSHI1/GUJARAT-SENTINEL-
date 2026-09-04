@@ -29,6 +29,7 @@ import cv2
 from .config import CONFIG
 from .models import CameraRecord, FrameEnvelope, StreamStatus
 from .reconnect import ReconnectSupervisor
+from .rtsp_auth import apply_rtsp_credentials, redact_rtsp_url
 from .stream_health import HealthRegistry
 
 logger = logging.getLogger("sentinel.ingestion.stream_manager")
@@ -73,24 +74,38 @@ class StreamWorker(threading.Thread):
         one frame per (re)connect, which is an accepted trade-off -- see
         README for details.
         """
-        if not self.camera.stream_url:
-            logger.warning("Camera %s has no stream_url configured", self.camera.camera_id)
+        # RTSP first (with env / inline Basic-auth credentials injected), then
+        # the camera's HLS URL as a fallback if the registry provides one.
+        candidates = []
+        if self.camera.stream_url:
+            candidates.append(("rtsp", apply_rtsp_credentials(self.camera.stream_url)))
+        if getattr(self.camera, "hls_url", None):
+            candidates.append(("hls", self.camera.hls_url))
+        if not candidates:
+            logger.warning("Camera %s has no stream_url / hls_url configured", self.camera.camera_id)
             return None
 
-        cap = cv2.VideoCapture(self.camera.stream_url, cv2.CAP_FFMPEG)
-        if not cap.isOpened():
-            cap.release()
-            return None
-
-        deadline = time.monotonic() + CONFIG.open_timeout_s
-        while time.monotonic() < deadline:
-            ok, _ = cap.read()
-            if ok:
-                return cap
-            if self._stop_event.wait(0.05):
+        for kind, url in candidates:
+            cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
+            if not cap.isOpened():
                 cap.release()
-                return None
-        cap.release()
+                logger.debug(
+                    "Camera %s: %s source did not open (%s)",
+                    self.camera.camera_id, kind, redact_rtsp_url(url),
+                )
+                continue
+
+            deadline = time.monotonic() + CONFIG.open_timeout_s
+            while time.monotonic() < deadline:
+                ok, _ = cap.read()
+                if ok:
+                    if kind != "rtsp":
+                        logger.info("Camera %s: connected via %s fallback", self.camera.camera_id, kind)
+                    return cap
+                if self._stop_event.wait(0.05):
+                    cap.release()
+                    return None
+            cap.release()
         return None
 
     def _release_capture(self) -> None:
@@ -133,7 +148,9 @@ class StreamWorker(threading.Thread):
 
     def run(self) -> None:
         logger.info(
-            "Starting worker for camera %s (%s)", self.camera.camera_id, self.camera.stream_url
+            "Starting worker for camera %s (%s)",
+            self.camera.camera_id,
+            redact_rtsp_url(self.camera.stream_url),
         )
 
         if not self._reconnect():
