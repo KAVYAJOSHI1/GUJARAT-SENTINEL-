@@ -365,8 +365,10 @@ class AIPipeline:
             snapshot_filename = f"{camera_id}_{ts_str}_tr{track_id}_{final_plate}.jpg"
             crop_filename = f"{camera_id}_{ts_str}_tr{track_id}_{final_plate}_crop.jpg"
 
-            snapshot_path = os.path.join(self.evidence_dir, snapshot_filename)
-            crop_path = os.path.join(self.evidence_dir, crop_filename)
+            # absolute so a separately-running backend on the same host can
+            # resolve the file:// reference
+            snapshot_path = os.path.abspath(os.path.join(self.evidence_dir, snapshot_filename))
+            crop_path = os.path.abspath(os.path.join(self.evidence_dir, crop_filename))
 
             # Write evidence to disk if new track or readable plate detected
             evidence_key = f"{track_key}:{final_plate}"

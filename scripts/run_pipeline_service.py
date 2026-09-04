@@ -258,7 +258,8 @@ def main():
     ap.add_argument("--max-queue", type=int, default=500)
     ap.add_argument("--stats-interval", type=float, default=10.0)
     ap.add_argument("--duration", type=float, default=0.0, help="auto-stop after N seconds (0 = run forever)")
-    ap.add_argument("--admin-user", default=os.getenv("ADMIN_USER", ""))
+    ap.add_argument("--admin-user",
+                    default=os.getenv("ADMIN_USER") or os.getenv("ADMIN_USERNAME", ""))
     ap.add_argument("--admin-password", default=os.getenv("ADMIN_PASSWORD", ""))
     args = ap.parse_args()
 
