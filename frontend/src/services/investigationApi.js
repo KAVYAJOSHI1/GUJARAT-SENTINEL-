@@ -4,7 +4,7 @@
 // "/api/v1"), timeout, proxy and headers — so there is ONE API architecture,
 // not two. Only the endpoints and response shapes below are Vishakha's domain
 // (DEVELOPER_README §8 / §11, docs/API_CONTRACTS.md §1 & §4).
-import { http } from "./api.js";
+import { getToken, http } from "./api.js";
 import {
   CAMERA_GEOJSON,
   GIS_CAMERAS,
@@ -19,9 +19,13 @@ export const INVESTIGATION_ENDPOINTS = {
 };
 
 // Absolute URL for an evidence snapshot file, usable as an <img src>.
+// <img> can't send an Authorization header, so the JWT rides as ?token=.
 export function evidenceUrl(eventId) {
   const base = http.defaults.baseURL || "/api/v1";
-  return `${base}${INVESTIGATION_ENDPOINTS.evidence(eventId)}`;
+  let url = `${base}${INVESTIGATION_ENDPOINTS.evidence(eventId)}`;
+  const t = getToken();
+  if (t) url += `?token=${encodeURIComponent(t)}`;
+  return url;
 }
 
 // ─── helpers (same tolerant style as services/api.js) ────────────────────────

@@ -1,5 +1,6 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { ToastProvider } from "./context/ToastContext.jsx";
+import LoginGate from "./components/LoginGate.jsx";
 import AppLayout from "./AppLayout.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
 import CamerasPage from "./pages/CamerasPage.jsx";
@@ -31,9 +32,11 @@ export function AppRoutes() {
 export default function App() {
   return (
     <ToastProvider>
-      <BrowserRouter>
-        <AppRoutes />
-      </BrowserRouter>
+      <LoginGate>
+        <BrowserRouter>
+          <AppRoutes />
+        </BrowserRouter>
+      </LoginGate>
     </ToastProvider>
   );
 }
