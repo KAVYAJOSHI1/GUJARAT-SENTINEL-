@@ -45,27 +45,28 @@ class TestPipelinePersistentIDs(unittest.TestCase):
         shutil.rmtree("tests/_tmp_track_ev", ignore_errors=True)
 
     def test_one_vehicle_keeps_one_track_id_across_frames(self):
+        # events are consolidated (one per (camera, track, plate)); the point
+        # under test is that the id is STABLE, not that every frame emits.
         ids = set()
-        for i in range(12):
+        for i in range(15):
             dets = [{"bbox": _box(120 + 8 * i, 240), "confidence": 0.9, "class": "car"}]
-            evs = self.pipe.frame(dets, "cam04", f"2026-09-03T09:00:{i:02d}Z")
-            self.assertEqual(len(evs), 1)
-            ids.add(evs[0]["vehicle"]["track_id"])
+            for e in self.pipe.frame(dets, "cam04", f"2026-09-03T09:00:{i:02d}Z"):
+                ids.add(e["vehicle"]["track_id"])
         self.assertEqual(len(ids), 1, f"track id not stable: {ids}")
+        self.assertEqual(self.pipe.p._trackers["cam04"].active_count, 1)
 
     def test_two_vehicles_get_distinct_ids(self):
-        last = None
-        for i in range(6):
+        seen = {}
+        for i in range(8):
             dets = [
                 {"bbox": _box(100 + 6 * i, 150), "confidence": 0.92, "class": "car"},
                 {"bbox": _box(520 - 6 * i, 380), "confidence": 0.88, "class": "truck"},
             ]
-            last = self.pipe.frame(dets, "cam04", f"2026-09-03T09:10:{i:02d}Z")
-        self.assertEqual(len(last), 2)
-        tids = {e["vehicle"]["track_id"] for e in last}
-        self.assertEqual(len(tids), 2, f"expected 2 distinct track ids, got {tids}")
-        classes = {e["vehicle"]["track_id"]: e["vehicle"]["class"] for e in last}
-        self.assertEqual(set(classes.values()), {"car", "truck"})
+            for e in self.pipe.frame(dets, "cam04", f"2026-09-03T09:10:{i:02d}Z"):
+                seen[e["vehicle"]["track_id"]] = e["vehicle"]["class"]
+        self.assertEqual(len(seen), 2, f"expected 2 distinct track ids, got {seen}")
+        self.assertEqual(set(seen.values()), {"car", "truck"})
+        self.assertEqual(self.pipe.p._trackers["cam04"].active_count, 2)
 
     def test_camera_state_does_not_leak_between_cameras(self):
         # feed cam04 for a while
