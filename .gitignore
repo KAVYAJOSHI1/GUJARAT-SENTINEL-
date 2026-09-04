@@ -4,7 +4,12 @@ __pycache__/
 *$py.class
 *.so
 .Python
+*.pyo
+*.pyd
 env/
+venv/
+.venv/
+ENV/
 build/
 develop-eggs/
 dist/
@@ -20,8 +25,7 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-venv/
-ENV/
+.pytest_cache/
 
 # Node / Frontend
 node_modules/
@@ -30,8 +34,10 @@ yarn-debug.log*
 yarn-error.log*
 .next/
 out/
-dist/
 .cache/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
 
 # AI / ML Weights & Cache
 *.pt
@@ -42,12 +48,16 @@ dist/
 weights/
 runs/
 .datasets/
+yolov8n.pt
 
 # Storage & Evidence
 storage/
 evidence_store/
+evidence/*
+!evidence/.gitkeep
 minio_data/
 postgres_data/
+tests/test_evidence/
 
 # Environment & Local Secrets
 .env
@@ -67,3 +77,4 @@ Thumbs.db
 # Logs
 *.log
 logs/
+cookies.txt
