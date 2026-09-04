@@ -1,8 +1,12 @@
 """Shared FastAPI dependencies: DB session re-export + JWT current-user resolver."""
-from fastapi import Depends, HTTPException, status
+import hmac
+from typing import Optional
+
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlmodel import Session
 
+from app.config import settings
 from app.core.security import decode_access_token
 from app.database import get_db
 from app.models.user import User
@@ -30,3 +34,46 @@ def get_current_user(
             detail={"code": "USER_NOT_FOUND", "message": "User not found or inactive."},
         )
     return CurrentUser(id=user.id, username=user.username, role=user.role)
+
+
+def require_ingest_auth(
+    x_ingest_key: Optional[str] = Header(default=None, alias="X-Ingest-Key"),
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+) -> str:
+    """Auth for the AI event-ingestion endpoint.
+
+    Accepts EITHER:
+      * a valid ``X-Ingest-Key`` header matching ``settings.INGEST_API_KEY``
+        (the AI pipeline's service credential), OR
+      * a normal operator JWT (``Authorization: Bearer ...``).
+
+    If ``INGEST_API_KEY`` is unset, only the JWT path is available.
+    Returns a short string describing which path authorised the request.
+    """
+    key = settings.INGEST_API_KEY
+    if key and x_ingest_key and hmac.compare_digest(str(x_ingest_key), str(key)):
+        return "ingest-key"
+
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization.split(" ", 1)[1].strip()
+        try:
+            payload = decode_access_token(token)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={"code": "INVALID_TOKEN", "message": "Invalid or expired token."},
+            )
+        user = db.get(User, payload.get("sub"))
+        if user is None or not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={"code": "USER_NOT_FOUND", "message": "User not found or inactive."},
+            )
+        return f"jwt:{user.username}"
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail={"code": "NOT_AUTHENTICATED", "message": "Provide X-Ingest-Key or a Bearer token."},
+        headers={"WWW-Authenticate": "Bearer"},
+    )

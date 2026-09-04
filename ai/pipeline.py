@@ -43,6 +43,10 @@ class AIPipeline:
         self.backend_url = backend_url or os.getenv(
             "SENTINEL_BACKEND_URL", "http://localhost:8000/api/v1/events/ai-detection"
         )
+        # Service credential sent as the X-Ingest-Key header so the pipeline can
+        # POST events without a user login flow. Unset -> no header (dev / when
+        # the backend also has no INGEST_API_KEY configured).
+        self.ingest_api_key = os.getenv("SENTINEL_INGEST_API_KEY") or os.getenv("INGEST_API_KEY")
         self.evidence_dir = evidence_dir or os.getenv("SENTINEL_EVIDENCE_DIR", "evidence")
 
         # Configurable Confidence & Throttling Thresholds
@@ -73,8 +77,11 @@ class AIPipeline:
         self.normalizer = PlateNormalizer()
         self.consensus_engine = MultiFrameConsensus(min_confidence_threshold=self.ocr_confidence_threshold)
 
-        # In-memory buffer for retry on API unreachability
-        self.event_buffer: List[Dict[str, Any]] = []
+        # Bounded in-memory buffer for retry on API *unreachability* (5xx /
+        # connection errors). 4xx responses are NOT buffered -- retrying a
+        # rejected payload forever never helps.
+        from collections import deque
+        self.event_buffer: "deque[Dict[str, Any]]" = deque(maxlen=2000)
 
         # One ByteTrack tracker per camera feed -> track IDs are camera-local and
         # persistent across frames. State cannot leak between cameras because each
@@ -346,11 +353,17 @@ class AIPipeline:
                 crop_path = snapshot_path.replace(".jpg", "_crop.jpg")
 
             # Step 8: Build Structured AI Detection Event JSON Payload
+            _md = metadata or {}
             event_payload = {
                 "event_id": f"evt_{uuid.uuid4().hex[:12]}",
                 "timestamp": frame_timestamp,
                 "pts": pts,
                 "camera_id": camera_id,
+                "camera_name": _md.get("camera_name"),
+                "track_id": track_id,
+                "latitude": _md.get("latitude"),
+                "longitude": _md.get("longitude"),
+                "seq_num": _md.get("seq_num"),
                 "vehicle": {
                     "type": vehicle_class,
                     "class": vehicle_class,
@@ -408,51 +421,65 @@ class AIPipeline:
             "estimated_fps": round(fps, 2)
         }
 
-    def _dispatch_event(self, payload: Dict[str, Any]) -> bool:
-        """
-        Send event payload via HTTP POST to backend API. Buffers locally if backend unreachable.
+    def _post_headers(self) -> Dict[str, str]:
+        h = {"Content-Type": "application/json"}
+        if self.ingest_api_key:
+            h["X-Ingest-Key"] = self.ingest_api_key
+        return h
 
-        :param payload: Event payload dictionary
-        :return: True if posted successfully, False if buffered
-        """
+    def _post_one(self, payload: Dict[str, Any]) -> str:
+        """POST one event. Returns 'ok' | 'retry' (buffer it) | 'drop' (don't)."""
         try:
             resp = requests.post(
-                self.backend_url,
-                json=payload,
-                headers={"Content-Type": "application/json"},
-                timeout=2.0
+                self.backend_url, json=payload, headers=self._post_headers(), timeout=5.0
             )
-            if resp.status_code in (200, 201):
-                logger.info(f"Event {payload['event_id']} published to backend ({payload['license_plate']['text']}).")
-                self._flush_buffer()
-                return True
-            else:
-                logger.warning(f"Backend returned status {resp.status_code}. Buffering event.")
-                self.event_buffer.append(payload)
-                return False
-        except Exception:
-            # Backend API unavailable / connection refused - buffer locally
+        except Exception as exc:  # connection refused / timeout / DNS
+            logger.debug("backend unreachable (%s) -- buffering event", exc)
+            return "retry"
+        if resp.status_code in (200, 201):
+            return "ok"
+        if resp.status_code in (429,) or resp.status_code >= 500:
+            logger.warning("backend %s -- buffering event for retry", resp.status_code)
+            return "retry"
+        # 4xx (auth / validation) -- retrying the same payload will never help
+        body = resp.text[:200] if hasattr(resp, "text") else ""
+        logger.error("backend rejected event %s: %s %s", payload.get("event_id"), resp.status_code, body)
+        return "drop"
+
+    def _dispatch_event(self, payload: Dict[str, Any]) -> bool:
+        """POST an event. Buffers on 5xx/unreachable, drops on 4xx, flushes the
+        backlog on success. Returns True iff the event was accepted."""
+        outcome = self._post_one(payload)
+        if outcome == "ok":
+            plate = payload.get("license_plate", {}).get("text", payload.get("plate_number"))
+            logger.info("Event %s published to backend (%s)", payload.get("event_id"), plate)
+            self._flush_buffer()
+            return True
+        if outcome == "retry":
             self.event_buffer.append(payload)
-            return False
+        return False
 
     def _flush_buffer(self) -> None:
-        """Attempt to flush buffered events when connection is restored."""
+        """Retry buffered events (oldest first). Stops on the first still-failing
+        one so ordering is preserved and we don't hammer a flaky backend."""
         if not self.event_buffer:
             return
+        logger.info("Flushing %d buffered events to backend...", len(self.event_buffer))
+        flushed = 0
+        while self.event_buffer:
+            payload = self.event_buffer[0]
+            outcome = self._post_one(payload)
+            if outcome == "ok":
+                self.event_buffer.popleft()
+                flushed += 1
+            elif outcome == "drop":
+                self.event_buffer.popleft()
+            else:  # retry -- backend still down, stop for now
+                break
+        if flushed:
+            logger.info("Flushed %d buffered events (%d remaining)", flushed, len(self.event_buffer))
 
-        logger.info(f"Flushing {len(self.event_buffer)} buffered events to backend...")
-        remaining = []
-        for payload in self.event_buffer:
-            try:
-                resp = requests.post(
-                    self.backend_url,
-                    json=payload,
-                    headers={"Content-Type": "application/json"},
-                    timeout=2.0
-                )
-                if resp.status_code not in (200, 201):
-                    remaining.append(payload)
-            except Exception:
-                remaining.append(payload)
-
-        self.event_buffer = remaining
+    def flush_events(self) -> int:
+        """Public: force a buffer flush. Returns the number still buffered."""
+        self._flush_buffer()
+        return len(self.event_buffer)

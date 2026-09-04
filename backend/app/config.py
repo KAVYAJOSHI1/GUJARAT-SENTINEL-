@@ -3,6 +3,8 @@ Central application configuration.
 All values are overridable via environment variables / .env file.
 """
 from functools import lru_cache
+from typing import Optional
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -37,6 +39,14 @@ class Settings(BaseSettings):
 
     # --- Watchlist / Alert engine ---
     ALERT_COOLDOWN_SECONDS: int = 300
+
+    # --- AI event ingestion ---
+    # Shared secret the AI pipeline sends as the `X-Ingest-Key` header on
+    # POST /api/v1/events/ai-detection. When unset, that endpoint also
+    # accepts a normal operator JWT. Set this in any real deployment.
+    INGEST_API_KEY: Optional[str] = None
+    # Auto-onboard a camera the first time an event references an unknown code.
+    INGEST_AUTO_ONBOARD_CAMERAS: bool = True
 
     # --- CORS ---
     CORS_ALLOW_ORIGINS: list[str] = ["*"]

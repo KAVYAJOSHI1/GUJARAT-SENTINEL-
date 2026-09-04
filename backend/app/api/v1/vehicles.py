@@ -4,6 +4,7 @@ Returns chronologically ordered sightings using the composite B-Tree index
 on (plate_number_normalized, timestamp). Target: <50ms for 100k+ rows.
 """
 from fastapi import APIRouter, Depends, Query
+from geoalchemy2.functions import ST_X, ST_Y
 from sqlalchemy import select
 from sqlmodel import Session
 
@@ -28,7 +29,13 @@ def search_vehicle(
     plate_normalized = normalize_plate(plate)
 
     stmt = (
-        select(VehicleEvent, Camera.name)
+        select(
+            VehicleEvent,
+            Camera.name,
+            Camera.code,
+            ST_Y(Camera.location),
+            ST_X(Camera.location),
+        )
         .join(Camera, Camera.id == VehicleEvent.camera_id, isouter=True)
         .where(VehicleEvent.plate_number_normalized == plate_normalized)
         .order_by(VehicleEvent.timestamp.asc())
@@ -40,14 +47,17 @@ def search_vehicle(
         VehicleSighting(
             event_id=ev.id,
             camera_id=ev.camera_id,
+            camera_code=camera_code,
             camera_name=camera_name,
             timestamp=ev.timestamp,
-            latitude=ev.latitude,
-            longitude=ev.longitude,
+            # prefer the event's own fix; fall back to the camera's location
+            latitude=ev.latitude if ev.latitude is not None else cam_lat,
+            longitude=ev.longitude if ev.longitude is not None else cam_lon,
             snapshot_url=ev.snapshot_url,
             confidence_score=ev.confidence_score,
+            track_id=ev.track_id,
         )
-        for ev, camera_name in rows
+        for ev, camera_name, camera_code, cam_lat, cam_lon in rows
     ]
 
     is_watchlisted = (

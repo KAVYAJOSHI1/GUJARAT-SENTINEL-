@@ -16,6 +16,9 @@ class Camera(TimestampMixin, table=True):
     __tablename__ = "cameras"
 
     id: str = Field(default_factory=gen_uuid, primary_key=True, index=True)
+    # Stable external / Sentinel-catalogue identifier, e.g. "cam04". This is what
+    # the AI pipeline puts in its events; the backend resolves it to `id`.
+    code: Optional[str] = Field(default=None, index=True, unique=True)
     name: str = Field(nullable=False, index=True)
     rtsp_url: Optional[str] = Field(default=None, nullable=True)
     status: CameraStatus = Field(default=CameraStatus.OFFLINE, nullable=False)
