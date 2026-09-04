@@ -88,9 +88,14 @@ class TestPipelinePersistentIDs(unittest.TestCase):
         evs = self.pipe.frame([{"bbox": _box(200, 240), "confidence": 0.91, "class": "car"}],
                               "cam04", "2026-09-03T09:30:00Z")
         e = evs[0]
-        self.assertEqual(set(e), {"event_id", "timestamp", "pts", "camera_id", "vehicle",
-                                  "license_plate", "evidence"})
+        # canonical event contract (Phase 4): nested blocks + top-level convenience keys
+        self.assertLessEqual(
+            {"event_id", "timestamp", "pts", "camera_id", "track_id",
+             "vehicle", "license_plate", "evidence"},
+            set(e),
+        )
         self.assertEqual(e["camera_id"], "cam04")
+        self.assertEqual(e["track_id"], e["vehicle"]["track_id"])
         self.assertEqual(e["timestamp"], "2026-09-03T09:30:00Z")
         self.assertEqual(len(e["vehicle"]["bbox"]), 4)
         self.assertEqual(e["vehicle"]["class"], "car")

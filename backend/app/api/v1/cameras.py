@@ -18,10 +18,13 @@ from app.schemas.camera import (
     CameraCreate,
     CameraUpdate,
     CameraRead,
+    CameraRegistryEntry,
+    CameraSyncResult,
     GeoJSONFeature,
     GeoJSONFeatureCollection,
     GeoJSONPointGeometry,
 )
+from app.services.camera_resolver import upsert_camera_from_registry
 
 router = APIRouter()
 
@@ -29,6 +32,7 @@ router = APIRouter()
 def _to_camera_read(camera: Camera, lon: float | None, lat: float | None) -> CameraRead:
     return CameraRead(
         id=camera.id,
+        code=camera.code,
         name=camera.name,
         rtsp_url=camera.rtsp_url,
         location_desc=camera.location_desc,
@@ -36,6 +40,12 @@ def _to_camera_read(camera: Camera, lon: float | None, lat: float | None) -> Cam
         latitude=lat,
         longitude=lon,
     )
+
+
+def _camera_xy(db: Session, camera_id: str):
+    return db.execute(
+        select(ST_X(Camera.location), ST_Y(Camera.location)).where(Camera.id == camera_id)
+    ).first() or (None, None)
 
 
 @router.get("", response_model=list[CameraRead])
@@ -54,12 +64,31 @@ def list_cameras_geojson(db: Session = Depends(get_db), _=Depends(get_current_us
         GeoJSONFeature(
             id=cam.id,
             geometry=GeoJSONPointGeometry(coordinates=(lon, lat)),
-            properties={"name": cam.name, "status": cam.status.value},
+            properties={"name": cam.name, "status": cam.status.value, "code": cam.code},
         )
         for cam, lon, lat in rows
         if lon is not None and lat is not None
     ]
     return GeoJSONFeatureCollection(features=features)
+
+
+@router.post("/sync", response_model=CameraSyncResult)
+def sync_camera_registry(
+    entries: list[CameraRegistryEntry],
+    db: Session = Depends(get_db),
+    _=Depends(require_roles(UserRole.ADMIN, UserRole.OFFICER)),
+):
+    """Upsert a camera catalogue / registry (keyed by external ``code``).
+
+    Feed this the contents of ``data/camera_registry.json`` (or any subset) to
+    register the Sentinel cameras the AI pipeline will emit events for.
+    """
+    synced = []
+    for entry in entries:
+        cam = upsert_camera_from_registry(db, entry.model_dump(exclude_none=True))
+        lon, lat = _camera_xy(db, cam.id)
+        synced.append(_to_camera_read(cam, lon, lat))
+    return CameraSyncResult(synced=len(synced), cameras=synced)
 
 
 @router.get("/{camera_id}", response_model=CameraRead)
@@ -82,6 +111,7 @@ def create_camera(
 ):
     camera = Camera(
         name=payload.name,
+        code=payload.code,
         rtsp_url=payload.rtsp_url,
         location_desc=payload.location_desc,
         status=payload.status,

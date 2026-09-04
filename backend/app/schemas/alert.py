@@ -10,6 +10,7 @@ from app.models.base import AlertStatus, PriorityLevel
 class AlertRead(BaseModel):
     id: str
     plate_number: str
+    plate_number_normalized: Optional[str] = None
     camera_id: str
     vehicle_event_id: str
     watchlist_id: str

@@ -22,7 +22,13 @@ class VehicleEvent(TimestampMixin, table=True):
     plate_number_normalized: str = Field(nullable=False, index=True)
 
     camera_id: str = Field(foreign_key="cameras.id", nullable=False, index=True)
+    # Raw external camera id from the AI event, kept for traceability even
+    # after camera_id has been resolved to the cameras.id UUID.
+    camera_code: Optional[str] = Field(default=None, nullable=True, index=True)
     timestamp: datetime = Field(nullable=False, index=True)
+
+    # Persistent per-camera ByteTrack id for this sighting.
+    track_id: Optional[int] = Field(default=None, nullable=True, index=True)
 
     vehicle_type: Optional[str] = Field(default=None, nullable=True)
     vehicle_color: Optional[str] = Field(default=None, nullable=True)
