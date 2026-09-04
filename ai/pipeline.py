@@ -91,6 +91,8 @@ class AIPipeline:
         # Track OCR throttling counter and saved evidence state: key -> count / filename
         self.track_ocr_counter: Dict[str, int] = {}
         self.saved_evidence_tracks: Dict[str, str] = {}
+        # camera:track -> last plate string we emitted an event for (dedup)
+        self._emitted_tracks: Dict[str, str] = {}
 
         # Performance & Benchmark Statistics
         self.stats = {
@@ -135,7 +137,7 @@ class AIPipeline:
         reconnect / discontinuity). Other cameras are untouched."""
         self._trackers.pop(camera_id, None)
         prefix = f"{camera_id}:"
-        for d in (self.track_ocr_counter, self.saved_evidence_tracks):
+        for d in (self.track_ocr_counter, self.saved_evidence_tracks, self._emitted_tracks):
             for k in [k for k in d if k.startswith(prefix)]:
                 d.pop(k, None)
 
@@ -388,11 +390,19 @@ class AIPipeline:
                 }
             }
 
-            events.append(event_payload)
-            self.stats["total_detections"] += 1
-
-            # Step 9: Dispatch HTTP POST Payload to backend API
-            self._dispatch_event(event_payload)
+            # Step 9: One consolidated event per (camera, track, plate).
+            # Continuous video emits a detection every frame; without this a
+            # single vehicle passing one camera would generate hundreds of
+            # near-identical events (and journey rows). We emit the first time a
+            # track is seen, and again whenever its plate changes -- notably on
+            # the UNKNOWN -> readable transition once consensus settles.
+            emit_key = f"{track_key}"
+            last_plate = self._emitted_tracks.get(emit_key)
+            if last_plate is None or last_plate != final_plate:
+                self._emitted_tracks[emit_key] = final_plate
+                events.append(event_payload)
+                self.stats["total_detections"] += 1
+                self._dispatch_event(event_payload)
 
         t_total = (time.time() - t_start) * 1000.0
         self.stats["total_pipeline_time_ms"] += t_total
