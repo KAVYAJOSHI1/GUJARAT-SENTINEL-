@@ -9,6 +9,12 @@
 numpy>=1.26,<3
 opencv-python>=4.8
 
+# --- Vehicle tracking & cross-camera correlation (ai/tracking/) ---
+# ByteTrack is implemented directly on NumPy + SciPy (Hungarian assignment via
+# scipy.optimize.linear_sum_assignment, Kalman update via scipy.linalg) so the
+# tracking engine needs no external ByteTrack/lap packages.
+scipy>=1.11
+
 # --- Object detection (YOLOv8) ---
 ultralytics>=8.3
 # torch is pulled in transitively by ultralytics; pin a CPU build explicitly
