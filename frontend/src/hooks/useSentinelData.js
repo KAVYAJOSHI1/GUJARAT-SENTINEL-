@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   acknowledgeAlert,
   fetchCameras,
@@ -55,6 +55,21 @@ export function useSentinelData() {
     load();
   }, [load]);
 
+  // ── Light live refresh (stats / cameras / recent AI detections) ───────────
+  // Alerts are NOT re-fetched here: new ones arrive over the WebSocket below,
+  // and re-pulling the whole list would fight the optimistic ack state. One
+  // interval, not per-component polling, so this stays cheap.
+  useEffect(() => {
+    const id = setInterval(async () => {
+      const [s, c, d] = await Promise.all([fetchStats(), fetchCameras(), fetchWatchlistDetections()]);
+      setStats(s.data);
+      setCameras(c.data);
+      setDetections(d.data);
+      setBackendLive((prev) => s.live || c.live || prev);
+    }, 10000);
+    return () => clearInterval(id);
+  }, []);
+
   // ── Live alert stream ──────────────────────────────────────────────────────
   useEffect(() => {
     const sock = createAlertSocket({
@@ -95,11 +110,22 @@ export function useSentinelData() {
   const unackCount = alerts.filter((a) => !a.ack).length;
   const critCount = alerts.filter((a) => !a.ack && a.severity === "critical").length;
 
+  // Most recent detection per camera (drives the live-preview thumbnail).
+  // `detections` is already newest-first from the backend.
+  const latestDetectionByCamera = useMemo(() => {
+    const map = {};
+    for (const d of detections) {
+      if (!map[d.cam]) map[d.cam] = d;
+    }
+    return map;
+  }, [detections]);
+
   return {
     stats,
     cameras,
     alerts,
     detections,
+    latestDetectionByCamera,
     loading,
     backendLive,
     retrying,

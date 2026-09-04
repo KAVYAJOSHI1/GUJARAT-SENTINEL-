@@ -16,6 +16,8 @@ class VehicleSighting(BaseModel):
     snapshot_url: Optional[str]
     confidence_score: Optional[float]
     track_id: Optional[int] = None
+    vehicle_type: Optional[str] = None
+    plate_number: Optional[str] = None
 
     class Config:
         from_attributes = True

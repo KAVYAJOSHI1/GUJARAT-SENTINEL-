@@ -6,7 +6,7 @@ import CameraModal from "../components/CameraModal.jsx";
 import ErrorBanner from "../components/ui/ErrorBanner.jsx";
 
 export default function CamerasPage() {
-  const { cameras, loading, backendLive, retrying, reload } = useOutletContext();
+  const { cameras, loading, backendLive, retrying, reload, latestDetectionByCamera } = useOutletContext();
   const [selectedCam, setSelectedCam] = useState(null);
   const [zone, setZone] = useState("All");
 
@@ -72,6 +72,7 @@ export default function CamerasPage() {
         skeletonCount={8}
         selectedId={selectedCam?.id}
         onSelect={setSelectedCam}
+        detectionsByCamera={latestDetectionByCamera}
       />
 
       <CameraModal cam={selectedCam} onClose={() => setSelectedCam(null)} />

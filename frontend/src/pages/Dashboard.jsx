@@ -7,6 +7,7 @@ import CameraGrid from "../components/CameraGrid.jsx";
 import CameraModal from "../components/CameraModal.jsx";
 import AlertFeed from "../components/AlertFeed.jsx";
 import AlertDrawer from "../components/AlertDrawer.jsx";
+import DetectionFeed from "../components/DetectionFeed.jsx";
 import ErrorBanner from "../components/ui/ErrorBanner.jsx";
 
 export default function Dashboard() {
@@ -15,6 +16,7 @@ export default function Dashboard() {
     cameras,
     alerts,
     detections,
+    latestDetectionByCamera,
     loading,
     backendLive,
     retrying,
@@ -69,6 +71,7 @@ export default function Dashboard() {
               loading={loading}
               selectedId={selectedCam?.id}
               onSelect={setSelectedCam}
+              detectionsByCamera={latestDetectionByCamera}
             />
           </div>
         </div>
@@ -113,6 +116,18 @@ export default function Dashboard() {
             />
           </div>
         </div>
+      </div>
+
+      <div
+        style={{
+          background: C.surface,
+          border: `1px solid ${C.border}`,
+          borderRadius: 8,
+          overflow: "hidden",
+          marginTop: 16,
+        }}
+      >
+        <DetectionFeed detections={detections} loading={loading} maxHeight={360} />
       </div>
 
       <CameraModal cam={selectedCam} onClose={() => setSelectedCam(null)} />

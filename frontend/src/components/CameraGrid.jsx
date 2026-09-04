@@ -13,6 +13,7 @@ export default function CameraGrid({
   selectedId,
   onSelect,
   skeletonCount = 6,
+  detectionsByCamera = {},
 }) {
   const className = columns >= 4 ? "camera-grid-4" : "camera-grid-3";
 
@@ -38,6 +39,7 @@ export default function CameraGrid({
           cam={cam}
           selected={selectedId === cam.id}
           onClick={onSelect}
+          preview={detectionsByCamera[cam.id]}
         />
       ))}
     </div>

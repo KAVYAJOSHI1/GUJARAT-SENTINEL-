@@ -4,7 +4,7 @@
 // "/api/v1"), timeout, proxy and headers — so there is ONE API architecture,
 // not two. Only the endpoints and response shapes below are Vishakha's domain
 // (DEVELOPER_README §8 / §11, docs/API_CONTRACTS.md §1 & §4).
-import { getToken, http } from "./api.js";
+import { getToken, http, mapCameraStatus } from "./api.js";
 import {
   CAMERA_GEOJSON,
   GIS_CAMERAS,
@@ -55,10 +55,13 @@ export function normalizeGisCamera(raw) {
   const lat = Number(pick(props, ["lat", "latitude", "location_lat"], Array.isArray(coords) ? coords[1] : NaN));
   const lng = Number(pick(props, ["lng", "lon", "longitude", "location_lng"], Array.isArray(coords) ? coords[0] : NaN));
   return {
-    id: String(pick(props, ["camera_id", "id", "cam_id"], "CAM-?")),
+    // GeoJSON features carry the camera's external code in properties.code
+    // (feature-level `id` is the backend UUID) — prefer the human code.
+    id: String(pick(props, ["code", "camera_id", "cam_id"], pick(raw, ["id"], "CAM-?"))),
+    uuid: pick(raw, ["id"], null),
     name: pick(props, ["name", "camera_name", "label", "location_name"], "Unnamed camera"),
     district: pick(props, ["district", "city", "zone", "area"], "—"),
-    status: String(pick(props, ["status", "state"], "active")).toLowerCase(),
+    status: mapCameraStatus(pick(props, ["status", "state"], "offline")),
     lat: Number.isFinite(lat) ? lat : null,
     lng: Number.isFinite(lng) ? lng : null,
   };
