@@ -27,6 +27,9 @@ class _Pipe:
         self.p = AIPipeline(evidence_dir="tests/_tmp_track_ev", device="cpu")
         self._dets = []
         self.p.vehicle_detector.detect = lambda frame: list(self._dets)
+        # this suite exercises tracking + event schema, not OCR -> single-pass
+        # OCR with a deterministic stub.
+        self.p.multivariant_ocr = False
         self.p.ocr_engine.extract_text = lambda img: {"raw_text": "GJ01AB1234", "confidence": 0.9}
         self.p._dispatch_event = lambda payload: True  # don't POST anywhere
 

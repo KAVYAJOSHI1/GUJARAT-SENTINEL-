@@ -62,6 +62,13 @@ class AIPipeline:
         throttle_env = os.getenv("OCR_THROTTLE_FRAMES")
         self.ocr_throttle_frames = ocr_throttle_frames or (int(throttle_env) if throttle_env else 10)
 
+        # Multi-variant preprocessing + best-of OCR (Phase 3). On by default;
+        # SENTINEL_OCR_MULTIVARIANT=0 falls back to the single-pass path.
+        self.multivariant_ocr = os.getenv("SENTINEL_OCR_MULTIVARIANT", "1").lower() not in (
+            "0", "false", "no", "off",
+        )
+        self.ocr_max_variants = int(os.getenv("SENTINEL_OCR_MAX_VARIANTS", "3"))
+
         # Ensure evidence directory exists
         os.makedirs(self.evidence_dir, exist_ok=True)
 
@@ -305,26 +312,40 @@ class AIPipeline:
                 raw_text = final_plate
                 enhanced_plate = plate_crop
             else:
-                # Step 4: Image Preprocessing & OCR Engine
-                enhanced_plate = self.preprocessor.preprocess(plate_crop)
-
+                # Step 4: quality gate -> multi-variant preprocessing -> OCR
                 t_ocr0 = time.time()
-                ocr_res = self.ocr_engine.extract_text(enhanced_plate)
+                if self.multivariant_ocr:
+                    variants = self.preprocessor.variants(plate_crop, max_variants=self.ocr_max_variants)
+                    if variants:
+                        ocr_res = self.ocr_engine.extract_best(variants, self.normalizer)
+                        vi = ocr_res.get("variant", 0)
+                        enhanced_plate = variants[vi] if 0 <= vi < len(variants) else variants[0]
+                    else:
+                        # crop failed the quality gate -> nothing readable
+                        ocr_res = {"raw_text": "UNKNOWN", "confidence": 0.0}
+                        enhanced_plate = self.preprocessor.preprocess(plate_crop)
+                else:
+                    enhanced_plate = self.preprocessor.preprocess(plate_crop)
+                    ocr_res = self.ocr_engine.extract_text(enhanced_plate)
                 t_ocr = (time.time() - t_ocr0) * 1000.0
                 self.stats["ocr_time_ms"] += t_ocr
 
                 raw_text = ocr_res["raw_text"]
                 ocr_conf = ocr_res["confidence"]
 
-                # Step 5: Plate Normalization
+                # Step 5: Plate Normalization (position-aware, format-checked)
                 normalized_plate = self.normalizer.normalize(raw_text)
+                fmt_score = self.normalizer.format_score(normalized_plate)
 
-                # Step 6: Multi-Frame Consensus Voting
+                # Step 6: Multi-Frame Consensus Voting (OCR conf + detection conf
+                # + format validity + temporal stability; stable plates lock)
                 consensus_res = self.consensus_engine.add_prediction(
                     track_id=track_id,
                     plate_number=normalized_plate,
                     confidence=ocr_conf,
-                    camera_id=camera_id
+                    camera_id=camera_id,
+                    detection_confidence=float(vehicle_conf),
+                    format_score=fmt_score,
                 )
                 final_plate = consensus_res["consensus_plate"]
                 final_conf = consensus_res["confidence"]
