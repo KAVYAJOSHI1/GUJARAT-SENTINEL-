@@ -4,7 +4,8 @@ import AppLayout from "./AppLayout.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
 import CamerasPage from "./pages/CamerasPage.jsx";
 import AlertsPage from "./pages/AlertsPage.jsx";
-import InvestigationPlaceholder from "./pages/InvestigationPlaceholder.jsx";
+import InvestigationPage from "./pages/InvestigationPage.jsx";
+import MapPage from "./pages/MapPage.jsx";
 
 // Route table, exported without a router so it can be mounted under any
 // router (BrowserRouter in the app, MemoryRouter in smoke tests).
@@ -16,10 +17,10 @@ export function AppRoutes() {
         <Route path="cameras" element={<CamerasPage />} />
         <Route path="alerts" element={<AlertsPage />} />
 
-        {/* Owned by Vishakha (feature/vishakha-investigation).
-            Placeholder until InvestigationPage.jsx / components/gis land. */}
-        <Route path="investigation" element={<InvestigationPlaceholder />} />
-        <Route path="map" element={<InvestigationPlaceholder />} />
+        {/* GIS Mapping + Vehicle Investigation console
+            (Vishakha · feature/vishakha-investigation). */}
+        <Route path="investigation" element={<InvestigationPage />} />
+        <Route path="map" element={<MapPage />} />
 
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
