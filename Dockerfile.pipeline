@@ -1,0 +1,20 @@
+# SENTINEL ingestion + AI pipeline service (compose profile "ai").
+# Heavy: pulls torch / ultralytics / easyocr. Opt-in only.
+FROM python:3.11-slim
+
+WORKDIR /repo
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc libpq-dev libgl1 libglib2.0-0 ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements-ai.txt .
+RUN pip install --no-cache-dir -r requirements-ai.txt
+
+COPY ai/ ./ai/
+COPY ingestion/ ./ingestion/
+COPY scripts/ ./scripts/
+COPY data/ ./data/
+
+ENV PYTHONPATH=/repo
+ENTRYPOINT ["python", "scripts/run_pipeline_service.py"]
