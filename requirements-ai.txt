@@ -29,8 +29,10 @@ requests>=2.31
 fastapi>=0.110
 uvicorn[standard]>=0.29
 
-# --- Optional OCR engines (ai/ocr/ocr_engine.py) ---
-# The pipeline falls back to a contour-based OCR if neither is installed,
-# but real plate reading needs one of these:
+# --- OCR engine (ai/ocr/ocr_engine.py) ---
+# EasyOCR is the default backend: stable on CPU, no paddlepaddle runtime.
+easyocr>=1.7
+# PaddleOCR is an OPTIONAL secondary backend (set OCR_ENGINE=paddleocr or
+# OCR_ENGINE=auto). ocr_engine.py supports both its 2.x and 3.x result APIs
+# and disables it automatically if it crashes at inference.
 # paddleocr>=2.7
-# easyocr>=1.7

@@ -1,90 +1,234 @@
-import cv2
-import numpy as np
+import os
 import logging
-from typing import Dict, Any, Optional
+from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
 
 logger = logging.getLogger("OCREngine")
 
+# Crops smaller than this are never worth an OCR call.
+_MIN_H, _MIN_W = 12, 24
+
+
 class OCREngine:
     """
-    PaddleOCR Engine wrapper with EasyOCR/Tesseract fallback for character recognition on license plates.
+    License-plate OCR with two interchangeable backends:
+
+      * ``easyocr``   -- default. Stable across environments, ships a small
+                         CPU model, no fragile paddlepaddle runtime.
+      * ``paddleocr`` -- optional. Enable with ``OCR_ENGINE=paddleocr`` (or
+                         ``OCR_ENGINE=auto`` to keep it only as a fallback).
+                         Result parsing supports both the 2.x ``.ocr()`` list
+                         format and the 3.x ``.predict()`` dict format.
+
+    Backends are initialised lazily on the first :meth:`extract_text` call so
+    constructing an ``OCREngine`` (and therefore an ``AIPipeline``) stays cheap.
+
+    If the active backend raises at *inference* time it is permanently
+    disabled for this instance and the other backend is tried -- this is the
+    behaviour the old implementation was missing (it only fell back when
+    PaddleOCR failed to *import*, never when it crashed mid-inference, which
+    is exactly what PaddleOCR 3.7 + paddle 3.3 does on CPU).
+
+    Return contract is unchanged: ``{"raw_text": str, "confidence": float}``,
+    with ``{"raw_text": "UNKNOWN", "confidence": 0.0}`` when nothing readable
+    is produced. Character/normalisation cleanup stays in
+    :class:`ai.ocr.normalizer.PlateNormalizer`.
     """
 
-    def __init__(self, lang: str = 'en', use_angle_cls: bool = False):
-        self.paddle_ocr = None
-        self.easy_ocr = None
+    def __init__(
+        self,
+        lang: str = "en",
+        use_angle_cls: bool = False,
+        engine: Optional[str] = None,
+    ):
+        self.lang = lang
+        self.use_angle_cls = use_angle_cls
+        # "easyocr" (default) | "paddleocr" | "auto"
+        self.preferred = (engine or os.getenv("OCR_ENGINE", "easyocr")).strip().lower()
+        if self.preferred not in ("easyocr", "paddleocr", "auto"):
+            logger.warning("Unknown OCR_ENGINE=%r, falling back to 'easyocr'.", self.preferred)
+            self.preferred = "easyocr"
 
-        # Attempt PaddleOCR initialization
+        self._easy = None
+        self._paddle = None
+        self._easy_disabled = False
+        self._paddle_disabled = False
+        self._initialised = False
+        self.active_engine: str = "uninitialised"
+
+    # ------------------------------------------------------------------ #
+    #  lazy backend initialisation                                        #
+    # ------------------------------------------------------------------ #
+    def _init_easy(self) -> None:
+        if self._easy is not None or self._easy_disabled:
+            return
         try:
-            from paddleocr import PaddleOCR
-            logger.info("Initializing PaddleOCR engine...")
-            self.paddle_ocr = PaddleOCR(lang=lang)
-            logger.info("PaddleOCR engine initialized successfully.")
-        except Exception as e:
-            logger.warning(f"PaddleOCR init failed/unavailable ({e}). Trying EasyOCR fallback...")
+            import easyocr  # noqa: PLC0415 -- optional heavy dep, import on demand
 
-        # Fallback to EasyOCR if PaddleOCR unavailable
-        if self.paddle_ocr is None:
+            logger.info("Initialising EasyOCR (lang=%s, cpu)...", self.lang)
             try:
-                import easyocr
-                logger.info("Initializing EasyOCR fallback engine...")
-                self.easy_ocr = easyocr.Reader(['en'], gpu=False)
-                logger.info("EasyOCR initialized successfully.")
-            except Exception as e:
-                logger.warning(f"EasyOCR init failed ({e}). Custom contour OCR fallback active.")
+                self._easy = easyocr.Reader([self.lang], gpu=False, verbose=False)
+            except TypeError:  # very old easyocr without verbose kwarg
+                self._easy = easyocr.Reader([self.lang], gpu=False)
+            logger.info("EasyOCR ready.")
+        except Exception as exc:  # noqa: BLE001 -- any failure => backend unavailable
+            self._easy_disabled = True
+            logger.warning("EasyOCR unavailable (%s).", exc)
 
+    def _init_paddle(self) -> None:
+        if self._paddle is not None or self._paddle_disabled:
+            return
+        try:
+            from paddleocr import PaddleOCR  # noqa: PLC0415
+
+            logger.info("Initialising PaddleOCR (lang=%s)...", self.lang)
+            try:
+                self._paddle = PaddleOCR(
+                    lang=self.lang, use_angle_cls=self.use_angle_cls, show_log=False
+                )
+            except TypeError:
+                # PaddleOCR 3.x dropped use_angle_cls / show_log kwargs.
+                self._paddle = PaddleOCR(lang=self.lang)
+            logger.info("PaddleOCR ready.")
+        except Exception as exc:  # noqa: BLE001
+            self._paddle_disabled = True
+            logger.warning("PaddleOCR unavailable (%s).", exc)
+
+    def _ensure_init(self) -> None:
+        if self._initialised:
+            return
+        self._initialised = True
+        if self.preferred == "paddleocr":
+            self._init_paddle()
+            self._init_easy()          # always keep EasyOCR as the fallback
+        elif self.preferred == "auto":
+            self._init_easy()
+            self._init_paddle()
+        else:                          # "easyocr"
+            self._init_easy()
+        self._recompute_active()
+
+    def _recompute_active(self) -> None:
+        if self.preferred == "paddleocr" and self._paddle is not None:
+            self.active_engine = "paddleocr"
+        elif self._easy is not None:
+            self.active_engine = "easyocr"
+        elif self._paddle is not None:
+            self.active_engine = "paddleocr"
+        else:
+            self.active_engine = "none"
+
+    # ------------------------------------------------------------------ #
+    #  result parsing (tolerant to library version differences)           #
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _parse_easy(results: Any) -> Tuple[List[str], List[float]]:
+        parts: List[str] = []
+        confs: List[float] = []
+        for item in results or []:
+            # EasyOCR returns (bbox, text, confidence)
+            if isinstance(item, (list, tuple)) and len(item) >= 3:
+                parts.append(str(item[1]))
+                try:
+                    confs.append(float(item[2]))
+                except (TypeError, ValueError):
+                    confs.append(0.0)
+        return parts, confs
+
+    @staticmethod
+    def _parse_paddle(results: Any) -> Tuple[List[str], List[float]]:
+        parts: List[str] = []
+        confs: List[float] = []
+        if not results:
+            return parts, confs
+
+        # PaddleOCR 3.x: predict() -> list[OCRResult(dict-like)] with rec_texts/rec_scores
+        head = results[0] if isinstance(results, (list, tuple)) and results else results
+        if isinstance(head, dict):
+            texts = head.get("rec_texts") or head.get("texts") or []
+            scores = head.get("rec_scores") or head.get("scores") or []
+            for i, text in enumerate(texts):
+                parts.append(str(text))
+                try:
+                    confs.append(float(scores[i]))
+                except (TypeError, ValueError, IndexError):
+                    confs.append(0.0)
+            return parts, confs
+
+        # PaddleOCR 2.x: ocr() -> [ [ [bbox, (text, conf)], ... ] ]
+        block = results[0] if isinstance(results, (list, tuple)) else results
+        for line in block or []:
+            if line and len(line) >= 2 and line[1] is not None:
+                try:
+                    parts.append(str(line[1][0]))
+                    confs.append(float(line[1][1]))
+                except (TypeError, ValueError, IndexError):
+                    continue
+        return parts, confs
+
+    def _run_paddle(self, image: np.ndarray) -> Tuple[List[str], List[float]]:
+        try:
+            res = self._paddle.predict(image)          # 3.x
+        except (AttributeError, TypeError):
+            res = self._paddle.ocr(image)               # 2.x
+        return self._parse_paddle(res)
+
+    def _run_easy(self, image: np.ndarray) -> Tuple[List[str], List[float]]:
+        return self._parse_easy(self._easy.readtext(image))
+
+    # ------------------------------------------------------------------ #
+    #  public API                                                         #
+    # ------------------------------------------------------------------ #
     def extract_text(self, image: np.ndarray) -> Dict[str, Any]:
         """
-        Perform OCR on license plate image crop.
+        Run OCR on a (preprocessed) license-plate crop.
 
-        :param image: Enhanced license plate BGR crop array
-        :return: Dict containing {"raw_text": str, "confidence": float}
+        :param image: BGR / grayscale numpy array
+        :return: ``{"raw_text": str, "confidence": float}`` -- ``raw_text`` is
+                 ``"UNKNOWN"`` (confidence 0.0) when no readable text is found.
         """
-        if image is None or image.size == 0:
+        if image is None or getattr(image, "size", 0) == 0:
+            return {"raw_text": "UNKNOWN", "confidence": 0.0}
+        if len(getattr(image, "shape", ())) < 2:
             return {"raw_text": "UNKNOWN", "confidence": 0.0}
 
         h, w = image.shape[:2]
-        # Fast filter for unpromising / tiny crops
-        if h < 12 or w < 24:
+        if h < _MIN_H or w < _MIN_W:
             return {"raw_text": "UNKNOWN", "confidence": 0.0}
 
-        # 1. Try PaddleOCR
-        if self.paddle_ocr is not None:
-            try:
-                results = self.paddle_ocr.ocr(image)
-                if results and len(results) > 0 and results[0]:
-                    text_parts = []
-                    conf_scores = []
-                    for line in results[0]:
-                        if line and len(line) >= 2:
-                            text, conf = line[1][0], float(line[1][1])
-                            text_parts.append(text)
-                            conf_scores.append(conf)
+        self._ensure_init()
 
-                    if text_parts:
-                        full_raw_text = " ".join(text_parts)
-                        avg_conf = sum(conf_scores) / len(conf_scores)
-                        return {"raw_text": full_raw_text, "confidence": round(avg_conf, 4)}
-            except Exception as e:
-                logger.debug(f"PaddleOCR inference exception: {e}")
+        # backend attempt order -- primary first, other as runtime fallback
+        order = ["paddleocr", "easyocr"] if self.preferred == "paddleocr" else ["easyocr", "paddleocr"]
 
-        # 2. Try EasyOCR fallback
-        if self.easy_ocr is not None:
-            try:
-                results = self.easy_ocr.readtext(image)
-                if results:
-                    text_parts = []
-                    conf_scores = []
-                    for bbox, text, conf in results:
-                        text_parts.append(text)
-                        conf_scores.append(float(conf))
+        for backend in order:
+            if backend == "easyocr":
+                if self._easy is None:
+                    continue
+                try:
+                    parts, confs = self._run_easy(image)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("EasyOCR inference failed (%s); disabling EasyOCR backend.", exc)
+                    self._easy = None
+                    self._easy_disabled = True
+                    self._recompute_active()
+                    continue
+            else:
+                if self._paddle is None:
+                    continue
+                try:
+                    parts, confs = self._run_paddle(image)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("PaddleOCR inference failed (%s); disabling PaddleOCR backend.", exc)
+                    self._paddle = None
+                    self._paddle_disabled = True
+                    self._recompute_active()
+                    continue
 
-                    if text_parts:
-                        full_raw_text = " ".join(text_parts)
-                        avg_conf = sum(conf_scores) / len(conf_scores)
-                        return {"raw_text": full_raw_text, "confidence": round(avg_conf, 4)}
-            except Exception as e:
-                logger.debug(f"EasyOCR inference exception: {e}")
+            raw = " ".join(p for p in parts if p).strip()
+            if raw:
+                conf = round(sum(confs) / len(confs), 4) if confs else 0.0
+                return {"raw_text": raw, "confidence": float(conf)}
 
-        # 3. Default fallback if image has insufficient clarity
         return {"raw_text": "UNKNOWN", "confidence": 0.0}
