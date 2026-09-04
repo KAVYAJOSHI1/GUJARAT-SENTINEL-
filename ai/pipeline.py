@@ -68,6 +68,13 @@ class AIPipeline:
             "0", "false", "no", "off",
         )
         self.ocr_max_variants = int(os.getenv("SENTINEL_OCR_MAX_VARIANTS", "3"))
+        # Inline the frame snapshot (base64) in the event so the backend can put
+        # it in object storage -- needed when pipeline and backend don't share a
+        # filesystem (e.g. containers).
+        self.send_snapshot_b64 = os.getenv("SENTINEL_SEND_SNAPSHOT", "0").lower() in (
+            "1", "true", "yes", "on",
+        )
+        self._snapshot_sent: set = set()
 
         # Ensure evidence directory exists
         os.makedirs(self.evidence_dir, exist_ok=True)
@@ -410,6 +417,21 @@ class AIPipeline:
                     "plate_crop_path": crop_path
                 }
             }
+
+            # Optionally inline the snapshot so the backend can store it in
+            # object storage (works across container / host boundaries, unlike
+            # a bare file path). SENTINEL_SEND_SNAPSHOT=1 to enable.
+            if self.send_snapshot_b64 and evidence_key not in getattr(self, "_snapshot_sent", set()):
+                try:
+                    okj, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                    if okj:
+                        import base64
+                        event_payload["snapshot_base64"] = base64.b64encode(buf.tobytes()).decode("ascii")
+                        event_payload["snapshot_content_type"] = "image/jpeg"
+                        self._snapshot_sent = getattr(self, "_snapshot_sent", set())
+                        self._snapshot_sent.add(evidence_key)
+                except Exception as e:  # noqa: BLE001
+                    logger.debug("snapshot encode failed: %s", e)
 
             # Step 9: One consolidated event per (camera, track, plate).
             # Continuous video emits a detection every frame; without this a

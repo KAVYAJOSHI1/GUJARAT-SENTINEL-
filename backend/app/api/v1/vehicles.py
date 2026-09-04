@@ -134,10 +134,20 @@ def get_evidence(
     if ev is None or not ev.snapshot_url:
         raise NotFoundError("Evidence", event_id)
     url = ev.snapshot_url
+
+    # Proxy the bytes through the backend so it works from any network (browser
+    # can't reach the internal MinIO host, file:// paths aren't shared, etc).
+    from app.services.minio_service import get_minio_service
+
+    got = get_minio_service().fetch_bytes(url)
+    if got is not None:
+        from fastapi.responses import Response
+
+        data, ctype = got
+        return Response(content=data, media_type=ctype)
+
     if url.startswith(("http://", "https://")):
         return RedirectResponse(url)
-    if url.startswith("file://"):
-        path = url[len("file://"):]
-        if os.path.isfile(path):
-            return FileResponse(path)
+    if url.startswith("file://") and os.path.isfile(url[7:]):
+        return FileResponse(url[7:])
     raise NotFoundError("Evidence file", event_id)

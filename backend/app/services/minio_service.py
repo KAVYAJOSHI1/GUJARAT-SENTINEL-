@@ -77,6 +77,30 @@ class MinioService:
             f.write(raw)
         return f"file://{os.path.abspath(local_path)}"
 
+    def fetch_bytes(self, url: str):
+        """Return ``(bytes, content_type)`` for a snapshot URL this service
+        produced (``http(s)://<endpoint>/<bucket>/<key>`` or ``file://``), or
+        ``None`` if it cannot be resolved. Lets the backend proxy evidence
+        without exposing MinIO to the browser."""
+        try:
+            if url.startswith("file://"):
+                path = url[len("file://"):]
+                if os.path.isfile(path):
+                    with open(path, "rb") as f:
+                        return f.read(), "image/jpeg"
+                return None
+            if self._client is not None and f"/{self._bucket}/" in url:
+                key = url.split(f"/{self._bucket}/", 1)[1]
+                resp = self._client.get_object(self._bucket, key)
+                try:
+                    return resp.read(), resp.headers.get("Content-Type", "image/jpeg")
+                finally:
+                    resp.close()
+                    resp.release_conn()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("evidence fetch failed (%s)", exc)
+        return None
+
 
 _minio_service: MinioService | None = None
 
