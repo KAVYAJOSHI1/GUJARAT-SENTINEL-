@@ -22,6 +22,33 @@ from app.services.plate_utils import normalize_plate
 
 router = APIRouter()
 
+# Where THIS process can see the AI pipeline's local evidence tree
+# (evidence/live/, evidence/mock/, ...). The DB stores whatever absolute
+# path the pipeline process wrote (host machine, since the pipeline only
+# ever runs on bare metal) -- in the dockerized backend that path doesn't
+# exist, so it's translated against this mount instead (see the `evidence`
+# volume in docker-compose.yml). Defaults to the repo-relative folder for a
+# bare-metal (non-docker) backend run, where the literal path already works.
+EVIDENCE_ROOT = os.getenv(
+    "EVIDENCE_ROOT",
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "evidence"),
+)
+
+
+def _resolve_local_evidence_path(stored_path: str):
+    """Rewrite anything after 'evidence/' in a stored host path onto
+    EVIDENCE_ROOT, mirroring cameras.py's _resolve_mock_video_path. Returns
+    None (falls back to the literal path) if there's nothing to translate or
+    the translated file doesn't exist either."""
+    if not stored_path:
+        return None
+    marker = f"evidence{os.sep}"
+    idx = stored_path.rfind(marker)
+    if idx == -1:
+        return None
+    candidate = os.path.join(EVIDENCE_ROOT, stored_path[idx + len(marker):])
+    return candidate if os.path.isfile(candidate) else None
+
 
 @router.get("/search", response_model=VehicleHistoryResponse)
 def search_vehicle(
@@ -157,10 +184,12 @@ def get_evidence(
     if url.startswith(("http://", "https://")):
         return RedirectResponse(url)
     # ai/pipeline.py writes plain absolute filesystem paths (os.path.abspath),
-    # not file:// URIs -- accept both so local evidence (real cameras' own
-    # evidence/live/ and mock cameras' evidence/mock/ alike) actually opens
-    # instead of 404ing here every time.
+    # not file:// URIs -- accept both. This is the fallback for a snapshot
+    # that was never uploaded to MinIO (SENTINEL_SEND_SNAPSHOT sends it only
+    # once per track, per ai/pipeline.py's dedup) -- covers both real
+    # cameras' evidence/live/ and mock cameras' evidence/mock/.
     local_path = url[7:] if url.startswith("file://") else url
+    local_path = _resolve_local_evidence_path(local_path) or local_path
     if os.path.isabs(local_path) and os.path.isfile(local_path):
         return FileResponse(local_path)
     raise NotFoundError("Evidence file", event_id)

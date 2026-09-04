@@ -41,6 +41,21 @@ logger = logging.getLogger("sentinel.ingestion.stream_manager")
 os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", CONFIG.ffmpeg_capture_options)
 
 
+def _is_local_source(url: Optional[str]) -> bool:
+    """True for a local video file path (a MOCK camera source, e.g. a
+    trafficdataset/*.MOV clip); False for rtsp:// or http(s):// URLs (real
+    Sentinel cameras / HLS fallback).
+
+    Only local sources get real-time FPS pacing and clean EOF-looping below
+    -- every RTSP code path is completely unaffected by this function
+    returning False for it, which is the whole point: mock cameras reuse
+    StreamWorker as-is, they don't fork it.
+    """
+    if not url:
+        return False
+    return not (url.startswith("rtsp://") or url.startswith("http://") or url.startswith("https://"))
+
+
 class StreamWorker(threading.Thread):
     """Owns exactly one camera's live RTSP connection for its whole lifetime."""
 
@@ -58,6 +73,17 @@ class StreamWorker(threading.Thread):
         self._stop_event = stop_event or threading.Event()
         self._seq_num = 0
         self._cap: Optional[cv2.VideoCapture] = None
+
+        # -- MOCK camera (local file) playback state -------------------------
+        # Untouched / unused for real RTSP cameras (self._is_local is False).
+        self._is_local = _is_local_source(camera.stream_url)
+        raw = getattr(camera, "raw", None) or {}
+        self._mock_loop = bool(raw.get("loop", True))
+        self._mock_fps_override = raw.get("mock_fps_override")
+        self._source_fps: Optional[float] = None
+        self._loop_start_mono: Optional[float] = None
+        self._frames_since_loop = 0
+        self._loop_count = 0
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -140,8 +166,64 @@ class StreamWorker(threading.Thread):
 
         self._cap = cap
         self._seq_num = 0  # new connection = new sequence / possible discontinuity
+        self._reset_playback_clock()
         self._health.on_status(self.camera.camera_id, StreamStatus.ONLINE)
         logger.info("Camera %s: reconnected", self.camera.camera_id)
+        return True
+
+    # -- MOCK camera (local file) helpers --------------------------------------
+    # None of this runs for RTSP cameras: every entry point is gated on
+    # self._is_local, which is only True for a plain local file path.
+
+    def _reset_playback_clock(self) -> None:
+        """(Re)establish the real-time pacing baseline. Called on first
+        connect and again after every clean EOF loop, so pacing always
+        restarts relative to 'now', never drifts across a loop boundary."""
+        if not self._is_local or self._cap is None:
+            return
+        fps = self._mock_fps_override or self._cap.get(cv2.CAP_PROP_FPS)
+        self._source_fps = fps if fps and fps > 0 else 25.0
+        self._loop_start_mono = time.monotonic()
+        self._frames_since_loop = 0
+
+    def _pace_local_frame(self) -> None:
+        """Sleep just enough to keep local-file playback at real-time speed
+        (1s of video ~= 1s of wall-clock), so the AI pipeline never races
+        ahead of the mock 'live' feed. Paced by frame count / source fps
+        rather than by CAP_PROP_POS_MSEC, which some containers report
+        unreliably -- frame count and CAP_PROP_FPS are the values we already
+        confirmed are solid for this dataset."""
+        if self._loop_start_mono is None:
+            self._reset_playback_clock()
+            return
+        self._frames_since_loop += 1
+        fps = self._source_fps or 25.0
+        target = self._loop_start_mono + (self._frames_since_loop / fps)
+        delay = target - time.monotonic()
+        if 0 < delay <= 2.0:  # cap so a bad fps reading can't stall the thread
+            self._stop_event.wait(delay)
+
+    def _loop_local_source(self) -> bool:
+        """Handle EOF on a local mock video: reopen it and continue from
+        frame 0, exactly like a continuous live camera looping its footage.
+        Does NOT go through ReconnectSupervisor / backoff -- this is an
+        expected, instantaneous event, not a connection failure, so camera
+        health stays ONLINE throughout (no RECONNECTING flicker on the
+        dashboard) and video-specific state (seq_num) resets exactly like a
+        genuine reconnect does, which is what makes the existing
+        FrameConsumer._check_reconnect() discontinuity check reset that
+        camera's tracker automatically -- no new pipeline code needed.
+        Returns False (falls back to the normal reconnect path) only if the
+        file itself can no longer be reopened."""
+        self._release_capture()
+        cap = self._open_capture()
+        if cap is None:
+            return False
+        self._cap = cap
+        self._seq_num = 0
+        self._loop_count += 1
+        self._reset_playback_clock()
+        logger.info("Camera %s: mock source looped (restart #%d)", self.camera.camera_id, self._loop_count)
         return True
 
     # -- main loop -------------------------------------------------------------
@@ -169,6 +251,12 @@ class StreamWorker(threading.Thread):
                 ok, frame = False, None
 
             if not ok or frame is None:
+                # For a local mock file this is normal end-of-clip, not a
+                # fault -- loop it in place and keep going. Only fall through
+                # to the real reconnect/backoff path if that somehow fails
+                # (e.g. the file was deleted underneath us).
+                if self._is_local and self._mock_loop and self._loop_local_source():
+                    continue
                 # A single failed read (e.g. before the first keyframe of a
                 # GOP) is normal per the integration spec. cv2 read()
                 # returning False is our sole reconnect trigger -- we don't
@@ -177,6 +265,9 @@ class StreamWorker(threading.Thread):
                 if not self._reconnect():
                     break
                 continue
+
+            if self._is_local:
+                self._pace_local_frame()
 
             pts_ms = self._cap.get(cv2.CAP_PROP_POS_MSEC)
             self._seq_num += 1

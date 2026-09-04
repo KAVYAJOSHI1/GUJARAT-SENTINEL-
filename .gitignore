@@ -64,6 +64,14 @@ tests/test_evidence/
 demo_assets/
 data/mock_camera_registry.json
 
+# Local Anand/Gujarat traffic video dataset used to drive MOCK_CAM* dev
+# cameras (scripts/generate_mock_camera_registry.py, scripts/run_mock_cameras.py).
+# ~1.7GB of source video -- not source code, not committed. The generated
+# registry embeds machine-local absolute paths into this folder, same reason
+# data/mock_camera_registry.json above is ignored.
+trafficdataset/
+data/trafficdataset_camera_registry.json
+
 # Environment & Local Secrets
 .env
 .env.local

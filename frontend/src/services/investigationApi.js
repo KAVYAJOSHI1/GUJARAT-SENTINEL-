@@ -73,13 +73,22 @@ export function normalizeSighting(raw) {
   const lng = Number(pick(raw, ["longitude", "lng", "lon"], pick(loc, ["longitude", "lng", "lon"], NaN)));
   const coords = loc?.coordinates; // GeoJSON [lng, lat]
   const eventId = String(pick(raw, ["event_id", "id", "eventId"], `EVT-${Math.random().toString(36).slice(2)}`));
+  const resolvedLat = Number.isFinite(lat) ? lat : Array.isArray(coords) ? coords[1] : null;
+  const resolvedLng = Number.isFinite(lng) ? lng : Array.isArray(coords) ? coords[0] : null;
+  const cameraId = String(pick(raw, ["camera_id", "cam_id", "cameraId"], "CAM-?"));
   return {
     eventId,
-    cameraId: String(pick(raw, ["camera_id", "cam_id", "cameraId"], "CAM-?")),
+    cameraId,
+    cameraCode: pick(raw, ["camera_code", "cameraCode"], cameraId),
     cameraName: pick(raw, ["camera_name", "cameraName", "name"], "Unknown camera"),
+    locationDesc: pick(raw, ["location_desc", "locationDesc"], null),
     timestamp: pick(raw, ["timestamp", "time", "created_at", "detected_at"], null),
-    lat: Number.isFinite(lat) ? lat : Array.isArray(coords) ? coords[1] : null,
-    lng: Number.isFinite(lng) ? lng : Array.isArray(coords) ? coords[0] : null,
+    lat: resolvedLat,
+    lng: resolvedLng,
+    // Journey task §4: a sighting with no camera fix must still show up on
+    // the timeline ("mark location unavailable") -- it just can't be
+    // plotted/routed on the map. Never invented here.
+    hasLocation: resolvedLat != null && resolvedLng != null,
     snapshotUrl: pick(raw, ["evidence_snapshot_url", "snapshot_url", "evidence_url", "image_url"], "") || "",
     plateCropUrl: pick(raw, ["plate_crop_url", "plate_image_url", "crop_url"], "") || "",
     ocrConfidence: Number(pick(raw, ["ocr_confidence", "confidence", "ocrConfidence"], NaN)),
@@ -91,9 +100,10 @@ export function normalizeVehicleSearch(raw, fallbackPlate = "") {
   const rawSightings = Array.isArray(raw?.sightings)
     ? raw.sightings
     : raw?.data?.sightings || raw?.results || [];
+  // Every real sighting is kept, even one with no camera fix (journey task
+  // §4) -- only the map layer (RoutePolyline) filters to geo-located points.
   const sightings = rawSightings
     .map(normalizeSighting)
-    .filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lng))
     .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp)); // chronological ASC
 
   const summary = raw?.summary || {};

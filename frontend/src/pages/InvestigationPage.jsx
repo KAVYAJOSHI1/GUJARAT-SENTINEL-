@@ -1,8 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useOutletContext, useSearchParams } from "react-router-dom";
-import { Download, FileSpreadsheet, MapPin, MapPinned, Radio, Search } from "lucide-react";
+import { useNavigate, useOutletContext, useSearchParams } from "react-router-dom";
+import {
+  Camera,
+  Download,
+  FileSpreadsheet,
+  MapPin,
+  MapPinned,
+  Pause,
+  Play,
+  Radio,
+  RotateCcw,
+  Search,
+} from "lucide-react";
 import { C, CAMERA_STATUS_COLOR } from "../theme.js";
 import { useToast } from "../context/ToastContext.jsx";
+import { isMockCamera } from "../services/api.js";
 import ErrorBanner from "../components/ui/ErrorBanner.jsx";
 import EmptyState from "../components/ui/EmptyState.jsx";
 import GisMap from "../components/gis/GisMap.jsx";
@@ -17,6 +29,8 @@ import { exportVehicleReportCSV, exportVehicleReportPDF } from "../utils/reportE
 import { CITY_ZOOM, FOCUS_ZOOM, GUJARAT_CENTER, GUJARAT_ZOOM } from "../lib/mockGisData.js";
 import { formatPlate } from "../utils/plate.js";
 
+const PLAY_STEP_MS = 2500;
+
 // Hero feature: GIS Mapping + Vehicle Investigation console (DEVELOPER_README §2).
 // Rendered inside Isha's AppLayout via App.jsx; reads the shared data layer from
 // <Outlet context> and honours the CameraModal hand-off (`/investigation?cam=<id>`).
@@ -25,6 +39,7 @@ import { formatPlate } from "../utils/plate.js";
 export default function InvestigationPage() {
   const { cameras: layoutCameras = [], backendLive, loading: layoutLoading } = useOutletContext() || {};
   const { push } = useToast();
+  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const camParam = params.get("cam");
   const plateParam = params.get("plate");
@@ -35,8 +50,18 @@ export default function InvestigationPage() {
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
   const [live, setLive] = useState(true);
+  // `selected` drives timeline highlight + map fly-to/marker highlight + the
+  // inline detail panel -- lightweight, never blocks the map. Opening the
+  // full evidence viewer is a separate, explicit action (`evidenceTarget`),
+  // so autoplay never pops a screen-covering modal on every step.
   const [selected, setSelected] = useState(null);
+  const [evidenceTarget, setEvidenceTarget] = useState(null);
   const [showAllCameras, setShowAllCameras] = useState(false);
+
+  // ── Play Journey (§7) ──────────────────────────────────────────────────
+  const [playing, setPlaying] = useState(false);
+  const [playIndex, setPlayIndex] = useState(-1);
+
   const lastPlate = useRef(null);
 
   // Base camera layer: prefer the dedicated GeoJSON endpoint, fall back to the
@@ -62,6 +87,9 @@ export default function InvestigationPage() {
     setResult(res.data);
     setLive(res.live);
     setSelected(null);
+    setEvidenceTarget(null);
+    setPlaying(false);
+    setPlayIndex(-1);
     setLoading(false);
 
     const n = res.data?.sightings?.length || 0;
@@ -119,6 +147,44 @@ export default function InvestigationPage() {
   const sightings = result?.sightings || [];
   const hasSightings = sightings.length > 0;
 
+  // Advances one sighting every PLAY_STEP_MS while playing. This is
+  // deliberately NOT a moving-vehicle animation (§7 explicitly forbids
+  // that) -- it just steps the same selection state a manual click would
+  // set, in order: "observed here, then here, then here."
+  useEffect(() => {
+    if (!playing || sightings.length === 0) return undefined;
+    const idx = Math.max(0, playIndex);
+    setSelected(sightings[idx]);
+    const t = setTimeout(() => {
+      if (idx + 1 < sightings.length) {
+        setPlayIndex(idx + 1);
+      } else {
+        setPlaying(false); // finished at the final sighting
+      }
+    }, PLAY_STEP_MS);
+    return () => clearTimeout(t);
+  }, [playing, playIndex, sightings]);
+
+  const handlePlay = useCallback(() => {
+    if (sightings.length === 0) return;
+    setPlayIndex((i) => (i < 0 || i >= sightings.length - 1 ? 0 : i));
+    setPlaying(true);
+  }, [sightings.length]);
+
+  const handlePause = useCallback(() => setPlaying(false), []);
+
+  const handleResetJourney = useCallback(() => {
+    setPlaying(false);
+    setPlayIndex(-1);
+    setSelected(null);
+  }, []);
+
+  // Any manual selection (timeline row / map marker click) interrupts autoplay.
+  const handleSelectSighting = useCallback((s) => {
+    setPlaying(false);
+    setSelected(s);
+  }, []);
+
   // Markers to draw: the GIS inventory, plus the focused camera itself if it
   // only exists in AppLayout's set (so it can still be highlighted).
   const mapCameras = useMemo(() => {
@@ -156,6 +222,16 @@ export default function InvestigationPage() {
     ? [focusCamera.lat, focusCamera.lng]
     : GUJARAT_CENTER;
   const mapZoom = hasSightings ? CITY_ZOOM : focusCamera ? FOCUS_ZOOM : GUJARAT_ZOOM;
+
+  // Journey task §6: selecting a sighting (click, or Play Journey stepping
+  // through) pans the map to it -- only when it actually has a camera fix
+  // (§4: a sighting without coordinates stays visible in the timeline but
+  // can't be plotted or flown to).
+  const journeyFocus = selected?.hasLocation
+    ? { lat: selected.lat, lng: selected.lng, zoom: Math.max(mapZoom, FOCUS_ZOOM) }
+    : null;
+
+  const selectedIndex = selected ? sightings.findIndex((s) => s.eventId === selected.eventId) : -1;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -269,6 +345,31 @@ export default function InvestigationPage() {
             </div>
           </div>
 
+          {/* Journey task §4/§7: labelled explicitly as camera sightings, not
+              GPS tracking, with the Play Journey transport controls. */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 13, color: C.text, letterSpacing: 0.4 }}>
+                VEHICLE JOURNEY — CAMERA SIGHTINGS
+              </div>
+              <div style={{ color: C.dim, fontSize: 10.5, marginTop: 2 }}>
+                Chronological trail of camera sightings, not live GPS tracking.
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 6 }}>
+              <button
+                onClick={playing ? handlePause : handlePlay}
+                style={{ ...journeyBtn, borderColor: C.accent, color: C.accent }}
+                title={playing ? "Pause journey playback" : "Play journey"}
+              >
+                {playing ? <Pause size={12} /> : <Play size={12} />} {playing ? "Pause" : "Play journey"}
+              </button>
+              <button onClick={handleResetJourney} style={journeyBtn} title="Reset playback">
+                <RotateCcw size={12} /> Reset
+              </button>
+            </div>
+          </div>
+
           <div className="investigation-grid">
             {/* LEFT — chronological timeline */}
             <section style={panel}>
@@ -277,18 +378,20 @@ export default function InvestigationPage() {
                 <span style={{ color: C.muted, fontWeight: 400 }}>{sightings.length} sightings · ASC</span>
               </div>
               <div style={{ padding: "8px 12px", overflowY: "auto", maxHeight: 520 }}>
-                <SightingTimeline sightings={sightings} activeId={selected?.eventId} onSelect={setSelected} />
+                <SightingTimeline sightings={sightings} activeId={selected?.eventId} onSelect={handleSelectSighting} />
               </div>
             </section>
 
-            {/* RIGHT — GIS map + trajectory */}
+            {/* RIGHT — GIS map + trajectory + selected-sighting detail */}
             <section style={panel}>
               <div style={panelHead}>
                 <span>Route Trajectory</span>
-                <span style={{ color: C.muted, fontWeight: 400 }}>polyline + direction arrows</span>
+                <span style={{ color: C.muted, fontWeight: 400 }}>
+                  {playing ? `playing · ${selectedIndex + 1}/${sightings.length}` : "polyline + direction arrows"}
+                </span>
               </div>
               <div style={{ padding: 12 }}>
-                <GisMap center={mapCenter} zoom={mapZoom} height={496}>
+                <GisMap center={mapCenter} zoom={mapZoom} height={selected ? 380 : 496} focus={journeyFocus}>
                   {mapCameras.map((cam) => (
                     <CameraMarker
                       key={cam.id}
@@ -297,8 +400,66 @@ export default function InvestigationPage() {
                       dim={Boolean(focusCamera) && cam.id !== focusCamera.id}
                     />
                   ))}
-                  <RoutePolyline sightings={sightings} />
+                  <RoutePolyline sightings={sightings} activeId={selected?.eventId} onSelect={handleSelectSighting} />
                 </GisMap>
+
+                {/* Journey task §5: clicking a marker/timeline row opens this
+                    detail panel -- inline, not a blocking modal, so playback
+                    and manual browsing never hide the map. */}
+                {selected && (
+                  <div style={{ marginTop: 10, background: C.panel, border: `1px solid ${C.accent}`, borderRadius: 6, padding: "10px 12px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <span style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 12 }}>
+                        <span style={{ color: C.accent, fontFamily: "monospace" }}>
+                          #{selectedIndex + 1} {selected.cameraId}
+                        </span>
+                        {isMockCamera(selected.cameraCode || selected.cameraId) && (
+                          <span style={{ color: C.violet, border: `1px solid ${C.violet}`, borderRadius: 3, padding: "0 4px", fontSize: 8, fontWeight: 700 }}>
+                            MOCK
+                          </span>
+                        )}
+                      </span>
+                      <span style={{ color: C.muted, fontSize: 10, fontFamily: "monospace" }}>
+                        {selected.timestamp ? new Date(selected.timestamp).toLocaleString("en-IN", { hour12: false }) : "—"}
+                      </span>
+                    </div>
+                    <div style={{ color: C.muted, fontSize: 11, marginTop: 3 }}>
+                      {selected.locationDesc || selected.cameraName}
+                      {!selected.hasLocation && <span style={{ color: C.amber }}> · location unavailable</span>}
+                    </div>
+                    <div style={{ display: "flex", gap: 16, marginTop: 8, flexWrap: "wrap", fontSize: 11 }}>
+                      <span>
+                        Plate: <strong style={{ color: C.text, fontFamily: "monospace" }}>{result?.plate ? formatPlate(result.plate) : "—"}</strong>
+                      </span>
+                      <span>
+                        Confidence:{" "}
+                        <strong style={{ color: C.text }}>
+                          {Number.isFinite(selected.ocrConfidence) ? `${(selected.ocrConfidence * 100).toFixed(1)}%` : "—"}
+                        </strong>
+                      </span>
+                      <span>
+                        Vehicle: <strong style={{ color: C.text }}>{selected.vehicleType || "—"}</strong>
+                      </span>
+                    </div>
+                    <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                      <button onClick={() => setEvidenceTarget(selected)} style={journeyBtn}>
+                        <Camera size={11} /> View evidence
+                      </button>
+                      <button
+                        onClick={() =>
+                          setParams((prev) => {
+                            const next = new URLSearchParams(prev);
+                            next.set("cam", selected.cameraId);
+                            return next;
+                          })
+                        }
+                        style={journeyBtn}
+                      >
+                        <MapPinned size={11} /> Open camera
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             </section>
           </div>
@@ -349,9 +510,9 @@ export default function InvestigationPage() {
       )}
 
       <EvidenceModal
-        sighting={selected}
+        sighting={evidenceTarget}
         plate={result ? formatPlate(result.plate) : ""}
-        onClose={() => setSelected(null)}
+        onClose={() => setEvidenceTarget(null)}
       />
     </div>
   );
@@ -404,6 +565,21 @@ const csvBtn = {
   borderRadius: 4,
   padding: "7px 14px",
   fontSize: 11,
+  fontWeight: 600,
+  cursor: "pointer",
+  whiteSpace: "nowrap",
+};
+
+const journeyBtn = {
+  display: "flex",
+  alignItems: "center",
+  gap: 5,
+  background: "transparent",
+  border: `1px solid ${C.border}`,
+  color: C.muted,
+  borderRadius: 4,
+  padding: "5px 10px",
+  fontSize: 10.5,
   fontWeight: 600,
   cursor: "pointer",
   whiteSpace: "nowrap",

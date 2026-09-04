@@ -29,6 +29,13 @@ requests>=2.31
 fastapi>=0.110
 uvicorn[standard]>=0.29
 
+# --- Mock camera video preview remux (scripts/generate_mock_camera_registry.py) ---
+# Bundles its own ffmpeg libs (no system ffmpeg needed) -- used to losslessly
+# repackage trafficdataset/*.MOV (H.264/QuickTime, generally not browser-
+# playable as-is) into a standard H.264-in-MP4 file the dashboard can embed
+# directly. Optional: only imported by that one script, at generation time.
+av>=11.0
+
 # --- OCR engine (ai/ocr/ocr_engine.py) ---
 # EasyOCR is the default backend: stable on CPU, no paddlepaddle runtime.
 easyocr>=1.7

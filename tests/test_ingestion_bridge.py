@@ -132,13 +132,20 @@ class TestQueueConsumer(unittest.TestCase):
 
 class _OneShotWorker(StreamWorker):
     """Real StreamWorker, but a file EOF stops it instead of re-looping the
-    clip forever (keeps the test bounded)."""
+    clip forever (keeps the test bounded). Local-file sources now loop by
+    default for MOCK cameras (see ingestion/stream_manager.py
+    StreamWorker._loop_local_source) -- both that hook and the older
+    _reconnect() fallback are overridden here so this test's plain local
+    clip still terminates cleanly at EOF instead of looping forever."""
 
     def _reconnect(self) -> bool:
         if getattr(self, "_connected_once", False):
             return False
         self._connected_once = True
         return super()._reconnect()
+
+    def _loop_local_source(self) -> bool:
+        return False
 
 
 @unittest.skipUnless(cv2 is not None, "OpenCV not available")

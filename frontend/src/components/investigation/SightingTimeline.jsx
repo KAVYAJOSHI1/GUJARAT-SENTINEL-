@@ -1,5 +1,6 @@
-import { ChevronRight, MapPin } from "lucide-react";
+import { ChevronRight, MapPin, MapPinOff } from "lucide-react";
 import { C } from "../../theme.js";
+import { isMockCamera } from "../../services/api.js";
 import EmptyState from "../ui/EmptyState.jsx";
 
 // Chronological Movement Timeline (DEVELOPER_README §14.6): vertical list of
@@ -70,16 +71,34 @@ export default function SightingTimeline({ sightings = [], activeId, onSelect })
               }}
             >
               <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: C.text, display: "flex", alignItems: "center", gap: 6 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: C.text, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                   <span style={{ color: C.muted, fontFamily: "monospace" }}>#{i + 1}</span>
                   {s.cameraName}
                   <span style={{ color: C.muted, fontWeight: 400 }}>({s.cameraId})</span>
+                  {/* Journey task §9: never let a mock trafficdataset sighting
+                      read as a real Sentinel camera sighting. */}
+                  {isMockCamera(s.cameraCode || s.cameraId) && (
+                    <span style={{ color: C.violet, border: `1px solid ${C.violet}`, borderRadius: 3, padding: "0 4px", fontSize: 8, fontWeight: 700, letterSpacing: 0.5 }}>
+                      MOCK
+                    </span>
+                  )}
                 </div>
                 <div style={{ fontSize: 11, color: C.muted, marginTop: 3, fontFamily: "monospace" }}>
                   {fmtTime(s.timestamp)}
                 </div>
-                <div style={{ fontSize: 10, color: C.dim, marginTop: 2, fontFamily: "monospace" }}>
-                  {s.lat != null ? `${s.lat.toFixed(5)}, ${s.lng.toFixed(5)}` : "—"}
+                {s.locationDesc && (
+                  <div style={{ fontSize: 10.5, color: C.muted, marginTop: 2 }}>{s.locationDesc}</div>
+                )}
+                <div style={{ fontSize: 10, color: s.hasLocation ? C.dim : C.amber, marginTop: 2, fontFamily: "monospace", display: "flex", alignItems: "center", gap: 4 }}>
+                  {s.hasLocation ? (
+                    <>
+                      <MapPin size={10} /> {s.lat.toFixed(5)}, {s.lng.toFixed(5)}
+                    </>
+                  ) : (
+                    <>
+                      <MapPinOff size={10} /> Location unavailable
+                    </>
+                  )}
                   {Number.isFinite(s.ocrConfidence) ? ` · OCR ${(s.ocrConfidence * 100).toFixed(0)}%` : ""}
                 </div>
               </div>

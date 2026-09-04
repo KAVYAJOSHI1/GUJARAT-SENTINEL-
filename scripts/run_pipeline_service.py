@@ -57,8 +57,23 @@ RTSP_BASE = os.getenv("SENTINEL_RTSP_BASE", "rtsp://103.250.160.189:8554/stream"
 #  registry -> CameraRecord                                                     #
 # --------------------------------------------------------------------------- #
 def load_registry(path: str) -> list:
-    with open(path) as f:
-        return json.load(f)
+    """Load one registry file, or several merged into one camera list.
+
+    ``path`` may be a comma-separated list, e.g.
+    ``"data/camera_registry.json,data/trafficdataset_camera_registry.json"``
+    -- this is how real Sentinel cameras (cam04/cam06) and local MOCK_CAM*
+    cameras run in the SAME process / SAME AIPipeline instance (see
+    scripts/run_mock_cameras.py), which matters: two separate Python
+    processes each loading their own AIPipeline (YOLO/torch/OpenCV) have
+    been observed to crash on interpreter shutdown on this machine, so
+    "real + mock simultaneously" is done as one process with more workers,
+    not two competing processes. A single path (the default / existing
+    behavior) is unaffected -- it just loads that one file."""
+    entries: list = []
+    for p in [part.strip() for part in path.split(",") if part.strip()]:
+        with open(p) as f:
+            entries.extend(json.load(f))
+    return entries
 
 
 def to_camera_record(entry: dict) -> CameraRecord:
@@ -247,7 +262,10 @@ def main():
     g.add_argument("--camera", help="single camera id")
     g.add_argument("--cameras", help="comma-separated camera ids")
     g.add_argument("--all", action="store_true", help="every camera in the registry")
-    ap.add_argument("--registry", default=REGISTRY)
+    ap.add_argument("--registry", default=REGISTRY,
+                    help="registry file, or a comma-separated list of registry files to merge "
+                         "(e.g. data/camera_registry.json,data/trafficdataset_camera_registry.json "
+                         "to run real Sentinel + MOCK_CAM* cameras together)")
     ap.add_argument("--backend-url",
                     default=os.getenv("SENTINEL_BACKEND_URL",
                                       "http://localhost:8000/api/v1/events/ai-detection"))

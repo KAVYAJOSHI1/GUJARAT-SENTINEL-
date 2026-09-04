@@ -15,6 +15,38 @@ from app.schemas.auth import CurrentUser
 router = APIRouter()
 
 
+def _to_alert_read(a: Alert, code=None, name=None, location_desc=None, lat=None, lon=None) -> AlertRead:
+    return AlertRead(
+        id=a.id,
+        plate_number=a.plate_number,
+        plate_number_normalized=a.plate_number_normalized,
+        camera_id=a.camera_id,
+        camera_code=code,
+        camera_name=name,
+        location_desc=location_desc,
+        latitude=lat,
+        longitude=lon,
+        vehicle_event_id=a.vehicle_event_id,
+        watchlist_id=a.watchlist_id,
+        priority_level=a.priority_level,
+        status=a.status,
+        snapshot_url=a.snapshot_url,
+        created_at=a.created_at,
+    )
+
+
+def _camera_lookup(db: Session, camera_id: str):
+    """(code, name, location_desc, lat, lon) for one camera, or all-None if
+    it's since been removed. Shared by list/acknowledge so both return the
+    identical AlertRead shape -- no route-specific contract drift."""
+    row = db.execute(
+        select(Camera.code, Camera.name, Camera.location_desc, ST_Y(Camera.location), ST_X(Camera.location)).where(
+            Camera.id == camera_id
+        )
+    ).first()
+    return row or (None, None, None, None, None)
+
+
 @router.get("", response_model=list[AlertRead])
 def list_alerts(
     status_filter: str | None = Query(default=None, alias="status"),
@@ -33,26 +65,7 @@ def list_alerts(
     if status_filter:
         stmt = stmt.where(Alert.status == status_filter)
     rows = db.execute(stmt).all()
-    return [
-        AlertRead(
-            id=a.id,
-            plate_number=a.plate_number,
-            plate_number_normalized=a.plate_number_normalized,
-            camera_id=a.camera_id,
-            camera_code=code,
-            camera_name=name,
-            location_desc=location_desc,
-            latitude=lat,
-            longitude=lon,
-            vehicle_event_id=a.vehicle_event_id,
-            watchlist_id=a.watchlist_id,
-            priority_level=a.priority_level,
-            status=a.status,
-            snapshot_url=a.snapshot_url,
-            created_at=a.created_at,
-        )
-        for a, code, name, location_desc, lat, lon in rows
-    ]
+    return [_to_alert_read(a, code, name, location_desc, lat, lon) for a, code, name, location_desc, lat, lon in rows]
 
 
 @router.patch("/{alert_id}", response_model=AlertRead)
@@ -70,4 +83,5 @@ def acknowledge_alert(
     db.add(alert)
     db.commit()
     db.refresh(alert)
-    return alert
+    code, name, location_desc, lat, lon = _camera_lookup(db, alert.camera_id)
+    return _to_alert_read(alert, code, name, location_desc, lat, lon)

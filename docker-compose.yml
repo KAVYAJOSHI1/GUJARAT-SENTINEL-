@@ -62,6 +62,17 @@ services:
       SEED_WATCHLIST_PLATE: ${SEED_WATCHLIST_PLATE:-}
       CORS_ALLOW_ORIGINS: '["*"]'
       UVICORN_RELOAD: ${UVICORN_RELOAD:-1}
+      # Read-only access to the local mock-camera source clips, so
+      # GET /api/v1/cameras/{id}/mock-video can actually stream them (see
+      # DEVELOPER_README.md "Mock Cameras"). Mounted at a fixed container
+      # path rather than the host's literal absolute path -- the backend
+      # translates data/trafficdataset_camera_registry.json's host paths
+      # against MOCK_VIDEOS_ROOT, so this stays portable across machines.
+      MOCK_VIDEOS_ROOT: /trafficdataset
+      # Read-only access to the AI pipeline's local evidence snapshots, as a
+      # fallback for the (rare) event whose snapshot was never uploaded to
+      # MinIO -- see vehicles.py get_evidence() / EVIDENCE_ROOT.
+      EVIDENCE_ROOT: /evidence
     depends_on:
       postgis:
         condition: service_healthy
@@ -73,6 +84,8 @@ services:
       - ./backend:/app
       - ./database:/database:ro
       - ./scripts:/scripts:ro
+      - ./trafficdataset:/trafficdataset:ro
+      - ./evidence:/evidence:ro
 
   frontend:
     image: node:20-alpine

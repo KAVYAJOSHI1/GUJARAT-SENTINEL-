@@ -1,9 +1,10 @@
-import { Calendar, Camera, Clock, MapPin, ShieldAlert } from "lucide-react";
+import { Calendar, Camera, Clock, Hourglass, MapPin, ShieldAlert } from "lucide-react";
 import { C } from "../../theme.js";
 import { formatPlate } from "../../utils/plate.js";
 
 // Vehicle Profile Summary Card (DEVELOPER_README §14.5 / §3):
-// First Seen, Last Seen, Total Sightings, Camera Count, Watchlist status.
+// First Seen, Last Seen, Total Sightings, Camera Count, Journey Duration,
+// Watchlist status.
 const fmt = (iso) => {
   if (!iso) return "—";
   const d = new Date(iso);
@@ -11,6 +12,24 @@ const fmt = (iso) => {
     ? String(iso)
     : d.toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false });
 };
+
+// "15m 45s" / "2h 05m" / "3d 4h" -- always from real first/last timestamps,
+// never fabricated (single-sighting journeys just show "—").
+function formatDuration(firstIso, lastIso) {
+  if (!firstIso || !lastIso) return "—";
+  const start = new Date(firstIso).getTime();
+  const end = new Date(lastIso).getTime();
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return "—";
+  const totalSec = Math.round((end - start) / 1000);
+  if (totalSec < 60) return `${totalSec}s`;
+  const days = Math.floor(totalSec / 86400);
+  const hours = Math.floor((totalSec % 86400) / 3600);
+  const mins = Math.floor((totalSec % 3600) / 60);
+  const secs = totalSec % 60;
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${String(mins).padStart(2, "0")}m`;
+  return `${mins}m ${String(secs).padStart(2, "0")}s`;
+}
 
 function Metric({ icon: Icon, label, value, color = C.text }) {
   return (
@@ -58,6 +77,7 @@ export default function VehicleProfileCard({ result }) {
         <Metric icon={Camera} label="Cameras" value={cameraCount} />
         <Metric icon={Calendar} label="First seen" value={fmt(firstSeen)} />
         <Metric icon={Clock} label="Last seen" value={fmt(lastSeen)} />
+        <Metric icon={Hourglass} label="Journey duration" value={formatDuration(firstSeen, lastSeen)} color={C.violet} />
       </div>
     </div>
   );
