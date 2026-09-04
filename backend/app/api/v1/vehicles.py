@@ -3,12 +3,16 @@ Vehicle Search & Trajectory API — GET /api/v1/vehicles/search?plate={plate}
 Returns chronologically ordered sightings using the composite B-Tree index
 on (plate_number_normalized, timestamp). Target: <50ms for 100k+ rows.
 """
+import os
+
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import FileResponse, RedirectResponse
 from geoalchemy2.functions import ST_X, ST_Y
 from sqlalchemy import select
 from sqlmodel import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, verify_bearer_header_or_query
+from app.core.exceptions import NotFoundError
 from app.database import get_db
 from app.models.camera import Camera
 from app.models.vehicle_event import VehicleEvent
@@ -76,3 +80,64 @@ def search_vehicle(
         is_watchlisted=is_watchlisted,
         sightings=sightings,
     )
+
+
+@router.get("/events/recent", response_model=list[VehicleSighting])
+def recent_vehicle_events(
+    limit: int = Query(default=50, le=500),
+    db: Session = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    """Most recent AI detections across all cameras (dashboard event feed)."""
+    stmt = (
+        select(
+            VehicleEvent,
+            Camera.name,
+            Camera.code,
+            ST_Y(Camera.location),
+            ST_X(Camera.location),
+        )
+        .join(Camera, Camera.id == VehicleEvent.camera_id, isouter=True)
+        .order_by(VehicleEvent.timestamp.desc())
+        .limit(limit)
+    )
+    return [
+        VehicleSighting(
+            event_id=ev.id,
+            camera_id=ev.camera_id,
+            camera_code=code,
+            camera_name=name,
+            timestamp=ev.timestamp,
+            latitude=ev.latitude if ev.latitude is not None else cam_lat,
+            longitude=ev.longitude if ev.longitude is not None else cam_lon,
+            snapshot_url=ev.snapshot_url,
+            confidence_score=ev.confidence_score,
+            track_id=ev.track_id,
+        )
+        for ev, name, code, cam_lat, cam_lon in db.execute(stmt).all()
+    ]
+
+
+@router.get("/evidence/{event_id}")
+def get_evidence(
+    event_id: str,
+    _=Depends(verify_bearer_header_or_query),
+    db: Session = Depends(get_db),
+):
+    """Serve (or redirect to) the snapshot image for one vehicle event.
+
+    Accepts a normal Bearer token OR a ``?token=`` query param, because
+    ``<img src>`` cannot send an Authorization header. ``event_id`` is an
+    opaque UUID, so this is a low-sensitivity read.
+    """
+    ev = db.get(VehicleEvent, event_id)
+    if ev is None or not ev.snapshot_url:
+        raise NotFoundError("Evidence", event_id)
+    url = ev.snapshot_url
+    if url.startswith(("http://", "https://")):
+        return RedirectResponse(url)
+    if url.startswith("file://"):
+        path = url[len("file://"):]
+        if os.path.isfile(path):
+            return FileResponse(path)
+    raise NotFoundError("Evidence file", event_id)

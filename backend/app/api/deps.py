@@ -36,6 +36,29 @@ def get_current_user(
     return CurrentUser(id=user.id, username=user.username, role=user.role)
 
 
+def verify_bearer_header_or_query(
+    token: Optional[str] = None,
+    authorization: Optional[str] = Header(default=None),
+) -> str:
+    """Accept a JWT from either ``Authorization: Bearer`` OR a ``?token=`` query
+    param (needed for ``<img src>`` which cannot set headers). Only checks the
+    token is a valid, non-expired JWT -- no DB lookup."""
+    raw = None
+    if authorization and authorization.lower().startswith("bearer "):
+        raw = authorization.split(" ", 1)[1].strip()
+    elif token:
+        raw = token
+    if not raw:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail={"code": "NOT_AUTHENTICATED"})
+    try:
+        decode_access_token(raw)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail={"code": "INVALID_TOKEN"})
+    return "ok"
+
+
 def require_ingest_auth(
     x_ingest_key: Optional[str] = Header(default=None, alias="X-Ingest-Key"),
     authorization: Optional[str] = Header(default=None),
