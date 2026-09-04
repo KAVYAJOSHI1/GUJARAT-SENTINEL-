@@ -60,6 +60,8 @@ def search_vehicle(
             snapshot_url=ev.snapshot_url,
             confidence_score=ev.confidence_score,
             track_id=ev.track_id,
+            vehicle_type=ev.vehicle_type,
+            plate_number=ev.plate_number,
         )
         for ev, camera_name, camera_code, cam_lat, cam_lon in rows
     ]
@@ -113,6 +115,8 @@ def recent_vehicle_events(
             snapshot_url=ev.snapshot_url,
             confidence_score=ev.confidence_score,
             track_id=ev.track_id,
+            vehicle_type=ev.vehicle_type,
+            plate_number=ev.plate_number,
         )
         for ev, name, code, cam_lat, cam_lon in db.execute(stmt).all()
     ]

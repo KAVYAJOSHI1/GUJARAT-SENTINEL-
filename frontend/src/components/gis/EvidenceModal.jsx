@@ -52,7 +52,11 @@ export default function EvidenceModal({ sighting, plate, onClose }) {
 
   if (!sighting) return null;
 
-  const snapshot = sighting.snapshotUrl || evidenceUrl(sighting.eventId);
+  // Prefer the backend evidence proxy: it resolves both object-storage and
+  // local file:// snapshot references (a bare file:// URL can't be loaded by
+  // the browser directly). Fall back to whatever raw URL the sighting carries
+  // only when there's no event id to proxy through.
+  const snapshot = evidenceUrl(sighting.eventId) || sighting.snapshotUrl;
   const crop = sighting.plateCropUrl || "";
   const conf = Number.isFinite(sighting.ocrConfidence)
     ? `${(sighting.ocrConfidence * 100).toFixed(1)}%`

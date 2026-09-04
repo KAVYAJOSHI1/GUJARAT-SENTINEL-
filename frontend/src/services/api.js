@@ -88,23 +88,55 @@ export function logout() {
   setToken("");
 }
 
+// Proxied evidence-image URL for one AI event, usable as <img src>.
+// (<img> can't send an Authorization header, so the JWT rides as ?token=.)
+export function evidenceUrl(eventId) {
+  if (!eventId) return null;
+  const t = getToken();
+  const base = `${API_BASE}/vehicles/evidence/${encodeURIComponent(eventId)}`;
+  return t ? `${base}?token=${encodeURIComponent(t)}` : base;
+}
+
 // ─── Normalisers ────────────────────────────────────────────────────────────
 const pick = (obj, keys, fallback) => {
   for (const k of keys) if (obj?.[k] !== undefined && obj[k] !== null) return obj[k];
   return fallback;
 };
 
+// Backend CameraStatus is ONLINE / OFFLINE / DEGRADED. The UI's healthy state
+// is called "active"; keep OFFLINE/DEGRADED as-is. ("alert" is derived from the
+// alert list, never a camera field.)
+export function mapCameraStatus(raw) {
+  const s = String(raw || "").toLowerCase();
+  if (s === "online" || s === "active") return "active";
+  if (s === "offline") return "offline";
+  if (s === "degraded") return "degraded";
+  return s || "offline";
+}
+
+// "Paldi Circle, ..., Ahmedabad, Gujarat 380007, India" -> "Ahmedabad"
+function zoneFromAddress(addr, fallback) {
+  if (!addr) return fallback;
+  const parts = String(addr).split(",").map((s) => s.trim()).filter(Boolean);
+  const stateIdx = parts.findIndex((p) => /gujarat/i.test(p));
+  if (stateIdx > 0) return parts[stateIdx - 1].replace(/\s*\d{5,6}$/, "").trim() || fallback;
+  return parts.length >= 3 ? parts[parts.length - 3] : fallback;
+}
+
 export function normalizeCamera(raw) {
   const lat = Number(pick(raw, ["lat", "latitude", "location_lat"], NaN));
   const lng = Number(pick(raw, ["lng", "lon", "longitude", "location_lng"], NaN));
   const coords = raw?.location?.coordinates; // GeoJSON [lng, lat]
   return {
-    id: String(pick(raw, ["id", "camera_id", "cam_id"], "CAM-?")),
+    id: String(pick(raw, ["code", "camera_id", "cam_id", "id"], "CAM-?")),
+    uuid: pick(raw, ["id"], null),
+    code: pick(raw, ["code", "camera_id"], null),
     name: pick(raw, ["name", "label", "location_name"], "Unnamed camera"),
-    zone: pick(raw, ["zone", "sector", "area"], "—"),
+    zone: zoneFromAddress(pick(raw, ["location_desc"], null), pick(raw, ["zone", "sector", "area"], "—")),
+    locationDesc: pick(raw, ["location_desc"], null),
     lat: Number.isFinite(lat) ? lat : Array.isArray(coords) ? coords[1] : null,
     lng: Number.isFinite(lng) ? lng : Array.isArray(coords) ? coords[0] : null,
-    status: String(pick(raw, ["status", "state"], "active")).toLowerCase(),
+    status: mapCameraStatus(pick(raw, ["status", "state"], "offline")),
     resolution: pick(raw, ["resolution", "stream_resolution"], "—"),
     fps: pick(raw, ["fps", "frame_rate"], "—"),
     protocol: String(pick(raw, ["protocol", "stream_protocol"], "RTSP")).toUpperCase(),
@@ -139,13 +171,19 @@ export function normalizeAlert(raw) {
 }
 
 export function normalizeDetection(raw) {
+  const lat = Number(pick(raw, ["latitude", "lat"], NaN));
+  const lng = Number(pick(raw, ["longitude", "lng", "lon"], NaN));
   return {
-    id: pick(raw, ["event_id", "id"], `evt-${Date.now()}`),
-    plate: pick(raw, ["plate", "plate_number", "plate_number_normalized"], "—"),
+    id: String(pick(raw, ["event_id", "id"], `evt-${Date.now()}`)),
+    plate: pick(raw, ["plate", "plate_number", "plate_number_normalized"], "UNKNOWN"),
     cam: String(pick(raw, ["camera_code", "camera_id", "cam"], "CAM-?")),
     camName: pick(raw, ["camera_name", "cam_name"], null),
+    vehicleType: pick(raw, ["vehicle_type", "vehicleType", "type"], null),
     trackId: pick(raw, ["track_id", "trackId"], null),
     confidence: pick(raw, ["confidence_score", "confidence"], null),
+    lat: Number.isFinite(lat) ? lat : null,
+    lng: Number.isFinite(lng) ? lng : null,
+    ts: pick(raw, ["timestamp", "time", "created_at"], null),
     time: formatTime(pick(raw, ["timestamp", "time", "created_at"], null)),
     snapshotUrl: pick(raw, ["snapshot_url"], null),
   };
