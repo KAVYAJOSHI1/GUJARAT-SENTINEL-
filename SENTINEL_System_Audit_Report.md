@@ -163,15 +163,15 @@ flowchart LR
 | Detection model | YOLOv8n (Ultralytics, COCO-pretrained, **not fine-tuned** on Indian traffic) | `ai/detection/vehicle_detector.py` | Standard, works, but COCO classes miss auto-rickshaws (a major Indian traffic class) entirely — `DEFAULT_VEHICLE_CLASSES` = car/motorcycle/bus/truck only. |
 | Tracking | ByteTrack, hand-rolled: Kalman constant-velocity filter + two-stage Hungarian IoU matching | `ai/tracking/tracker.py` | Real, correct ByteTrack semantics (high/low score split, lost-track re-activation). Per-camera instance = correct isolation. |
 | Re-identification (cross-camera visual) | **Not implemented.** README explicitly scoped it as "optional/bonus" and it was never built — no appearance embeddings anywhere in the codebase. | — | Cross-camera "correlation" is **plate-string identity only** (`correlation.py:33-37`) — if OCR fails (UNKNOWN), that vehicle is cross-camera invisible. This is the single biggest capability gap vs. the docs' framing. |
-| ANPR / plate localization | **Classical CV**, not a learned plate detector: bilateral filter → Canny edges → contour geometry heuristics, hard-coded aspect-ratio window | `ai/anpr/plate_locator.py` | This is the weakest link in the vision stack. No IoU/mAP number exists for it because it isn't a trained model — it will fail on skewed/angled/partially-occluded plates, which the dev's own comments concede ("Anand clips... plates usually come back UNKNOWN, exactly like the real overhead junction cameras — that is the correct, honest result, not a bug"). |
-| OCR | EasyOCR (CPU) primary, PaddleOCR optional/auto-fallback, both result formats parsed defensively | `ai/ocr/ocr_engine.py` | Solid engineering (lazy init, permanent-disable-on-crash, multi-variant best-of scoring) but any CPU OCR at 30fps-live-video scale is inherently throughput-limited — mitigated by the OCR-throttle-once-stable trick. |
+| ANPR / plate localization | **Classical CV**, not a learned plate detector: bilateral filter → Canny edges → contour geometry heuristics, hard-coded aspect-ratio window. **Phase 3 (§3a of Part II)** added an additive second candidate source (CLAHE + morphological closing) + mild rotation deskew + top-2 candidates — the original path is unchanged. | `ai/anpr/plate_locator.py` | Still the weakest link in the vision stack — still not a trained model, no IoU/mAP number, still fails on heavily skewed/occluded plates. Phase 3 measurably raised synthetic exact-match 70.8%→87.5% by fixing a `contourArea` under-count that was rejecting valid candidates (§3a), but real-camera recall on distance surveillance remains bounded by classical CV — the dev's own comment still applies ("plates usually come back UNKNOWN... the correct, honest result, not a bug"). |
+| OCR | EasyOCR (CPU) primary, PaddleOCR optional/auto-fallback, both result formats parsed defensively | `ai/ocr/ocr_engine.py` | Solid engineering (lazy init, permanent-disable-on-crash, multi-variant best-of scoring) but any CPU OCR at 30fps-live-video scale is inherently throughput-limited — mitigated by the OCR-throttle-once-stable trick and, from Phase 3 (§3a), an `extract_best()` early-exit that skips the remaining variants once one scores ≥0.92 (measured −26% mean OCR latency per plate on the synthetic set). |
 | Embeddings / feature extraction | **None.** No CNN feature vectors, no vector DB, no similarity search anywhere. | — | Any doc language implying vehicle re-id "feature vectors" is aspirational only. |
 | Matching (plate↔track) | IoU + "containment" (plate-box-inside-vehicle-box) hybrid, Hungarian-assigned | `ai/tracking/track_association.py:90-149` | Well-designed: correctly recognizes containment (not raw IoU) is the real signal for a tiny plate box inside a big vehicle box. |
-| Confidence handling | Multi-factor: OCR conf × detection conf × format-validity × recency-weighted vote count; format-score computed against a real Indian plate grammar (standard/short/BH-series) | `ai/anpr/consensus.py`, `ai/ocr/plate_format.py` | Above-average sophistication for a hackathon project — this is the standout module. |
+| Confidence handling | Multi-factor: OCR conf × detection conf × format-validity × **plate-locator quality** (Phase 3, §3a) × recency-weighted vote count; format-score computed against a real Indian plate grammar (standard/short/BH-series). Phase 3 also added a graduated correction cap so `correct_by_position()` no longer fabricates plates from arbitrary text. | `ai/anpr/consensus.py`, `ai/ocr/plate_format.py` | Above-average sophistication for a hackathon project — this is the standout module. |
 | Temporal logic | Consensus lock (≥4 votes, ≥0.82 conf) resists single-frame flip-flops; requires a *stronger* disagreeing read (≥0.92 conf + ≥0.9 format) to break a lock | `consensus.py:94-105` | Good — but the lock TTL (20s) plus track-history TTL (30s) means a long-dwelling vehicle (queued traffic) can silently reset consensus mid-track. |
 | Cross-camera association | `plate + timestamp-bucket + camera_id + location` composite identity, chronological sort | `ai/tracking/correlation.py:77-136` | Correct for what it is (a plate-string join), not a general Re-ID system — see gap above. |
 
-**Bottlenecks**: (1) single consumer thread serializes all cameras through one CPU-bound YOLO+OCR pipeline; (2) heuristic (non-learned) plate locator caps ANPR recall well below a trained detector's; (3) synchronous backend POST inside the hot loop.
+**Bottlenecks**: (1) single consumer thread serializes all cameras through one CPU-bound YOLO+OCR pipeline; (2) heuristic (non-learned) plate locator caps ANPR recall well below a trained detector's — Phase 3 (§3a of Part II) narrowed but did not remove this, via a `contourArea`-under-count fix that recovers valid candidates the old filter rejected (synthetic exact-match 70.8%→87.5%); (3) synchronous backend POST inside the hot loop.
 
 ---
 
@@ -358,7 +358,7 @@ The docs (`SCALABILITY.md`) describe Kafka/RabbitMQ, Kubernetes, NVIDIA Triton, 
 | `watchlist.expires_at` never enforced | **HIGH** | Stored on write, never filtered on read (`watchlist_engine.py`, `watchlist.py` API) — an "expired" entry keeps matching forever. |
 | Dashboard camera status not wired to live health | **MEDIUM** | `HealthRegistry` (real-time FPS/drops/reconnects) never reaches the backend's `cameras.status` column that the dashboard actually reads — the health-push endpoint it targets doesn't exist in the real API (`stream_health.py`'s own docstring calls this out as a placeholder). |
 | Frontend silently fabricates data on backend failure | **MEDIUM** (quality) / risk in a demo context | `services/api.js::safe()` + `websocket.js`'s alert simulator — no visible "DEMO/OFFLINE DATA" banner distinguishing real from fabricated content in the current UI code (only a `backendLive` boolean state exists; whether it's rendered prominently should be checked live). |
-| Plate locator is non-learned heuristic with a static fallback crop | **MEDIUM** | `plate_locator.py:87-99` — caps ANPR recall on any plate outside the assumed aspect-ratio/position prior; this is a modeling limitation, not a bug, but materially affects the "$>95\%$ ANPR accuracy" claim in `README.md`, which is unverified — no benchmark results against real labeled data exist in the repo (`scripts/evaluate_anpr.py`'s no-dataset mode explicitly generates *synthetic* fonts and warns "must not be quoted as real accuracy"). |
+| Plate locator is non-learned heuristic with a static fallback crop | **MEDIUM** | `ai/anpr/plate_locator.py` — caps ANPR recall on any plate outside the assumed aspect-ratio/position prior; a modeling limitation, not a bug. Phase 3 (§3a of Part II) improved it additively (CLAHE + morphological closing second candidate source, deskew, top-2 candidates) — measured synthetic exact-match 70.8%→87.5%, mean OCR latency −26% — and `README.md` now states these synthetic numbers explicitly as synthetic/OOD, with no ">95%" claim. Still no benchmark against real labeled data (none exists locally); real-camera ANPR remains qualitative (spot-checks: vehicles detected, all events honestly `UNKNOWN`, zero hallucinated plates). |
 | `AuditLog` model is dead code | **LOW** | Fully migrated, fully modeled, zero writers — either finish it or remove it to avoid the false impression of compliance logging. |
 | JWT passed as URL query param | **LOW-MEDIUM** | Necessary workaround for `<img>/<video>` (`api.js:93-108`), but tokens land in access logs; should be a scoped, short-TTL signed URL instead of the full session JWT. |
 | No rate limiting anywhere | **MEDIUM** | `/auth/login` is brute-forceable; no `slowapi`/nginx-level throttling present. |
@@ -551,7 +551,7 @@ Single-host Docker Compose: Postgres+PostGIS, MinIO, one FastAPI backend, one Re
 4. Enforce `watchlist.expires_at` in the match query.
 5. Either implement `AuditLog` writes or remove the table/claim.
 6. Correct `SECURITY.md`'s RS256/AES-256 claims to match reality (HS256, no at-rest encryption) — or implement them.
-7. Replace or caveat the README's unverified ">95% ANPR accuracy" claim.
+7. Replace or caveat the README's unverified ">95% ANPR accuracy" claim. *(Done — README carries no accuracy claim; Phase 3 §3a reports synthetic numbers explicitly as synthetic/OOD with sample size, and real-camera results as qualitative-only.)*
 8. Rate-limit `/auth/login`.
 9. Tighten CORS from `["*"]` for anything beyond local dev.
 10. Add a basic retention job so `vehicle_events` doesn't imply indefinite mass surveillance by default.
@@ -647,6 +647,40 @@ Run each camera count for **180 seconds** (long enough to pass model warm-up and
 - **Negative set: at least 20-30 no-plate/occluded images** to get a non-trivial false-positive-rate estimate.
 
 Do not report a single "accuracy: X%" number without also reporting `n` and which dataset (real/synthetic) it came from — a judge who asks "how many samples?" and gets "24, synthetic" (today's default `--n 24`) will correctly discount the number entirely.
+
+---
+
+### 3a. PHASE 3 UPDATE — ANPR accuracy pass (implemented 2026-09-05, commit `c4c71f9`)
+
+A targeted improvement pass was run against the pipeline described above. **The honest-UNKNOWN behaviour was preserved** — no change turns an unreadable plate into a guessed one; several changes make guessing *harder*.
+
+**Audit findings acted on:**
+
+| Finding | Evidence | Fix |
+|---|---|---|
+| The classical-CV locator's `cv2.contourArea()` **under-counts a thin border/frame contour** — measured **17 px²** for a candidate with the correct aspect ratio spanning a **~27,000 px²** region — so the right candidate was rejected by `min_area` and the code fell to the fixed-fraction crop (§5, `plate_locator.py`), which clips real characters on longer plates. | 3 of 7 synthetic-set failures traced directly to this fallback firing. | **Additive** second candidate source: CLAHE + morphological closing → `contour(EXTERNAL)`, feeding the *same* aspect/area/position scoring. Original Canny→contour(TREE) path unchanged. Also: mild rotation deskew (fires only on a genuinely tilted candidate), `locate_candidates()` top-2, wider fallback window (15–90% vs 20–80%). |
+| `extract_best()` ran OCR on **every** preprocessing variant unconditionally, even when variant 1 was already a perfect read — the per-vehicle multivariant-OCR cost PART II §2 / Phase 2C flagged as the dominant per-frame cost. | — | Early-exit once a variant scores ≥ 0.92; ambiguous crops still try every variant. |
+| The plate **locator's own confidence** (real contour match vs. crude fallback crop) was computed and then **discarded** — never fed into the consensus vote weight. | `pipeline.py` passed only `vehicle_conf` as `detection_confidence`. | New optional `plate_quality` weight in `MultiFrameConsensus.add_prediction()`, multiplied into the vote as `(0.7 + 0.3·plate_q)`. Backward compatible. |
+| `correct_by_position()`'s only guard was "don't lower the format score", so it **fabricated plates from arbitrary text**: `"RANDOMTEXT"` → `"RAN0OM73X7"`, `"12345678"` → `"IZ3A5678"`. | Direct reproduction. | Graduated cap: ≤ 1 confusion on the old rule; 2–3 only if the result **strictly validates** (real state code + exact layout); ≥ 4 refused. Real multi-error plates (`"6J27DOL3S8D"` → `"GJ27DOL3580"`) still recover; garbage now passes through unchanged and stays `is_valid == False`. |
+
+**MEASURED — `scripts/evaluate_anpr.py` synthetic set, `n = 24`, rendered fonts (OUT OF DISTRIBUTION — pipeline-wiring metric, NOT real CCTV accuracy):**
+
+| Metric | Before | After |
+|---|:-:|:-:|
+| EXACT MATCH | 70.8% (17/24) | **87.5% (21/24)** |
+| CHARACTER ACCURACY | 85.8% | **98.3%** |
+| VALID FORMAT (of reads) | not separately reported | 21/24 strictly valid |
+| UNKNOWN | 0/24 | 0/24 (all synthetic plates are readable by construction) |
+| plate localised (confidence>0 proxy) | 100% | 100% |
+| mean OCR latency / plate | 640.8 ms | **478 ms (−26%)** |
+
+Remaining 3 synthetic misses are genuine single-character OCR confusions on the rendered font (`3`↔`S`, `J`↔`u`, a split-digit segmentation error) — **not** localisation failures; left as honest errors rather than force-corrected.
+
+**REAL SENTINEL CAMERAS — QUALITATIVE ONLY:** spot-checks on cam04 / cam06 / cam09 / cam15 / cam20 (~900 frames, ~53 vehicles detected, 8 AI events). Every event resolved to **UNKNOWN** (distance/area-surveillance feeds — plates not resolvable in frame) and **zero hallucinated plate strings** were produced. The event→backend→DB path, evidence capture, and OCR attempts all ran correctly. This is consistent with the developer's own comment quoted in §5. **A real labeled accuracy number still cannot be produced — no labeled Sentinel plate dataset exists locally.**
+
+**What is STILL missing (items 1–4 above are unchanged):** IoU-based localisation precision/recall, a real vehicle-detection FP/FN set, a negative set for false-positive rate, and a human-verified false-negative pass all still require labeled real data that does not exist in the repo. The Phase 3 pass did **not** add a trained plate detector or OCR head (both need that dataset) — the locator remains classical CV. `tests/test_anpr_phase3.py` (19 tests) covers the new logic; full `tests/` 143 passed / 8 skipped, `backend/tests/` 28 passed, frontend build clean.
+
+**Known limitation introduced/remaining:** a strictly-valid 1-digit-district + 3-letter-series plate (e.g. `DL8SAB0001`) can still have a series letter mis-corrected — the layout model always guesses a 2-digit district. Narrow; cross-frame consensus mitigates in practice.
 
 ---
 
