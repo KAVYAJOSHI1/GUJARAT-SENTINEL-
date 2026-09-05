@@ -28,9 +28,12 @@ def _env_float(name: str, default: float) -> float:
 
 @dataclass(frozen=True)
 class IngestionConfig:
-    # Where the government camera inventory is published.
+    # Where an external government camera inventory is published, for the
+    # optional standalone catalogue-poll path (ingestion/catalogue_ingest.py).
+    # The live pipeline normally syncs the local registry straight to the
+    # backend via POST /api/v1/cameras/sync instead.
     catalogue_url: str = os.environ.get(
-        "SENTINEL_CATALOGUE_URL", "http://localhost:9000/api/ingest"
+        "SENTINEL_CATALOGUE_URL", "http://localhost:8000/api/v1/cameras/sync"
     )
     # How often (seconds) to re-poll the catalogue for added/removed cameras.
     catalogue_poll_interval_s: float = _env_float("SENTINEL_CATALOGUE_POLL_INTERVAL", 60.0)

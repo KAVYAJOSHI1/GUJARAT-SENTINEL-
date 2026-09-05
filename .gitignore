@@ -60,8 +60,14 @@ postgres_data/
 tests/test_evidence/
 
 # Generated local demo assets (scripts/make_mock_demo_videos.py) — large
-# binary video files + a machine-local registry with absolute paths.
-demo_assets/
+# raw Motion-JPEG AVIs + a machine-local registry with absolute paths.
+# The small committed H.264 demo clips under demo_assets/clips/ are the
+# exception: they ARE tracked so a fresh clone can run the mock ANPR demo
+# (see DEMO_RUNBOOK.md + data/demo_camera_registry.json).
+demo_assets/*
+!demo_assets/clips/
+demo_assets/clips/*
+!demo_assets/clips/*.mp4
 data/mock_camera_registry.json
 
 # Local Anand/Gujarat traffic video dataset used to drive MOCK_CAM* dev

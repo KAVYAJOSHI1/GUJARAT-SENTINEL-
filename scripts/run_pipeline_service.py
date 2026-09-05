@@ -60,8 +60,21 @@ logging.basicConfig(
 )
 log = logging.getLogger("sentinel.service")
 
-REGISTRY = os.path.join(os.path.dirname(__file__), "..", "data", "camera_registry.json")
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+REGISTRY = os.path.join(REPO_ROOT, "data", "camera_registry.json")
 RTSP_BASE = os.getenv("SENTINEL_RTSP_BASE", "rtsp://103.250.160.189:8554/stream")
+
+
+def _resolve_source(rtsp: str) -> str:
+    """A mock-camera registry may point ``rtsp_url`` at a local video file
+    with a repo-relative path (e.g. ``demo_assets/clips/mockcam01.mp4`` in
+    data/demo_camera_registry.json). Resolve that against the repo root so
+    the pipeline works regardless of the process's CWD; leave real
+    ``rtsp://`` / ``http(s)://`` URLs and already-absolute paths untouched."""
+    if not rtsp or "://" in rtsp or os.path.isabs(rtsp):
+        return rtsp
+    candidate = os.path.join(REPO_ROOT, rtsp)
+    return candidate if os.path.exists(candidate) else rtsp
 
 
 # --------------------------------------------------------------------------- #
@@ -89,7 +102,7 @@ def load_registry(path: str) -> list:
 
 def to_camera_record(entry: dict) -> CameraRecord:
     cam_id = str(entry.get("camera_id") or entry.get("id"))
-    rtsp = entry.get("rtsp_url") or f"{RTSP_BASE}/{cam_id}"
+    rtsp = _resolve_source(entry.get("rtsp_url") or f"{RTSP_BASE}/{cam_id}")
     loc = None
     if entry.get("latitude") is not None and entry.get("longitude") is not None:
         loc = CameraLocation(latitude=float(entry["latitude"]), longitude=float(entry["longitude"]))

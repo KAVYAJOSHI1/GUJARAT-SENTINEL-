@@ -63,8 +63,8 @@ def _extract_records(payload: Any) -> List[Dict[str, Any]]:
     """Pull the list of camera dicts out of whatever envelope shape we got.
 
     Confirmed shape: {"status": "success", "data": [...]}.
-    Also accepted, defensively, in case /api/ingest differs from the
-    Camera Registry API: a bare list, or {"cameras": [...]}.
+    Also accepted, defensively, in case an external catalogue endpoint
+    differs from the Camera Registry API: a bare list, or {"cameras": [...]}.
     """
     if isinstance(payload, list):
         return payload

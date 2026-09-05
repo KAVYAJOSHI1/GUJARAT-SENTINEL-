@@ -2,31 +2,33 @@
 
 ---
 
-## 1. Environment Startup Steps (Testing / Production Branch)
+## 1. Environment Startup Steps
 
-On the integration branch (`testing`), full stack deployment is managed via Docker Compose:
+Full-stack deployment is managed via Docker Compose. For a guided demo
+walkthrough (mock ANPR flow, expected results, troubleshooting) see
+[`DEMO_RUNBOOK.md`](DEMO_RUNBOOK.md).
 
 ```bash
-# 1. Clone Repository & Checkout Testing Branch
-git clone git@github.com:KAVYAJOSHI1/GUJARAT-SENTINEL-.git
-cd GUJARAT-SENTINEL-
-git checkout testing
+# 1. Clone the repository
+git clone <repo-url>
+cd GUJARAT-SENTINEL
 
-# 2. Configure Environment Variables
+# 2. Configure environment variables (optional — sane defaults exist)
 cp .env.example .env
 
-# 3. Launch Containerized Services
-docker-compose up --build -d
+# 3. Launch containerized services
+docker compose up --build -d
 ```
 
 ---
 
 ## 2. Containerized Port Mappings
 
+Host ports are configurable in `.env` (`*_HOST_PORT`); defaults below.
+
 - **PostgreSQL + PostGIS**: `localhost:5432`
 - **MinIO Object Storage**: `localhost:9000` (Console: `localhost:9001`)
 - **FastAPI Backend Services**: `localhost:8000`
-- **Stream Ingestion Manager**: `localhost:8001`
 - **React Command Dashboard**: `localhost:3000`
 
 ---
@@ -52,9 +54,17 @@ MinIO console `:9001`.
 **Ingestion + AI pipeline** (heavy — pulls torch/ultralytics; opt-in):
 
 ```bash
+# Real Sentinel cameras (needs RTSP credentials in .env):
 SENTINEL_RTSP_USERNAME=... SENTINEL_RTSP_PASSWORD=... \
   docker compose --profile ai up pipeline
+
+# Mock ANPR demo (no credentials needed — uses committed demo clips):
+PIPELINE_REGISTRY=data/demo_camera_registry.json \
+PIPELINE_CAMERAS=mockcam01,mockcam02,mockcam03 \
+  docker compose --profile ai up pipeline
 ```
+
+See [`DEMO_RUNBOOK.md`](DEMO_RUNBOOK.md) for the full demo flow.
 
 ### Migrations / seed (manual, outside compose)
 

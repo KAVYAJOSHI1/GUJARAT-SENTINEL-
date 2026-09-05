@@ -4,13 +4,13 @@
 
 ### 1. Developer Details & Subsystem Ownership
 - **Stream Ingestion Lead**: Rishit (`feature/rishit-stream`) — Stream worker pool, RTSP/TCP capture, backoff reconnects, health telemetry.
-- **AI / ANPR Lead**: Kavya (`feature/kavya-ai-anpr`) — YOLOv8 vehicle detection, PaddleOCR text extraction, multi-frame consensus, snapshot evidence saving.
+- **AI / ANPR Lead**: Kavya (`feature/kavya-ai-anpr`) — YOLOv8 vehicle detection, EasyOCR text extraction, multi-frame consensus, snapshot evidence saving.
 - **Central Integration Branch**: `testing`
 
 ---
 
 ### 2. Project Objective
-Build and integrate the core stream ingestion engine and AI Computer Vision analytics pipeline for the **SENTINEL** platform. Parse government camera inventory payloads, launch multi-threaded OpenCV video capture worker pools, force RTSP over TCP transport, sequence video frames using frame Presentation Time Stamps (PTS), run YOLOv8 vehicle detection, locate license plate regions, preprocess crops, run PaddleOCR, apply multi-frame consensus voting across track frames to eliminate misreads, generate high-res evidence snapshots, and dispatch AI Event JSON payloads to backend ingestion APIs.
+Build and integrate the core stream ingestion engine and AI Computer Vision analytics pipeline for the **SENTINEL** platform. Parse government camera inventory payloads, launch multi-threaded OpenCV video capture worker pools, force RTSP over TCP transport, sequence video frames using frame Presentation Time Stamps (PTS), run YOLOv8 vehicle detection, locate license plate regions, preprocess crops, run EasyOCR, apply multi-frame consensus voting across track frames to eliminate misreads, generate high-res evidence snapshots, and dispatch AI Event JSON payloads to backend ingestion APIs.
 
 ---
 
@@ -27,7 +27,7 @@ Build and integrate the core stream ingestion engine and AI Computer Vision anal
 #### B. AI / ANPR Analytics Module (`ai/`)
 - Model inference execution (`ai/detection/vehicle_detector.py`).
 - License plate region localization & preprocessing (`ai/anpr/`).
-- PaddleOCR text extraction & character normalization (`ai/ocr/`).
+- EasyOCR text extraction & character normalization (`ai/ocr/`; PaddleOCR optional via `OCR_ENGINE`).
 - Multi-frame frequency voting logic (`ai/anpr/consensus.py`).
 - Evidence snapshot saving & AI detection event formatting (`ai/pipeline.py`).
 - Adapter interface for `FrameEnvelope` -> `FrameInput` conversion (`ai/adapter/`).
@@ -73,7 +73,7 @@ events = pipeline.process_frame(frame_input)
                                        │
             ┌──────────────────────────┼──────────────────────────┐
             ▼                          ▼                          ▼
-     YOLOv8 Detection           Plate Localization          PaddleOCR Engine
+     YOLOv8 Detection           Plate Localization          EasyOCR Engine
     (car, truck, etc.)          (Cropper + CLAHE)         (Normalizer Regex)
             │                          │                          │
             └──────────────────────────┼──────────────────────────┘
@@ -90,7 +90,7 @@ events = pipeline.process_frame(frame_input)
 - **Python**: 3.10+
 - **Stream Ingestion**: OpenCV (`cv2`), `requests`, FFmpeg backend (`rtsp_transport;tcp`)
 - **Object Detection**: Ultralytics YOLOv8 (`ultralytics`), PyTorch (`torch`)
-- **OCR Engine**: PaddleOCR (`paddleocr`)
+- **OCR Engine**: EasyOCR (`easyocr`, default); PaddleOCR optional via `OCR_ENGINE=paddleocr`
 - **Image Processing**: OpenCV (`cv2`), Pillow (`PIL`), NumPy
 
 ---
@@ -149,7 +149,7 @@ w.stop(); w.join()
 - [x] Stream disconnect automatically triggers exponential backoff sequence (`2s -> 4s -> 8s -> 16s -> 30s`).
 - [x] Telemetry (`HealthRegistry`) accurately reflects real-time FPS, PTS jitter, and drop counts.
 - [x] YOLOv8 accurately detects vehicles with confidence score $\ge 0.50$.
-- [x] PaddleOCR & Normalizer extract license numbers and fall back to `UNKNOWN` on unreadable plates.
+- [x] EasyOCR & Normalizer extract license numbers and fall back to `UNKNOWN` on unreadable plates.
 - [x] Multi-frame consensus algorithm filters out single-frame misreads.
 - [x] CCTV frame PTS timestamp propagation and fallback ISO formatting implemented.
 - [x] Enriched GIS camera registry dataset populated for all 30 cameras (`data/camera_registry.json`).
@@ -517,7 +517,7 @@ You own the tracking module (`ai/tracking/`). You are responsible for ByteTrack 
 ### 5. What NOT to Build
 - Do NOT make vehicle Re-ID a hard dependency for the primary vehicle tracking flow.
 - Do NOT build RTSP video ingestion workers or network decoders (owned by Rishit).
-- Do NOT build YOLO vehicle detectors or PaddleOCR engines (owned by Kavya).
+- Do NOT build YOLO vehicle detectors or OCR engines (owned by Kavya).
 - Do NOT build PostgreSQL database migrations or REST servers (owned by Vanshal).
 - Do NOT build web UI components or GIS maps (owned by Isha & Vishakha).
 

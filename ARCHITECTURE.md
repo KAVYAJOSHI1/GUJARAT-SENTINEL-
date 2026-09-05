@@ -12,7 +12,7 @@ SENTINEL unifies **Reference Models 1–5** into a cohesive enterprise architect
                                   │
                                   ▼
                   [ Model 2: AI Analytics Engine ]
-               (YOLOv8 + PaddleOCR + Consensus Voting)
+                (YOLOv8 + EasyOCR + Consensus Voting)
                                   │
                                   ▼
                   [ Model 3: Spatial Database & Storage ]
@@ -35,11 +35,12 @@ SENTINEL unifies **Reference Models 1–5** into a cohesive enterprise architect
 [ Government CCTV Grid ]
         │ (RTSP over TCP)
         ▼
-[ /api/ingest Catalogue ] ──► [ Stream Ingestion Manager ] ──► [ Decoded Frame Buffer ]
+[ POST /api/v1/cameras/sync ] ──► [ Stream Ingestion Manager ] ──► [ Decoded Frame Buffer ]
+      (camera catalogue)
                                                                        │ (PTS Timestamp)
                                                                        ▼
 [ Web Dashboard ] ◄── [ WebSocket Alert ] ◄── [ Watchlist Engine ] ◄── [ AI ANPR Pipeline ]
-    │                      │                      │                     (YOLOv8 + PaddleOCR)
+    │                      │                      │                     (YOLOv8 + EasyOCR)
     ▼                      ▼                      ▼                             │
 [ GIS Trajectory ] ◄── [ Alert Store ] ◄── [ PostGIS DB ] ◄── [ Snapshot Storage ] (MinIO)
 ```
@@ -49,7 +50,7 @@ SENTINEL unifies **Reference Models 1–5** into a cohesive enterprise architect
 ## 3. Core Architectural Modules
 
 1. **Ingestion Layer (`ingestion/`)**: Multi-threaded Python workers, forcing RTSP over TCP transport and extracting Presentation Time Stamps (PTS).
-2. **AI Analytics Layer (`ai/`)**: PyTorch inference pipeline combining YOLOv8 vehicle detection, CLAHE contrast enhancement, PaddleOCR text extraction, and multi-frame consensus voting.
+2. **AI Analytics Layer (`ai/`)**: PyTorch inference pipeline combining YOLOv8 vehicle detection, CLAHE contrast enhancement, EasyOCR text extraction (PaddleOCR optional via `OCR_ENGINE=paddleocr`), and multi-frame consensus voting.
 3. **Tracking & Correlation Layer (`ai/tracking/`)**: ByteTrack tracker binding local track IDs to plate strings and assembling cross-camera chronological trajectories.
 4. **Backend Services (`backend/`)**: FastAPI microservice serving REST APIs, executing PostGIS spatial queries, and managing WebSocket client connection pools.
 5. **Database & Storage (`database/`)**: PostgreSQL 15 with PostGIS extension for spatial querying, paired with MinIO S3 object storage for evidence snapshot images.
