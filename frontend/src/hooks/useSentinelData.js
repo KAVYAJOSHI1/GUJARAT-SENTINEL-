@@ -8,6 +8,7 @@ import {
   normalizeAlert,
 } from "../services/api.js";
 import { createAlertSocket } from "../services/websocket.js";
+import { fetchSystemHealth } from "../services/observabilityApi.js";
 import { useToast } from "../context/ToastContext.jsx";
 
 // Central data layer for the command center. One instance lives in <App/> and
@@ -23,6 +24,11 @@ export function useSentinelData() {
   const [cameras, setCameras] = useState([]);
   const [alerts, setAlerts] = useState([]);
   const [detections, setDetections] = useState([]);
+  // Command-center observability aggregate (Phase 7). `null` = not (yet)
+  // available -- panels render an explicit "unavailable" state, never fake
+  // numbers.
+  const [health, setHealth] = useState(null);
+  const [healthLive, setHealthLive] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [backendLive, setBackendLive] = useState(true);
@@ -36,16 +42,19 @@ export function useSentinelData() {
 
   const load = useCallback(async () => {
     setRetrying(true);
-    const [s, c, a, d] = await Promise.all([
+    const [s, c, a, d, h] = await Promise.all([
       fetchStats(),
       fetchCameras(),
       fetchRecentAlerts(),
       fetchWatchlistDetections(),
+      fetchSystemHealth(),
     ]);
     setStats(s.data);
     setCameras(c.data);
     setAlerts(a.data);
     setDetections(d.data);
+    setHealth(h.data);
+    setHealthLive(h.live);
     a.data.forEach((al) => seenIds.current.add(String(al.id)));
     setBackendLive(s.live || c.live || a.live);
     setLoading(false);
@@ -63,10 +72,17 @@ export function useSentinelData() {
   // interval, not per-component polling, so this stays cheap.
   useEffect(() => {
     const id = setInterval(async () => {
-      const [s, c, d] = await Promise.all([fetchStats(), fetchCameras(), fetchWatchlistDetections()]);
+      const [s, c, d, h] = await Promise.all([
+        fetchStats(),
+        fetchCameras(),
+        fetchWatchlistDetections(),
+        fetchSystemHealth(),
+      ]);
       setStats(s.data);
       setCameras(c.data);
       setDetections(d.data);
+      setHealth(h.data);
+      setHealthLive(h.live);
       setBackendLive((prev) => s.live || c.live || prev);
       setLastRefresh(new Date());
     }, 10000);
@@ -152,6 +168,8 @@ export function useSentinelData() {
     cameras: camerasWithIncidentStatus,
     alerts,
     detections,
+    health,
+    healthLive,
     latestDetectionByCamera,
     detectionCountByCamera,
     loading,

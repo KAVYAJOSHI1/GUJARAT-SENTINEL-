@@ -412,6 +412,34 @@ runaway query is cancelled, not left pinning a pooled connection), and
 
 ---
 
+## 3h. Command Center & Observability (Phase 7 — IMPLEMENTED)
+
+Closes the gap between "the AI pipeline instruments itself" and "an
+operator can actually see it". No RTSP / YOLO / OCR / ANPR / worker-pool
+code touched — `scripts/run_pipeline_service.py` just gained a metrics-push
+hop, the same pattern ingestion already uses for camera health.
+
+| Area | What it does |
+| :--- | :--- |
+| **AI pipeline self-report** | `POST /api/v1/pipeline/status` (ingest auth) — the pipeline POSTs a snapshot of `AIPipeline.get_metrics()` every stats interval into the new `pipeline_status` table (migration `0005`, one upserted row per service): processed FPS, frames, vehicles, events generated/delivered/**dropped**, event-queue depth/max, YOLO+OCR **p50/p95**, CPU/RSS, per-camera frame/event counts. A missing metric is stored **NULL**, never a fabricated 0. |
+| **System health aggregate** | `GET /api/v1/dashboard/health` (JWT) — real timed `SELECT 1` DB probe; camera counts by *effective* status + `stale` / `never_reported` / oldest-health-age; AI-pipeline status (`online` / `stale` / `unknown`, from the report's freshness) + its metrics; event-flow freshness (last-event age, 15-min readable/UNKNOWN counts); alert counts (total / active / acknowledged / **HIGH-CRITICAL active**). `dashboard/stats` is unchanged. |
+| **Command-center dashboard** | New **`IncidentBar`** pins unhandled HIGH/CRITICAL watchlist alerts to the top — plate, camera, location, time, one-click **Trace → vehicle journey**. New **`SystemHealthPanel`** (replaces the old derived-only `SystemStatus`) and **`AiPipelinePanel`** (FPS, detections, events, queue, YOLO/OCR p50/p95, CPU/RSS). REAL / MOCK labels preserved everywhere. |
+| **Camera health** | Cards show per-camera stream-health-push age and, distinctly, whether the AI pipeline has actually processed a frame from it (**"connected, no AI frames yet"** — connected ≠ AI-processed). Stale health-push shows an explicit STALE marker. |
+| **Honesty** | Every panel renders an explicit **"unavailable"** / **"no report"** / **"HEALTH FEED DOWN"** state when the backend data is missing — it never silently falls back to fabricated numbers. |
+
+**No behaviour change** to alerts / acknowledgement / watchlist / vehicle
+investigation / GIS / evidence. Tests: `backend/tests/` +2
+(`test_pipeline_status`, `test_dashboard_health` — 11 tests). Full backend
+**111 passed**; AI/ingestion **143 passed / 8 skipped**; frontend build
+clean.
+
+**Remaining:** `pipeline_status` is a single latest-snapshot row (no time
+series / trend charts); no Prometheus `/metrics`, no tracing. The AI
+pipeline shows `unknown` until it runs with a reachable `--backend-url`
+(a `--no-backend` dry run never reports).
+
+---
+
 ## 4. Team & Repository Branch Matrix
 
 ```text

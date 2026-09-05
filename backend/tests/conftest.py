@@ -37,7 +37,9 @@ from sqlmodel import SQLModel  # noqa: E402
 
 # Import every table module so SQLModel.metadata knows about all of them
 # before create_all() runs.
-from app.models import alert, audit_log, camera, user, vehicle_event, watchlist  # noqa: E402,F401
+from app.models import (  # noqa: E402,F401
+    alert, audit_log, camera, pipeline_status, user, vehicle_event, watchlist,
+)
 from app.core.security import create_access_token, hash_password  # noqa: E402
 from app.database import SessionLocal, engine, get_db  # noqa: E402
 from app.main import app as fastapi_app  # noqa: E402
@@ -54,6 +56,7 @@ TABLES_TO_CLEAN = (
     "watchlist",
     "cameras",
     "users",
+    "pipeline_status",
 )
 
 

@@ -162,6 +162,13 @@ export default function CameraCard({ cam, selected, onClick, preview, detectionC
         {cam.zone} · {String(cam.status).toUpperCase()}
       </div>
 
+      {/* Phase 7 — stream health freshness + the connected-vs-AI-processed
+          distinction (a camera can be ONLINE for ingestion yet have had no
+          frame processed by the AI pipeline). Purely from data already
+          loaded. */}
+      <CameraHealthLine cam={cam} detectionCount={detectionCount} now={now} />
+
+
       {/* Detection summary (README task §7 — camera grid improvement):
           real counts derived from the already-loaded detection feed, no new
           fetch. Omitted entirely if nothing has been seen on this camera
@@ -207,6 +214,44 @@ export default function CameraCard({ cam, selected, onClick, preview, detectionC
           <MapPinned size={11} /> Investigate
         </button>
       </div>
+    </div>
+  );
+}
+
+function CameraHealthLine({ cam, detectionCount, now }) {
+  const parts = [];
+  const hu = cam.healthUpdatedAt ? new Date(cam.healthUpdatedAt) : null;
+  const STALE_MS = 20000;
+
+  if (hu && !Number.isNaN(hu.getTime())) {
+    const ageMs = now.getTime() - hu.getTime();
+    const ageStr = ageMs < 60000 ? `${Math.round(ageMs / 1000)}s` : `${Math.round(ageMs / 60000)}m`;
+    if (ageMs > STALE_MS) {
+      parts.push({ text: `stream health STALE (${ageStr})`, color: C.amber });
+    } else {
+      parts.push({ text: `stream health ${ageStr} ago`, color: C.dim });
+    }
+  } else {
+    parts.push({ text: "no stream-health telemetry", color: C.muted });
+  }
+
+  // "connected" != "AI processed"
+  if (cam.status === "active" || cam.status === "alert") {
+    parts.push(
+      detectionCount > 0
+        ? { text: "AI processing", color: C.green }
+        : { text: "connected, no AI frames yet", color: C.amber }
+    );
+  }
+
+  return (
+    <div style={{ marginTop: 3, fontSize: 9, color: C.muted, display: "flex", gap: 6, flexWrap: "wrap", fontFamily: "monospace" }}>
+      {parts.map((p, i) => (
+        <span key={i} style={{ color: p.color }}>
+          {i > 0 && <span style={{ color: C.border, marginRight: 6 }}>·</span>}
+          {p.text}
+        </span>
+      ))}
     </div>
   );
 }
