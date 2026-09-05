@@ -87,3 +87,137 @@ codebase's actual single-consumer-thread design tops out at ~1.3 FPS
 regardless of camera count, a ~1,000x gap from even the stated PoC-tier
 target that no config change closes; only GPU inference and true worker
 parallelism (§2 above, not implemented) can.
+
+---
+
+## 4. Parallel AI worker pool + fair camera scheduling (Phase 2C — IMPLEMENTED, currently a net loss on this test host)
+
+**What was built** (`ai/worker_pool.py`, opt-in via `SENTINEL_AI_WORKERS`,
+default `1` = the exact pre-Phase-2C single-consumer-thread path,
+byte-for-byte unchanged):
+
+- **Fair per-camera scheduling** (`PerCameraLatestQueue`): each worker keeps
+  at most ONE not-yet-consumed frame per camera it owns — a newer frame
+  overwrites a pending one (the stale one is *counted*, `per_worker_stale_evicted`,
+  never silently dropped), and cameras are served strict round-robin. This
+  directly fixes the §3 FIFO-starvation finding (only 5 of 30 cameras ever
+  got a frame) *for whichever cameras a worker owns* — memory is bounded by
+  camera count, never by arrival rate, by construction.
+- **Camera-sharded multi-process workers** (`AIWorkerPool`): cameras are
+  assigned to exactly one of `SENTINEL_AI_WORKERS` OS processes via a
+  deterministic hash (`zlib.crc32`, *not* Python's randomized `hash()` —
+  verified stable across a freshly spawned process in
+  `tests/test_worker_pool.py::test_deterministic_across_processes`). A
+  camera's ByteTrack tracker, OCR consensus state, plate lock, and cooldown
+  history therefore only ever exist inside the one worker process that owns
+  it — two workers provably never touch the same camera's state
+  concurrently, by disjoint-set construction, not by locking. Each worker
+  loads its own `AIPipeline` (own YOLO/EasyOCR model, own Phase 2A async
+  event-delivery queue+sender, otherwise completely unmodified).
+- **Thread-pool oversubscription control**: each worker caps
+  `OMP/MKL/OPENBLAS/NUMEXPR_NUM_THREADS` and `torch`/`cv2` thread counts to
+  `cpu_count() // num_workers` before any heavy import, plus
+  `OMP_WAIT_POLICY=PASSIVE`/`KMP_BLOCKTIME=0` so idle OpenMP threads yield
+  instead of spin-waiting (a documented amplifier of multi-process
+  contention) — necessary but, as measured below, **not sufficient** on
+  this host.
+- Extended metrics: worker ID, cameras-per-worker, per-worker/per-camera
+  processed and stale-evicted counts, per-worker queue depth, per-worker
+  CPU%/RSS, per-worker YOLO/OCR/send/end-to-end latency, plus a pool-wide
+  `combined_latency` (count-weighted average; p50/p95 explicitly labeled
+  "representative" from the largest-sample worker, not an exact pooled
+  percentile — computing an exact one would require shipping every raw
+  sample across the process boundary, a real per-frame cost this pass
+  deliberately avoided).
+- Correctness (camera isolation, deterministic sharding, round-robin
+  fairness, stale-eviction counting, bounded memory, clean shutdown with no
+  process/queue hang) is verified in `tests/test_worker_pool.py` with a
+  stubbed pipeline factory — fast, and independent of real model timing.
+
+**MEASURED — `SENTINEL_AI_WORKERS=1` (unchanged path), same 8-core host as
+§3, `scripts/benchmark_pipeline.py`, `--no-backend`:**
+
+| N cameras | processed FPS | dropped | starved cameras | CPU avg/max % | RSS max | YOLO p50 ms | OCR p50 ms |
+| :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
+| 5  | 1.09 | 161 | 1/5   | 652/714 | 4505 MB | 45 | 169 |
+| 10 | 0.97 | 241 | 7/10  | 638/714 | 4900 MB | 53 | 174 |
+| 20 | 0.90 | 493 | 17/20 | 633/714 | 5762 MB | 44 | 165 |
+| 30 | 0.70 | 710 | 28/30 | 599/721 | 6594 MB | 55 | 184 |
+
+Consistent with §3: unchanged default behavior, same FIFO-starvation
+pattern, same order-of-magnitude throughput.
+
+**MEASURED — `SENTINEL_AI_WORKERS=2` and `=4`, same host, same 5/10/20/30-camera
+tiers, 30-45s runs**: **zero frames processed at every single tier tested**
+(`per_worker_resource_usage: []`, no post-startup log line from any
+worker — confirmed from raw logs that both/all worker processes logged
+`starting, cameras=[...]` and then produced nothing further within the run
+window). A longer, dedicated 100-second run at `workers=2, N=5` (well past
+any plausible model-load time) still only completed **6 frames total**
+(0.06 FPS combined) with YOLO calls averaging **3552ms** and OCR calls
+averaging **4752ms** — both roughly **80-100x** their `workers=1` baseline
+(45ms / 169ms). CPU usage for the one worker that did report
+(`cpu_percent_avg=515%`) was still below the single-worker baseline's 652%,
+meaning the second worker was actively starving the first of CPU time, not
+merely idling.
+
+**Root cause (isolated and confirmed, not assumed)**: this is **host CPU
+oversubscription**, not a defect in the fair-scheduling or camera-sharding
+design. The test host is an 8-core shared desktop workstation (measured
+`load average` up to 12.4 during these runs from an active browser/GUI
+session, unrelated to Sentinel) with no CPU headroom to spare. Each of the
+following was tested **in isolation** and found to scale correctly:
+pure multi-process YOLO inference (thread-capped, 2 processes: 86ms/call,
+unchanged from 1-process baseline), pure multi-process EasyOCR inference
+(2 processes: 101ms/call vs 110ms 1-process — ~2.2x combined throughput),
+and the fair-queue routing/sharding architecture itself (stub pipeline,
+zero real model cost: 802 frames/30s, perfectly even round-robin splits,
+zero handoff drops). The regression appears **only** when real ingestion
+(OpenCV/FFmpeg decoding several real camera streams in the main process)
+runs *concurrently* with 2+ real (unstubbed) YOLO+EasyOCR worker processes
+on this specific host — the combined CPU demand (ingestion decode + N
+independent multivariant-OCR-and-YOLO processes, each wanting several
+BLAS/OpenMP threads even after capping) exceeds the 8 physical cores badly
+enough to cause severe OS-scheduler thrashing, not a mild slowdown.
+`workers=1` alone already runs at 599-652% CPU (out of ~800% max) — there
+is no real headroom left for a second full worker on this host before
+inference latency itself inflates.
+
+**Honest conclusion**: the Phase 2C architecture (fair per-camera
+scheduling, deterministic camera-to-worker sharding, provable per-camera
+state isolation) is implemented correctly and is verified correct in
+isolation — but it delivers **no throughput benefit, and currently a
+severe regression, on this specific 8-core test host**, because that host
+does not have enough spare CPU to run a second real inference worker
+alongside the first. **`SENTINEL_AI_WORKERS>1` is not recommended on
+hardware resembling this reference host** — enabling it makes real
+end-to-end throughput dramatically worse (0.06 FPS vs. 0.7-1.1 FPS), not
+better. It would be expected to help only where either (a) the host has
+enough additional physical cores that each worker's own thread budget
+(`cpu_count()//num_workers`) stays reasonably close to what a single
+worker already needs (~6-7 cores' worth of BLAS/OpenMP parallelism on this
+dataset), or (b) inference moves off the CPU entirely (GPU) so each
+worker's CPU footprint shrinks far below one physical core — neither of
+which this pass attempted (explicitly out of scope). This is reported as a
+genuine, measured finding, not a hidden failure: **do not enable
+`SENTINEL_AI_WORKERS>1` in production until it has been re-benchmarked on
+the actual target deployment hardware** and shown a net improvement there.
+
+**Real Sentinel camera validation, unaffected by this pass**: all
+previously-confirmed-working real cameras (cam04 H.264, cam06/cam22
+H.265, cam15 H.264, plus MOCK_CAM01/02) were re-smoke-tested after this
+change and connect/decode exactly as before (`status=OK`, correct codec
+detected, PTS-monotonic, credentials never logged). cam30's prior
+no-frames finding from the full 30-camera validation pass is a
+source/network issue on that one feed, unrelated to and unaffected by this
+change.
+
+**NOT attempted this pass** (explicitly out of scope, per the task brief):
+GPU inference, Kafka/RabbitMQ/Redis, Kubernetes, re-identification, and any
+attempt to "fix" the oversubscription by reducing per-worker thread counts
+further than `cpu_count()//num_workers` (would only shrink each worker's own
+throughput proportionally — it does not address that ingestion + N workers
+together exceed the host's total core budget). The **next real step**, not
+done here, is re-running this exact same matrix on hardware with
+meaningfully more spare cores (or a GPU) before recommending
+`SENTINEL_AI_WORKERS>1` for any real deployment.

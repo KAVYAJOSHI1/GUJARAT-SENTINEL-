@@ -12,16 +12,23 @@ SENTINEL ingestion + AI pipeline service — one command to run the whole thing.
 
 Reuses the existing modules; it does not introduce a parallel architecture.
 
+Phase 2C: with --ai-workers/SENTINEL_AI_WORKERS > 1, the single
+FrameConsumer above is replaced by ai/worker_pool.py's camera-sharded,
+fair-scheduled multi-process pool instead -- see that module's docstring.
+Default (1) is byte-for-byte the diagram above, unchanged.
+
 Usage:
     .venv/bin/python scripts/run_pipeline_service.py --cameras cam04,cam06
     .venv/bin/python scripts/run_pipeline_service.py --all --frame-skip 2
     .venv/bin/python scripts/run_pipeline_service.py --camera cam04 --no-backend --duration 30
+    .venv/bin/python scripts/run_pipeline_service.py --all --ai-workers 2
 
 Env:
     SENTINEL_RTSP_USERNAME / SENTINEL_RTSP_PASSWORD   (RTSP Basic auth)
     SENTINEL_BACKEND_URL                              (default http://localhost:8000/api/v1/events/ai-detection)
     SENTINEL_INGEST_API_KEY                           (X-Ingest-Key sent to the backend)
     SENTINEL_RTSP_BASE                                (fallback rtsp base when a camera has no rtsp_url)
+    SENTINEL_AI_WORKERS                               (default 1; >1 activates the Phase 2C worker pool)
 """
 import argparse
 import json
@@ -32,6 +39,7 @@ import signal
 import sys
 import threading
 import time
+from typing import Optional
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -39,6 +47,7 @@ import requests  # noqa: E402
 
 from ai.adapter.ingestion_bridge import FrameConsumer  # noqa: E402
 from ai.pipeline import AIPipeline  # noqa: E402
+from ai.worker_pool import AIWorkerPool  # noqa: E402
 from ingestion.config import CONFIG  # noqa: E402
 from ingestion.models import CameraLocation, CameraRecord  # noqa: E402
 from ingestion.rtsp_auth import redact_rtsp_url  # noqa: E402
@@ -129,25 +138,52 @@ class PipelineService:
         self._stop = threading.Event()
 
         self.manager = StreamManager(max_queue_size=args.max_queue)
-        self.pipeline = AIPipeline(
-            backend_url=self.backend_events_url,
-            evidence_dir=args.evidence_dir,
-            device=args.device,
-        )
-        if self.ingest_key:
-            self.pipeline.ingest_api_key = self.ingest_key
-        if args.no_backend:
-            # dry run: swallow dispatch so we still exercise detection/OCR/tracking
-            self.pipeline._dispatch_event = lambda payload: True
 
-        self.consumer = FrameConsumer(
-            self.manager.frame_queue,
-            self.pipeline,
-            on_events=self._on_events,
-            camera_names=self.camera_names,
-            stop_event=self._stop,
-            frame_skip=args.frame_skip,
-        )
+        # Phase 2C: SENTINEL_AI_WORKERS (default 1) selects between the
+        # exact pre-Phase-2C single-consumer-thread path (unchanged below)
+        # and a camera-sharded multi-process pool (ai/worker_pool.py) that
+        # also replaces the plain FIFO frame_queue drain with per-camera
+        # fair round-robin scheduling. A camera is assigned to exactly one
+        # worker for the pool's lifetime, so its tracker/consensus/cooldown
+        # state only ever lives in one process -- see ai/worker_pool.py's
+        # module docstring for the full design rationale.
+        self.ai_workers = max(1, getattr(args, "ai_workers", 1))
+        self.pool: Optional[AIWorkerPool] = None
+        self.pipeline: Optional[AIPipeline] = None
+        self.consumer: Optional[FrameConsumer] = None
+
+        if self.ai_workers <= 1:
+            self.pipeline = AIPipeline(
+                backend_url=self.backend_events_url,
+                evidence_dir=args.evidence_dir,
+                device=args.device,
+            )
+            if self.ingest_key:
+                self.pipeline.ingest_api_key = self.ingest_key
+            if args.no_backend:
+                # dry run: swallow dispatch so we still exercise detection/OCR/tracking
+                self.pipeline._dispatch_event = lambda payload: True
+
+            self.consumer = FrameConsumer(
+                self.manager.frame_queue,
+                self.pipeline,
+                on_events=self._on_events,
+                camera_names=self.camera_names,
+                stop_event=self._stop,
+                frame_skip=args.frame_skip,
+            )
+        else:
+            self.pool = AIWorkerPool(
+                self.manager.frame_queue,
+                [r.camera_id for r in self.records],
+                self.ai_workers,
+                backend_url=self.backend_events_url,
+                ingest_api_key=self.ingest_key,
+                evidence_dir=args.evidence_dir,
+                device=args.device,
+                no_backend=args.no_backend,
+                stats_interval=args.stats_interval,
+            )
 
     # -- backend registration ---------------------------------------------- #
     def _api_base(self) -> str:
@@ -187,7 +223,7 @@ class PipelineService:
         except Exception as exc:  # noqa: BLE001
             log.warning("camera registry sync skipped (%s)", exc)
 
-    # -- event callback -------------------------------------------------- #
+    # -- event callback (single-worker path only) ------------------------ #
     def _on_events(self, camera_id: str, events: list) -> None:
         # Dispatch is async now (Task 2) -- events_buffer here reflects the
         # RETRY backlog only, not "in flight, not yet attempted" (those are
@@ -199,8 +235,24 @@ class PipelineService:
                      plate, self.pipeline.get_metrics()["event_queue_depth"],
                      len(self.pipeline.event_buffer))
 
+    # -- unified frame/event counters (both paths) ------------------------ #
+    def _total_frames_processed(self) -> int:
+        return self.consumer.frames_processed if self.consumer else (self.pool.get_metrics()["processed_frames"] if self.pool else 0)
+
+    def _total_frames_skipped(self) -> int:
+        return self.consumer.frames_skipped if self.consumer else 0  # pool has no frame-skip sampling (Task 2C out of scope)
+
+    def _total_events_emitted(self) -> int:
+        return self.consumer.events_emitted if self.consumer else (self.pool.get_metrics()["total_ai_events_generated"] if self.pool else 0)
+
     # -- stats loop ---------------------------------------------------- #
     def _stats_loop(self) -> None:
+        if self.pool is not None:
+            self._stats_loop_pool()
+        else:
+            self._stats_loop_single()
+
+    def _stats_loop_single(self) -> None:
         interval = self.args.stats_interval
         last_frames = 0
         while not self._stop.wait(interval):
@@ -232,6 +284,39 @@ class PipelineService:
                              round(m.last_reconnect_duration_s, 1) if m.last_reconnect_duration_s else "n/a",
                              metrics["frames_by_camera"].get(cam_id, 0),
                              metrics["events_by_camera"].get(cam_id, 0))
+
+    def _stats_loop_pool(self) -> None:
+        interval = self.args.stats_interval
+        last_frames = 0
+        while not self._stop.wait(interval):
+            snap = {m.camera_id: m for m in self.manager.health.get_snapshot()}
+            metrics = self.pool.get_metrics()
+            frames_now = metrics["processed_frames"]
+            fps = (frames_now - last_frames) / max(interval, 1e-9)
+            last_frames = frames_now
+            log.info(
+                "STATS(pool=%d workers) | processed=%d fps=%.1f | events=%d sent=%d "
+                "q_full_drop=%d rejected=%d retry_buf=%d | routed=%d handoff_drop=%d",
+                metrics["num_workers"], frames_now, fps,
+                metrics["total_ai_events_generated"], metrics["events_sent_ok"],
+                metrics["events_dropped_queue_full"], metrics["events_dropped_backend_rejected"],
+                metrics["events_buffered_for_retry"], metrics["frames_routed"], metrics["frames_handoff_dropped"],
+            )
+            for w in metrics["per_worker_resource_usage"]:
+                log.info("  worker %d: cpu=%s%% rss=%sMB queue_depth=%d handoff_drops=%d cameras=%s",
+                         w["worker_id"], w.get("cpu_percent"), w.get("rss_mb"),
+                         metrics["per_worker_queue_depth"].get(w["worker_id"], 0),
+                         metrics["per_worker_handoff_drops"].get(w["worker_id"], 0),
+                         metrics["worker_assignment"].get(w["worker_id"], []))
+            for cam_id in self.camera_names:
+                m = snap.get(cam_id)
+                if m:
+                    stale = sum(s.get(cam_id, 0) for s in metrics["per_worker_stale_evicted"].values())
+                    log.info("  cam %s status=%s fps=%.1f drops=%d reconnects=%d "
+                             "frames=%d events=%d stale_evicted=%d",
+                             cam_id, m.status.value, m.measured_fps, m.frame_drop_count, m.reconnect_count,
+                             metrics["frames_by_camera"].get(cam_id, 0),
+                             metrics["events_by_camera"].get(cam_id, 0), stale)
 
     # -- stream health push (HealthRegistry -> backend camera status) ---- #
     def _health_push_url(self) -> str | None:
@@ -271,7 +356,10 @@ class PipelineService:
             log.info("  %s -> %s (%s)", r.camera_id, redact_rtsp_url(r.stream_url), r.codec_hint)
 
         self.sync_registry_to_backend()
-        self.consumer.start()
+        if self.pool is not None:
+            self.pool.start()
+        else:
+            self.consumer.start()
         self.manager.sync_cameras(self.records)
         threading.Thread(target=self._stats_loop, name="stats", daemon=True).start()
         self._start_health_push()
@@ -291,23 +379,29 @@ class PipelineService:
         log.info("shutting down...")
         self._stop.set()
         self.manager.stop_all(join_timeout_s=5.0)
-        self.consumer.join(timeout=5.0)
-        try:
-            left = self.pipeline.flush_events()
-            log.info("final flush: %d events still buffered", left)
-        except Exception:  # noqa: BLE001
-            pass
-        try:
-            # Graceful drain (Task 2): stop the background sender thread,
-            # moving anything still stuck in its queue into the retry
-            # buffer rather than losing it on process exit.
-            still_buffered = self.pipeline.shutdown(drain_timeout=5.0)
-            if still_buffered:
-                log.warning("%d event(s) never delivered before shutdown", still_buffered)
-        except Exception:  # noqa: BLE001
-            pass
+        if self.pool is not None:
+            try:
+                self.pool.shutdown(timeout=15.0)
+            except Exception:  # noqa: BLE001
+                log.exception("worker pool shutdown failed")
+        else:
+            self.consumer.join(timeout=5.0)
+            try:
+                left = self.pipeline.flush_events()
+                log.info("final flush: %d events still buffered", left)
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                # Graceful drain (Task 2): stop the background sender thread,
+                # moving anything still stuck in its queue into the retry
+                # buffer rather than losing it on process exit.
+                still_buffered = self.pipeline.shutdown(drain_timeout=5.0)
+                if still_buffered:
+                    log.warning("%d event(s) never delivered before shutdown", still_buffered)
+            except Exception:  # noqa: BLE001
+                pass
         log.info("stopped. frames processed=%d, AI events=%d",
-                 self.consumer.frames_processed, self.consumer.events_emitted)
+                 self._total_frames_processed(), self._total_events_emitted())
 
 
 def main():
@@ -324,6 +418,9 @@ def main():
                     default=os.getenv("SENTINEL_BACKEND_URL",
                                       "http://localhost:8000/api/v1/events/ai-detection"))
     ap.add_argument("--no-backend", action="store_true", help="run pipeline without POSTing events")
+    ap.add_argument("--ai-workers", type=int, default=int(os.getenv("SENTINEL_AI_WORKERS", "1")),
+                    help="number of parallel AI worker processes, camera-sharded (default 1 -- "
+                         "preserves the exact pre-Phase-2C single-consumer-thread behavior)")
     ap.add_argument("--frame-skip", type=int, default=int(os.getenv("FRAME_SKIP", "0")))
     ap.add_argument("--device", default=os.getenv("SENTINEL_AI_DEVICE", "cpu"))
     ap.add_argument("--evidence-dir", default=os.getenv("SENTINEL_EVIDENCE_DIR", "evidence/live"))
