@@ -31,3 +31,33 @@ To support 80,000 streams:
 1. Stream ingestion workers decouple from AI inference using Kafka/RabbitMQ frame queues.
 2. AI inference nodes auto-scale based on queue backlog metrics using NVIDIA Triton Inference Server.
 3. PostgreSQL partition management separates historical logs from active hot queries.
+
+---
+
+## 3. What's actually measured today (Phase 2A — IMPLEMENTED, single-node)
+
+Before this pass, none of the numbers above were backed by an actual
+measurement of the current single-node system — see
+`SENTINEL_System_Audit_Report.md` Part II. This is now partially closed:
+
+- `ai/pipeline.py` reports real, monotonic-clock instrumentation
+  (`get_metrics()`): event-queue depth/backpressure, YOLO/OCR/event-send/
+  end-to-end latency (p50/p95, not just an average), per-camera frame/event
+  counts, and CPU%/RSS. `ingestion.stream_health.HealthRegistry` gained
+  reconnect *duration* (count already existed).
+- The AI→backend event POST is no longer synchronous in the inference hot
+  path — a bounded queue + background sender thread handles it, with every
+  drop (queue-full, backend-rejected, retry-buffer-full) counted, never
+  silent. See README.md §3 for the measured result of one real run.
+- `scripts/benchmark_pipeline.py` is a reusable harness for the 1/5/10/20/30
+  camera load ladder the audit's Part II described — it has been run at 2
+  cameras (see README.md §3); the full ladder has not been run yet.
+
+**Still ROADMAP, unaffected by this pass**: everything in §1/§2 above
+(Kafka/RabbitMQ, Kubernetes, Triton, PostgreSQL partitioning, GPU inference,
+Redis-backed WebSocket fan-out) — none of it exists in code, and this pass
+deliberately did not add it (see the task brief this was implemented under:
+"measure first," not "add distributed infrastructure"). Closing the
+single-CPU-consumer-thread bottleneck the benchmark run reconfirmed still
+requires the GPU/worker-pool work described in §8 of the audit report, not
+attempted here.

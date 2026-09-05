@@ -28,7 +28,81 @@ The architecture is designed with the seams (stateless backend, per-camera isola
 
 ---
 
-## 3. Team & Repository Branch Matrix
+## 3. Pipeline Observability & Async Event Delivery
+
+**IMPLEMENTED** (this hardening pass): the AI pipeline's `requests.post` event
+delivery used to run synchronously inside `process_frame()` — a slow/down
+backend added up to 5s of stall per event on the single inference thread.
+`ai/pipeline.py` now hands events off to a **bounded queue + background
+sender thread**; a full queue (backend/sender can't keep up) drops the new
+event and **counts it** — it never silently disappears, and it never blocks
+detection.
+
+```
+AI pipeline (YOLO/OCR/consensus)
+        │  (non-blocking put)
+        ▼
+  bounded event queue (SENTINEL_EVENT_QUEUE_SIZE, default 500)
+        │  (background thread, existing retry/buffer logic unchanged)
+        ▼
+  event sender  ──POST──▶  backend
+```
+
+**Metrics** — `AIPipeline.get_metrics()` (superset of the pre-existing
+`get_benchmark_stats()`) reports, all from real counters/samples, never
+estimated: event-queue depth (current + observed max), events
+enqueued/sent/dropped (by cause: queue-full, backend-rejected, retry-buffer-
+full), YOLO/OCR/event-send/compute/end-to-end latency as count + avg + p50 +
+p95 (monotonic-clock durations — never PTS), per-camera frame/event counts,
+and CPU%/RSS if `psutil` is installed. `ingestion.stream_health.HealthRegistry`
+gained a matching `last_reconnect_duration_s` per camera (reconnect *count*
+already existed). `scripts/run_pipeline_service.py`'s existing periodic STATS
+log line now prints these instead of the old buffer-length heuristic — no new
+observability stack, this is the same "existing health/stats mechanism" the
+audit asked to reuse.
+
+**Benchmark harness** — `scripts/benchmark_pipeline.py` reuses
+`PipelineService` (no parallel ingestion path) and samples it periodically
+for a fixed duration, then prints a human-readable + JSON report:
+
+```bash
+.venv/bin/python scripts/benchmark_pipeline.py --cameras cam04,cam06 --duration 60
+.venv/bin/python scripts/benchmark_pipeline.py --all --duration 30 --no-backend
+.venv/bin/python scripts/benchmark_pipeline.py --cameras MOCK_CAM01,MOCK_CAM02 \
+    --registry data/trafficdataset_camera_registry.json --duration 30 --json-out bench.json
+```
+
+The same command scales to 1 / 5 / 10 / 20 / 30 cameras by changing
+`--cameras`/`--all` (build a bigger mock fleet first with
+`scripts/generate_mock_camera_registry.py --count N` if needed) — running 30
+cameras is the caller's explicit choice, not something this script does on
+its own.
+
+**MEASURED, not a target** (2 MOCK cameras, 30s, CPU inference, against the
+real docker-compose backend — see `SENTINEL_System_Audit_Report.md` for the
+methodology; re-run `scripts/benchmark_pipeline.py` yourself before quoting
+any of these numbers in a different environment):
+
+| Metric | Result |
+| :--- | :--- |
+| Event delivery | 15/15 generated events delivered (`events_sent_ok`), **0 dropped** of any kind |
+| Event-queue max depth | 1 (of 500) — the async sender easily kept up; delivery was never the bottleneck |
+| Event send latency | p50 17ms, p95 25ms (localhost backend) |
+| YOLO latency | p50 45ms, p95 107ms |
+| OCR latency | p50 165ms, p95 493ms |
+| Ingestion frame-queue | filled to its max (500) — confirms the **already-known, unrelated** single-CPU-consumer-thread bottleneck (§6/§7 of the audit), not a regression from this change |
+
+**ROADMAP, not implemented / not run here**: sustained multi-hour soak tests,
+CPU/RAM trend-over-time leak detection, the 1/5/10/20/30-camera load ladder
+itself (the harness supports it; running all five tiers back-to-back and
+publishing the breakdown point wasn't done in this pass), and anything at
+the real `cam04`/`cam06` Sentinel source (unreachable from this environment
+when this was written — the harness works identically against it once
+reachable).
+
+---
+
+## 4. Team & Repository Branch Matrix
 
 ```text
                                 main
@@ -51,7 +125,7 @@ The architecture is designed with the seams (stateless backend, per-camera isola
 
 ---
 
-## 4. Master Documentation Index
+## 5. Master Documentation Index
 
 Explore the complete technical blueprints contained in this repository branch:
 
