@@ -1,5 +1,6 @@
 import { makeSimulatedAlert } from "../lib/mockData.js";
 import { getToken } from "./api.js";
+import { fetchWsTicket } from "./mediaTicket.js";
 
 // ─── Live alert WebSocket client (DEVELOPER_README Isha §5 / §8 / §15) ────────
 // - connects to ws://localhost:8000/ws/alerts (proxied through Vite in dev)
@@ -8,17 +9,18 @@ import { getToken } from "./api.js";
 //   the demo still shows real-time toasts with no backend running.
 //
 // Auth (SENTINEL_System_Audit_Report.md §9/§10/§15 — "/ws/alerts accepts
-// every connection, no token check at all"): the backend now requires the
-// same session JWT the REST API uses before it will register this
-// connection. A browser WebSocket can't set an Authorization header, so the
-// token rides as a WS *subprotocol* (`new WebSocket(url, [token])`) instead
-// of a `?token=` query string — unlike a query string, a subprotocol is
-// never part of the URL, so it never lands in browser history or a
-// request-line access log. If there's no token (not logged in) or the
-// backend rejects it (missing/expired/invalid), the connection is refused
-// and this falls back to the same local alert simulator used for any other
-// unreachable-backend case — clearly labeled SIMULATED, never presented as
-// a live feed (see ConnectionIndicator / AlertRow's "simulated" flag).
+// every connection, no token check at all"): the backend requires an
+// authenticated handshake before it registers this connection. Phase 4:
+// the credential is now a SHORT-LIVED WS ticket (~60s, purpose="ws"),
+// fetched via `POST /api/v1/auth/ws-ticket` with the real session JWT
+// right before each (re)connect — the long-lived JWT itself is never put
+// on the wire here. A browser WebSocket can't set an Authorization header,
+// so the ticket rides as a WS *subprotocol* (`new WebSocket(url, [ticket])`)
+// — never a `?token=` query string, so it never lands in browser history
+// or a request-line access log. If there's no session (not logged in) or
+// the ticket is refused, the connection falls back to the same local alert
+// simulator used for any other unreachable-backend case — clearly labeled
+// SIMULATED, never presented as a live feed.
 
 function defaultWsUrl() {
   if (import.meta.env.VITE_WS_URL) return import.meta.env.VITE_WS_URL;
@@ -62,21 +64,32 @@ export function createAlertSocket({ onAlert, onStatus, url = defaultWsUrl() }) {
     reconnectTimer = setTimeout(connect, delay);
   }
 
-  function connect() {
+  async function connect() {
     if (closedByUser) return;
-    // Read the token fresh on every attempt (not just once at socket
-    // creation) so a login/logout/re-login between reconnect attempts is
-    // picked up without needing to recreate the whole socket wrapper.
-    const token = getToken();
-    if (!token) {
-      // Not authenticated -- never dial the real socket with no
-      // credential (it would just be rejected server-side anyway); go
-      // straight to the honestly-labeled simulator and keep checking.
+    // Check auth fresh on every attempt so a login/logout/re-login between
+    // reconnects is picked up without recreating the wrapper.
+    if (!getToken()) {
+      // Not authenticated -- never dial the real socket; go straight to the
+      // honestly-labeled simulator and keep checking.
+      scheduleReconnect();
+      return;
+    }
+    // Exchange the session JWT for a fresh ~60s WS ticket right before the
+    // handshake -- the long-lived JWT never travels on the wire here.
+    let ticket = "";
+    try {
+      ticket = await fetchWsTicket();
+    } catch {
+      scheduleReconnect();
+      return;
+    }
+    if (closedByUser) return;
+    if (!ticket) {
       scheduleReconnect();
       return;
     }
     try {
-      ws = new WebSocket(url, [token]);
+      ws = new WebSocket(url, [ticket]);
     } catch {
       scheduleReconnect();
       return;

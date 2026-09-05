@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { isAuthenticated, login, setUnauthorizedHandler } from "../services/api.js";
+import { ensureMediaTicket } from "../services/mediaTicket.js";
 
 /**
  * Wraps the app: shows a minimal login form until a JWT is stored, then renders
@@ -18,6 +19,13 @@ export default function LoginGate({ children }) {
   useEffect(() => {
     setUnauthorizedHandler(() => setAuthed(false));
   }, []);
+
+  // Warm the media-ticket cache whenever we're authenticated (covers the
+  // "already had a stored JWT on load" path; the fresh-login path is warmed
+  // inside login() itself).
+  useEffect(() => {
+    if (authed && !allowAnon) ensureMediaTicket().catch(() => {});
+  }, [authed, allowAnon]);
 
   const submit = useCallback(
     async (e) => {

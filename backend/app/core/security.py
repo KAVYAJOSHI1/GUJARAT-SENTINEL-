@@ -44,8 +44,50 @@ def create_access_token(subject: str, role: str, expires_minutes: Optional[int] 
 
 def decode_access_token(token: str) -> dict:
     try:
-        return jwt.decode(
+        payload = jwt.decode(
             token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM]
         )
     except JWTError as exc:
         raise ValueError("Invalid or expired token") from exc
+    # A session token must not carry a `purpose` claim -- that marks it as a
+    # short-lived single-purpose ticket (WS handshake / media src), which
+    # must never be usable as a full API session credential.
+    if payload.get("purpose"):
+        raise ValueError("Not a session token")
+    return payload
+
+
+# --- short-lived, single-purpose tickets -------------------------------- #
+# These exist so the long-lived session JWT never has to appear in a URL
+# query string (<img>/<video> src) or a WebSocket subprotocol, where it
+# would land in access logs / browser history. A ticket is a normal HS256
+# JWT with a very short `exp` and an explicit `purpose` claim; it is issued
+# only from a JWT-authenticated POST and is accepted only by the one
+# transport it names.
+
+def create_scoped_ticket(subject: str, purpose: str, ttl_seconds: int) -> str:
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": subject,
+        "purpose": purpose,
+        "iat": now,
+        "exp": now + timedelta(seconds=max(1, ttl_seconds)),
+    }
+    return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+
+
+def decode_scoped_ticket(token: str, expected_purpose: str) -> dict:
+    """Validate a short-lived ticket: signature, expiry, and that its
+    `purpose` claim matches exactly. Raises ValueError on any mismatch --
+    including being handed a normal session JWT (no `purpose` claim)."""
+    try:
+        payload = jwt.decode(
+            token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM]
+        )
+    except JWTError as exc:
+        raise ValueError("Invalid or expired ticket") from exc
+    if payload.get("purpose") != expected_purpose:
+        raise ValueError("Ticket purpose mismatch")
+    if not payload.get("sub"):
+        raise ValueError("Ticket missing subject")
+    return payload

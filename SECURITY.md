@@ -28,14 +28,16 @@
      (client-side), alert acknowledgment, watchlist writes, camera
      create/update/sync.
    - `OPERATOR`: real-time dashboard view & alert monitoring only.
-3. **WebSocket authentication** — **IMPLEMENTED** (this hardening pass):
-   `/ws/alerts` previously accepted any connection with no token check at
-   all. It now requires the same JWT the REST API accepts, passed as a
-   WebSocket subprotocol (not a `?token=` query string, to avoid the token
-   landing in a URL / access log / browser history) — see
-   `backend/app/api/ws_alerts.py`. Residual limitation: it is still the same
-   long-lived (8h) session JWT, not a short-lived single-use ticket; see
-   that module's docstring.
+3. **WebSocket authentication** — **IMPLEMENTED**: `/ws/alerts` previously
+   accepted any connection with no token check at all. It now requires a
+   **short-lived, single-purpose WS ticket** (`purpose="ws"`, ~60s TTL,
+   config `WS_TICKET_TTL_SECONDS`), obtained from
+   `POST /api/v1/auth/ws-ticket` against a valid session JWT and passed as
+   the WebSocket subprotocol (`new WebSocket(url, [ticket])` — never a
+   `?token=` query string, so it never lands in a URL / access log /
+   browser history). The long-lived session JWT is **not** accepted here
+   (it carries no `purpose` claim). See `backend/app/api/ws_alerts.py` and
+   `backend/app/api/v1/auth.py`.
 4. **Data Encryption**
    - In-Transit — **ROADMAP / deployment-environment concern**: TLS
      termination (HTTPS/WSS) is not something the application itself does;
@@ -45,19 +47,19 @@
      stored as plain, unencrypted files in MinIO (or local disk fallback).
      There is no AES-256 (or any) encryption-at-rest anywhere in this
      codebase today.
-5. **Audit Logging** — **IMPLEMENTED** (this hardening pass), previously
-   ROADMAP: the `audit_logs` table/model existed and was migrated but had
-   zero writers. `backend/app/services/audit.py` is now called from login
-   (success + failure), vehicle search, alert acknowledgment, watchlist
-   create/deactivate, camera create/update/delete/sync, and evidence
-   access. It is a normal application-level DB table, **not a
-   cryptographically immutable / tamper-evident log** (no hash chaining,
-   no WORM storage, no external log shipping) — "immutable" was an
-   inaccurate claim in the previous version of this document and has been
-   removed. PDF report export is entirely client-side (jsPDF, no server
-   round-trip), so it cannot currently be captured by server-side audit
-   logging — that would require a server-rendered export endpoint, which
-   does not exist.
+5. **Audit Logging** — **IMPLEMENTED**: `backend/app/services/audit.py`
+   writes an `audit_logs` row for: login success, login failure, **login
+   rate-limited** (Phase 4), vehicle search, alert acknowledgment,
+   watchlist create/deactivate, camera create/update/delete/sync, evidence
+   access, and **retention purge** (Phase 4). The helper truncates `detail`
+   and **never** receives a password, JWT, ticket, or RTSP credential —
+   callers pass only already-non-secret fields (usernames, plate numbers,
+   ids, counts, status values). It is a normal application-level DB table,
+   **not a cryptographically immutable / tamper-evident log** (no hash
+   chaining, no WORM storage, no external log shipping). PDF report export
+   is entirely client-side (jsPDF, no server round-trip), so it cannot
+   currently be captured by server-side audit logging — that would require
+   a server-rendered export endpoint, which does not exist.
 6. **Ingest authentication** — **IMPLEMENTED**: the AI→backend event
    ingestion endpoint (`POST /api/v1/events/ai-detection`) accepts either a
    shared `X-Ingest-Key` header (constant-time comparison via
@@ -67,37 +69,90 @@
    come only from environment variables, are injected into the connection
    URL just before use, and are redacted (`***:***@host`) before being
    logged (`ingestion/rtsp_auth.py`).
-8. **Rate limiting on `/auth/login`** — **NOT IMPLEMENTED / ROADMAP**: there
-   is no `slowapi` or equivalent throttling anywhere in the backend today;
-   the login endpoint is brute-forceable as far as the application itself
-   is concerned.
+8. **Rate limiting on `/auth/login`** — **IMPLEMENTED** (Phase 4):
+   `backend/app/services/rate_limit.py` counts failed attempts per
+   `(client-ip, username)`. After `LOGIN_RATE_LIMIT_MAX_FAILURES` (default
+   5) failures within `LOGIN_RATE_LIMIT_WINDOW_SECONDS` (default 300),
+   further attempts for that key get **HTTP 429** with a `Retry-After`
+   header for `LOGIN_RATE_LIMIT_BLOCK_SECONDS` (default 300); a successful
+   login clears the counter. The 429 body is generic — it never reveals
+   whether the username exists or echoes the attempted credential. All
+   config keys are env-overridable; set `LOGIN_RATE_LIMIT_ENABLED=false` to
+   disable.
+   - **ROADMAP**: this counter is **per backend process** (in-memory). With
+     multiple backend replicas the effective global limit is
+     `replicas × MAX_FAILURES`. A shared-store (Redis) limiter that holds
+     across replicas is not implemented.
 9. **Watchlist expiry enforcement** — **IMPLEMENTED** (this hardening
    pass): `watchlist.expires_at` was stored but never checked by the
    matching query. `app/services/watchlist_engine.py::active_watchlist_clause()`
    now excludes expired or inactive entries from both the alert-match
    lookup and the investigation search's "is this plate watchlisted" flag.
-10. **CORS** — **IMPLEMENTED, dev-permissive default**: `CORS_ALLOW_ORIGINS`
-    defaults to `["*"]` in `docker-compose.yml` — fine for local/hackathon
-    demo use, must be tightened to a real origin allowlist before any
-    production deployment.
+10. **CORS** — **IMPLEMENTED, explicit allow-list**: `CORS_ALLOW_ORIGINS`
+    defaults to `["http://localhost:3000", "http://localhost:5173"]` (the
+    dev frontend origins) and `docker-compose.yml` sets
+    `["http://localhost:3000"]`. A `"*"` wildcard is **honoured only when
+    `ENV` is a development value** (`development`/`dev`/`local`/`test`) —
+    in any other environment `Settings.resolved_cors_origins()` drops the
+    `"*"` and logs a warning, so a stray wildcard can never ship to
+    production. When the list *is* `"*"` (dev only), `allow_credentials` is
+    forced to `False` per the CORS spec. The dashboard normally reaches the
+    API same-origin through the Vite/prod proxy, so this list only affects
+    direct cross-origin API access.
+11. **Short-lived transport tickets** — **IMPLEMENTED** (Phase 4): browser
+    transports that cannot send an `Authorization` header (the WebSocket
+    handshake; `<img>`/`<video>` `src`) previously carried the long-lived
+    session JWT (as a WS subprotocol or a `?token=` query param), so it
+    landed in access logs / browser history. Now:
+    - `POST /api/v1/auth/ws-ticket` → `purpose="ws"`, ~60s ticket for the
+      alert socket.
+    - `POST /api/v1/auth/media-ticket` → `purpose="media"`, ~120s ticket
+      for evidence-image / mock-video `?token=`.
+    Each ticket is a signed HS256 JWT with a short `exp` and an explicit
+    `purpose`; it is accepted **only** by the one transport it names, and a
+    normal session JWT passed to those transports is now rejected. The
+    `Authorization: Bearer <session JWT>` header path (fetch/XHR) is
+    unchanged.
+12. **`vehicle_events` data retention** — **IMPLEMENTED** (Phase 4):
+    a periodic sweep (`backend/app/services/retention.py`, started from the
+    FastAPI lifespan; also `POST /api/v1/admin/retention/purge`, admin-only,
+    audit-logged) deletes `vehicle_events` older than
+    `VEHICLE_EVENT_RETENTION_DAYS` (default **30**). Rows referenced by an
+    `alerts` row are **never** deleted regardless of age; `watchlist`,
+    `alerts`, `audit_logs`, `users`, `cameras` are never touched. Set
+    `VEHICLE_EVENT_RETENTION_DAYS=0` to disable. Addresses
+    `SENTINEL_System_Audit_Report.md` §12's "mass ANPR retention of every
+    vehicle movement is a real policy/privacy question".
 
 ---
 
-## 2. What changed in this hardening pass vs. what's still open
+## 2. What changed across the hardening passes vs. what's still open
+
+**Phase 1 pass:**
 
 | Item | Before | Now |
 | :--- | :--- | :--- |
-| `/ws/alerts` auth | none | JWT required (subprotocol transport) |
-| Audit logging | table existed, zero writers | wired to 7 sensitive actions (see §1.5) |
+| `/ws/alerts` auth | none | authenticated handshake required |
+| Audit logging | table existed, zero writers | wired to sensitive actions (see §1.5) |
 | `watchlist.expires_at` | stored, never checked | enforced in the match + search-flag queries |
 | Camera status vs. real health | DB column only, never updated by ingestion | `POST /api/v1/cameras/health` + freshness-checked effective status |
-| Frontend live/mock/offline labeling | `backendLive` state existed, banner not always distinguishing | explicit OFFLINE/DEMO-DATA banner + per-alert SIMULATED tag + REAL/MOCK camera badges |
-| RS256 vs HS256 doc claim | claimed RS256 | corrected to HS256 (actual) |
-| AES-256 at rest | claimed implemented | corrected to ROADMAP (not implemented) |
-| "Immutable" audit trail | claimed | corrected — normal DB table, not tamper-evident |
+| Frontend live/mock/offline labeling | not always distinguishing | explicit OFFLINE/DEMO-DATA banner + SIMULATED tag + REAL/MOCK badges |
+| RS256 / AES-256 / "immutable audit" doc claims | claimed implemented | corrected to HS256 / ROADMAP / normal DB table |
 
-**Still open (ROADMAP, not addressed in this pass — out of scope per this
-task's brief):** RS256 signing, TLS enforcement in-app, encryption at rest,
-rate limiting on `/auth/login`, CORS tightened beyond `["*"]`, a real
-labeled ANPR accuracy benchmark (see `README.md` correction), and a
-data-retention/expiry policy for `vehicle_events`.
+**Phase 4 pass (this one):**
+
+| Item | Before | Now |
+| :--- | :--- | :--- |
+| `/auth/login` brute force | no throttle | per-(ip, username) failure counter → 429 + `Retry-After` (§1.8) |
+| CORS | `["*"]` in compose | explicit allow-list; `"*"` dropped outside a dev `ENV` (§1.10) |
+| WS credential | long-lived session JWT as subprotocol | short-lived `purpose="ws"` ticket (~60s) (§1.3, §1.11) |
+| Evidence / mock-video `?token=` | long-lived session JWT in the URL | short-lived `purpose="media"` ticket (~120s) (§1.11) |
+| `vehicle_events` retention | grows unbounded | 30-day (configurable) purge, alert-referenced rows protected (§1.12) |
+| Audit coverage | login/search/ack/watchlist/camera/evidence | + `LOGIN_RATE_LIMITED`, `RETENTION_PURGE` (§1.5) |
+
+**Still open (ROADMAP):** RS256 (asymmetric) JWT signing; TLS/HTTPS/WSS
+enforcement in-app (a reverse-proxy/ingress concern); AES-256 encryption at
+rest for evidence blobs; **distributed** (cross-replica, Redis-backed)
+login rate limiting — the current limiter is per-process; a real labeled
+ANPR accuracy benchmark (see `README.md`); GPU inference and the
+Kafka/Kubernetes/Triton statewide architecture in `SCALABILITY.md`.

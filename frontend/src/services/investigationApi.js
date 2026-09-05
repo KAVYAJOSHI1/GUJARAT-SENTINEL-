@@ -4,7 +4,8 @@
 // "/api/v1"), timeout, proxy and headers — so there is ONE API architecture,
 // not two. Only the endpoints and response shapes below are Vishakha's domain
 // (DEVELOPER_README §8 / §11, docs/API_CONTRACTS.md §1 & §4).
-import { getToken, http, mapCameraStatus } from "./api.js";
+import { http, mapCameraStatus } from "./api.js";
+import { currentMediaTicket, ensureMediaTicket } from "./mediaTicket.js";
 import {
   CAMERA_GEOJSON,
   GIS_CAMERAS,
@@ -19,11 +20,14 @@ export const INVESTIGATION_ENDPOINTS = {
 };
 
 // Absolute URL for an evidence snapshot file, usable as an <img src>.
-// <img> can't send an Authorization header, so the JWT rides as ?token=.
+// <img> can't send an Authorization header, so a SHORT-LIVED media ticket
+// (purpose="media", ~120s) rides as ?token= — never the session JWT.
 export function evidenceUrl(eventId) {
+  // kick a cache warm-up (no-op if already fresh) for the next render
+  ensureMediaTicket().catch(() => {});
   const base = http.defaults.baseURL || "/api/v1";
   let url = `${base}${INVESTIGATION_ENDPOINTS.evidence(eventId)}`;
-  const t = getToken();
+  const t = currentMediaTicket();
   if (t) url += `?token=${encodeURIComponent(t)}`;
   return url;
 }

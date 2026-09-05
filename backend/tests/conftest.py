@@ -24,7 +24,11 @@ os.environ.setdefault(
 os.environ["JWT_SECRET_KEY"] = "test-only-jwt-secret-never-used-in-production"
 os.environ["INGEST_API_KEY"] = "test-ingest-key"
 os.environ["CORS_ALLOW_ORIGINS"] = '["*"]'
+os.environ["ENV"] = "test"
 os.environ["INGEST_AUTO_ONBOARD_CAMERAS"] = "true"
+# Retention sweep is exercised directly in test_retention.py; keep the
+# background lifespan task off during the rest of the suite.
+os.environ["RETENTION_SWEEP_ENABLED"] = "false"
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -119,6 +123,31 @@ def operator_user(db_session):
 
 def bearer(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
+
+
+def ws_ticket(client, token: str) -> str:
+    """Exchange a session JWT for a short-lived WS handshake ticket, the way
+    the real dashboard does before opening /ws/alerts."""
+    resp = client.post("/api/v1/auth/ws-ticket", headers=bearer(token))
+    assert resp.status_code == 200, resp.text
+    return resp.json()["ticket"]
+
+
+def media_ticket(client, token: str) -> str:
+    resp = client.post("/api/v1/auth/media-ticket", headers=bearer(token))
+    assert resp.status_code == 200, resp.text
+    return resp.json()["ticket"]
+
+
+@pytest.fixture(autouse=True)
+def _reset_login_rate_limiter():
+    """Each test starts with an empty login rate-limiter (it's process-global
+    in-memory state, not DB state, so the table TRUNCATE doesn't touch it)."""
+    from app.services.rate_limit import login_rate_limiter
+
+    login_rate_limiter.clear()
+    yield
+    login_rate_limiter.clear()
 
 
 @pytest.fixture

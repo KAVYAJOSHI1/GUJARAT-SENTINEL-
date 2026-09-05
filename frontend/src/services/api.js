@@ -5,6 +5,13 @@ import {
   MOCK_STATS,
   WATCHLIST_DETECTIONS,
 } from "../lib/mockData.js";
+// Circular import (mediaTicket.js imports http/getToken back) — safe: neither
+// side touches the other's bindings at module-eval time, only inside functions.
+import {
+  clearMediaTicket,
+  currentMediaTicket,
+  ensureMediaTicket,
+} from "./mediaTicket.js";
 
 // ─── Endpoints (DEVELOPER_README Isha §8 / §11) ──────────────────────────────
 // Exact contract lives in docs/API_CONTRACTS.md on the `testing` branch, which
@@ -68,8 +75,12 @@ export function setUnauthorizedHandler(fn) {
 http.interceptors.response.use(
   (r) => r,
   (err) => {
-    if (err?.response?.status === 401) {
+    const url = err?.config?.url || "";
+    // A 401 from the media-ticket endpoint itself just means the session is
+    // gone -- don't recurse, the primary-request 401 below handles logout.
+    if (err?.response?.status === 401 && !url.includes("/auth/media-ticket")) {
       setToken("");
+      clearMediaTicket();
       if (onUnauthorized) onUnauthorized();
     }
     return Promise.reject(err);
@@ -81,19 +92,29 @@ export async function login(username, password) {
   const token = data?.access_token || data?.token;
   if (!token) throw new Error("no token in login response");
   setToken(token);
+  // Warm the media-ticket cache so the first evidence <img> already has a
+  // usable ?token=.
+  ensureMediaTicket().catch(() => {});
   return token;
 }
 
 export function logout() {
   setToken("");
+  clearMediaTicket();
 }
 
 // Proxied evidence-image URL for one AI event, usable as <img src>.
-// (<img> can't send an Authorization header, so the JWT rides as ?token=.)
+// <img> can't send an Authorization header, so a SHORT-LIVED media ticket
+// (purpose="media", ~120s) rides as ?token= — never the long-lived session
+// JWT. The ticket comes from the auto-refreshing cache in mediaTicket.js;
+// on a cold first render it may be "" for a moment (the <img> 401s and the
+// component shows its placeholder), then a re-render picks up the ticket.
+//
 export function evidenceUrl(eventId) {
   if (!eventId) return null;
-  const t = getToken();
+  ensureMediaTicket().catch(() => {}); // warm for the next render
   const base = `${API_BASE}/vehicles/evidence/${encodeURIComponent(eventId)}`;
+  const t = currentMediaTicket();
   return t ? `${base}?token=${encodeURIComponent(t)}` : base;
 }
 
@@ -102,8 +123,9 @@ export function evidenceUrl(eventId) {
 // their feed genuinely can't be embedded (Basic-auth RTSP, no CORS HLS).
 export function mockVideoUrl(cameraId) {
   if (!cameraId) return null;
-  const t = getToken();
+  ensureMediaTicket().catch(() => {});
   const base = `${API_BASE}/cameras/${encodeURIComponent(cameraId)}/mock-video`;
+  const t = currentMediaTicket();
   return t ? `${base}?token=${encodeURIComponent(t)}` : base;
 }
 

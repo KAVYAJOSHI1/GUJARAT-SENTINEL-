@@ -255,17 +255,22 @@ The docs (`SCALABILITY.md`) describe Kafka/RabbitMQ, Kubernetes, NVIDIA Triton, 
 - RBAC via `require_roles()` dependency factory — ADMIN/OFFICER/OPERATOR enforced on camera-CRUD, watchlist-write, alert-ack endpoints (`backend/app/core/rbac.py`, used in `cameras.py`, `watchlist.py`).
 - Ingest-key auth for the AI→backend event endpoint, constant-time comparison (`hmac.compare_digest`, `deps.py:78`) — good practice, avoids timing attacks on that one comparison.
 - RTSP credentials sourced only from env vars, never hardcoded, and redacted (`***:***@host`) before any logging (`ingestion/rtsp_auth.py`) — genuinely careful.
-- CORS configured (though wide open, `["*"]`, in the compose defaults).
 - Standardized error envelope hiding internal exception details from clients (`backend/app/core/exceptions.py`).
 
-**NOT IMPLEMENTED despite being claimed in `SECURITY.md`:**
-- **Audit logging**: `AuditLog` model + `audit_logs` table exist and are migrated, but **zero code path ever writes to them** (only the model import; no `db.add(AuditLog(...))` anywhere). The doc's "Immutable system audit trail... recording login, search, evidence export, alert ack" is entirely unimplemented.
-- **Encryption at rest (AES-256)**: zero occurrences of `encrypt`/`AES`/`fernet` anywhere in the codebase. Evidence JPEGs sit as plain files in MinIO/local disk.
-- **TLS 1.3 in-transit**: nothing in the compose/backend config terminates or enforces TLS — this is entirely deployment-environment-dependent and not something the app itself does.
-- **Rate limiting / abuse protection**: no rate limiter on `/auth/login` (brute-forceable), the ingest endpoint, or the WebSocket. No `slowapi` or equivalent anywhere.
-- **WebSocket authentication**: `/ws/alerts` accepts any connection with **no token check at all** (`ws_alerts.py:14-15`) — a straightforward information-disclosure gap (live plate numbers, camera IDs, snapshot URLs to anyone who can reach the port).
-- **JWT-in-URL exposure**: `evidenceUrl()` and `mockVideoUrl()` append the JWT as `?token=` because `<img>`/`<video>` can't set headers (`frontend/src/services/api.js:93-108`) — a reasonable *workaround* for a real constraint, but it means the token lands in server access logs and browser history. Should be short-lived, single-use signed URLs instead of the full session JWT.
-- **Camera credential protection at rest**: RTSP creds are handled well in-memory/in-transit, but the registry JSON (`data/camera_registry.json`) stores `rtsp_url` and `hls_url` — if these ever carry inline credentials, that file is a plaintext credential store on disk (currently they don't, per the sampled entry, but nothing structurally prevents it).
+**IMPLEMENTED since this audit (Phase 1 + Phase 4 hardening passes — see `SECURITY.md` §2):**
+- **Audit logging** (Phase 1): `backend/app/services/audit.py` writes `audit_logs` rows for login success/failure/rate-limited, vehicle search, alert ack, watchlist create/deactivate, camera CRUD/sync, evidence access, retention purge. Normal DB table, not tamper-evident (no hash chaining / WORM) — the "immutable" claim was removed.
+- **WebSocket authentication** (Phase 1 → Phase 4): `/ws/alerts` rejects any unauthenticated handshake; Phase 4 made the credential a **short-lived `purpose="ws"` ticket** (~60s, `POST /api/v1/auth/ws-ticket`), not the session JWT.
+- **Rate limiting on `/auth/login`** (Phase 4): per-`(ip, username)` failure counter → HTTP 429 + `Retry-After` (`backend/app/services/rate_limit.py`, config `LOGIN_RATE_LIMIT_*`). In-process only — a Redis-backed cross-replica limiter is ROADMAP.
+- **JWT-in-URL exposure** (Phase 4): `evidenceUrl()` / `mockVideoUrl()` now carry a **short-lived `purpose="media"` ticket** (~120s, `POST /api/v1/auth/media-ticket`) as `?token=`; a session JWT passed there is rejected. The `Authorization: Bearer` header path is unchanged.
+- **CORS** (Phase 4): explicit allow-list default; a `"*"` entry is dropped (with a warning) whenever `ENV` is not a development value, and `allow_credentials` is forced off when the list is `"*"`.
+- **`vehicle_events` retention** (Phase 4): configurable 30-day purge (`backend/app/services/retention.py` + lifespan sweep + admin endpoint); alert-referenced rows are never deleted; `watchlist`/`alerts`/`audit_logs` untouched.
+
+**STILL NOT IMPLEMENTED (ROADMAP):**
+- **Encryption at rest (AES-256)**: zero occurrences of `encrypt`/`AES`/`fernet` anywhere. Evidence JPEGs sit as plain files in MinIO/local disk.
+- **TLS in-transit**: nothing in the compose/backend config terminates or enforces TLS — a deployment/ingress concern, not the app's.
+- **RS256 (asymmetric) JWT signing**: still HS256, single shared secret.
+- **Distributed rate limiting**: the login limiter is per backend process; multi-replica deployments need a shared store.
+- **Camera credential protection at rest**: the registry JSON stores `rtsp_url`/`hls_url` — if these ever carry inline credentials, that file is a plaintext credential store (currently they don't, but nothing structurally prevents it).
 
 ---
 
@@ -350,19 +355,24 @@ The docs (`SCALABILITY.md`) describe Kafka/RabbitMQ, Kubernetes, NVIDIA Triton, 
 
 ## 15. CODE QUALITY
 
+> Findings marked ✅ RESOLVED were closed by the Phase 1 / Phase 4 hardening
+> passes — see `SECURITY.md` §2 and Part II §3b/§4b. They are kept here (not
+> deleted) so the audit trail of what was found stays intact.
+
 | Finding | Rank | Detail |
 |---|---|---|
-| WebSocket has no authentication | **CRITICAL** | `ws_alerts.py:14` accepts every connection unconditionally — live plate/camera/snapshot data exposed to anyone network-reachable. |
+| WebSocket has no authentication | **CRITICAL** — ✅ RESOLVED | Was: `ws_alerts.py` accepted every connection unconditionally. Now: authenticated handshake required (Phase 1), and the credential is a short-lived `purpose="ws"` ticket, not the session JWT (Phase 4). |
 | `event_buffer` is unbounded-loss on crash | **HIGH** | In-memory `deque(maxlen=2000)` (`ai/pipeline.py:98`) — a backend outage longer than it takes to accumulate 2000 events per pipeline silently drops the oldest ones; a process crash drops all of them. |
 | Synchronous blocking POST in the hot loop | **HIGH** | `requests.post(..., timeout=5.0)` inside `process_frame`'s call chain (`ai/pipeline.py:488`) — a slow backend adds up to 5s of stall per event, serialized behind every camera sharing that consumer thread. |
-| `watchlist.expires_at` never enforced | **HIGH** | Stored on write, never filtered on read (`watchlist_engine.py`, `watchlist.py` API) — an "expired" entry keeps matching forever. |
+| `watchlist.expires_at` never enforced | **HIGH** — ✅ RESOLVED | Phase 1: `active_watchlist_clause()` now filters expired/inactive entries out of both the alert-match lookup and the investigation "is watchlisted" flag. |
 | Dashboard camera status not wired to live health | **MEDIUM** | `HealthRegistry` (real-time FPS/drops/reconnects) never reaches the backend's `cameras.status` column that the dashboard actually reads — the health-push endpoint it targets doesn't exist in the real API (`stream_health.py`'s own docstring calls this out as a placeholder). |
 | Frontend silently fabricates data on backend failure | **MEDIUM** (quality) / risk in a demo context | `services/api.js::safe()` + `websocket.js`'s alert simulator — no visible "DEMO/OFFLINE DATA" banner distinguishing real from fabricated content in the current UI code (only a `backendLive` boolean state exists; whether it's rendered prominently should be checked live). |
 | Plate locator is non-learned heuristic with a static fallback crop | **MEDIUM** | `ai/anpr/plate_locator.py` — caps ANPR recall on any plate outside the assumed aspect-ratio/position prior; a modeling limitation, not a bug. Phase 3 (§3a of Part II) improved it additively (CLAHE + morphological closing second candidate source, deskew, top-2 candidates) — measured synthetic exact-match 70.8%→87.5%, mean OCR latency −26% — and `README.md` now states these synthetic numbers explicitly as synthetic/OOD, with no ">95%" claim. Still no benchmark against real labeled data (none exists locally); real-camera ANPR remains qualitative (spot-checks: vehicles detected, all events honestly `UNKNOWN`, zero hallucinated plates). |
-| `AuditLog` model is dead code | **LOW** | Fully migrated, fully modeled, zero writers — either finish it or remove it to avoid the false impression of compliance logging. |
-| JWT passed as URL query param | **LOW-MEDIUM** | Necessary workaround for `<img>/<video>` (`api.js:93-108`), but tokens land in access logs; should be a scoped, short-TTL signed URL instead of the full session JWT. |
-| No rate limiting anywhere | **MEDIUM** | `/auth/login` is brute-forceable; no `slowapi`/nginx-level throttling present. |
-| CORS wide open by default | **LOW** (dev-only default) | `CORS_ALLOW_ORIGINS: '["*"]'` in `docker-compose.yml:63` — fine for a hackathon demo, must be tightened for any real deployment. |
+| `AuditLog` model is dead code | **LOW** — ✅ RESOLVED | Phase 1: `services/audit.py` writes rows for login (success/fail/rate-limited), search, alert ack, watchlist + camera writes, evidence access, retention purge. |
+| JWT passed as URL query param | **LOW-MEDIUM** — ✅ RESOLVED | Phase 4: `evidenceUrl()`/`mockVideoUrl()` now carry a short-lived `purpose="media"` ticket (~120s), not the session JWT; a session JWT as `?token=` is rejected. |
+| No rate limiting anywhere | **MEDIUM** — ✅ RESOLVED (`/auth/login`) | Phase 4: per-`(ip, username)` failure counter → 429 + `Retry-After` (`services/rate_limit.py`). In-process only; distributed limiting is ROADMAP. The ingest endpoint / WS are not separately rate-limited. |
+| CORS wide open by default | **LOW** — ✅ RESOLVED | Phase 4: explicit allow-list default; a `"*"` entry is dropped (with a warning) whenever `ENV` is not a development value; `docker-compose.yml` sets `["http://localhost:3000"]`. |
+| `vehicle_events` retained indefinitely | **LOW-MEDIUM** (privacy) — ✅ RESOLVED | Phase 4: configurable 30-day purge (`services/retention.py`), alert-referenced rows protected, `watchlist`/`alerts`/`audit_logs` untouched. |
 
 **What's genuinely good**: exception handling is disciplined and consistent (fail-open, log-and-continue, never let one bad frame/camera take down the process); no obvious race conditions found (per-camera state isolation is correct by construction — separate `ByteTrackTracker`/`HealthRegistry` entries per camera_id, thread-safe registries with explicit locks); no dead-loop or memory-leak patterns beyond the acknowledged bounded-buffer tradeoffs above; the ingestion and AI modules are unusually well-documented for a hackathon codebase, with docstrings that honestly flag their own limitations (a real rarity, and worth citing to judges as an engineering-maturity signal).
 
@@ -545,16 +555,19 @@ Single-host Docker Compose: Postgres+PostGIS, MinIO, one FastAPI backend, one Re
 10. The alert cooldown suppressing a repeat sighting of the same plate within 5 minutes.
 
 ### D. 10 things to fix before judging
-1. Authenticate `/ws/alerts`.
-2. Add a visible "OFFLINE/DEMO DATA" indicator whenever the frontend is on mock fallback, so a judge never mistakes it for live data.
-3. Wire `HealthRegistry` into `cameras.status` so the dashboard reflects real stream health.
-4. Enforce `watchlist.expires_at` in the match query.
-5. Either implement `AuditLog` writes or remove the table/claim.
-6. Correct `SECURITY.md`'s RS256/AES-256 claims to match reality (HS256, no at-rest encryption) — or implement them.
-7. Replace or caveat the README's unverified ">95% ANPR accuracy" claim. *(Done — README carries no accuracy claim; Phase 3 §3a reports synthetic numbers explicitly as synthetic/OOD with sample size, and real-camera results as qualitative-only.)*
-8. Rate-limit `/auth/login`.
-9. Tighten CORS from `["*"]` for anything beyond local dev.
-10. Add a basic retention job so `vehicle_events` doesn't imply indefinite mass surveillance by default.
+
+*Status after the Phase 1 + Phase 4 hardening passes: 1–5, 7–10 ✅ done; 6 done (docs corrected).*
+
+1. ✅ Authenticate `/ws/alerts`. *(Phase 1; Phase 4 moved it to a short-lived `purpose="ws"` ticket.)*
+2. ✅ Visible "OFFLINE/DEMO DATA" indicator on mock fallback. *(Phase 1.)*
+3. ✅ Wire `HealthRegistry` into `cameras.status`. *(Phase 1 — `POST /api/v1/cameras/health` + freshness-checked effective status.)*
+4. ✅ Enforce `watchlist.expires_at` in the match query. *(Phase 1.)*
+5. ✅ Implement `AuditLog` writes. *(Phase 1; Phase 4 added `LOGIN_RATE_LIMITED` / `RETENTION_PURGE`.)*
+6. ✅ Correct `SECURITY.md`'s RS256/AES-256/"immutable audit" claims. *(Phase 1 — all re-labelled ROADMAP / HS256 / normal DB table.)*
+7. ✅ Replace or caveat the README's ">95% ANPR accuracy" claim. *(README carries no accuracy claim; Phase 3 §3a reports synthetic numbers as synthetic/OOD with sample size, real-camera as qualitative-only.)*
+8. ✅ Rate-limit `/auth/login`. *(Phase 4 — per-`(ip, username)` 429 + `Retry-After`; distributed limiting still ROADMAP.)*
+9. ✅ Tighten CORS from `["*"]`. *(Phase 4 — explicit allow-list; `"*"` dropped outside a dev `ENV`.)*
+10. ✅ Retention job for `vehicle_events`. *(Phase 4 — configurable 30-day purge, alert-referenced rows protected.)*
 
 ### E. The single strongest technical story
 *A camera-isolated, fail-open, from-scratch-tracking pipeline that turns flaky government RTSP feeds into a stable, sub-second, cross-camera vehicle-alert system — engineered with the discipline (per-camera state isolation, honest UNKNOWN handling, resilient reconnect/backoff, correctly-indexed spatial search) of a system meant to run unattended, not just to demo well once.*
@@ -854,6 +867,35 @@ ws.onmessage = (event) => {
 };
 ```
 This alone is enough to eyeball latency in the browser console during a live demo without adding any UI.
+
+---
+
+## 4b. PHASE 4 UPDATE — security + production hardening (commit on `penultimate`)
+
+Closes the remaining §10 / §16 security findings. No camera-performance,
+GPU, or distributed-system work (explicitly out of scope).
+
+| # | Change | Files | Notes |
+|---|---|---|---|
+| 1 | **Login rate limiting** | `services/rate_limit.py`, `api/v1/auth.py`, `config.py` | In-process failure counter per `(ip, username)`. After 5 failures / 300s → HTTP **429** + `Retry-After` for 300s; a success clears it. 429 body is generic (no user-existence oracle, no credential echo). Audited as `LOGIN_RATE_LIMITED`. Env: `LOGIN_RATE_LIMIT_{ENABLED,MAX_FAILURES,WINDOW_SECONDS,BLOCK_SECONDS}`. **Per-process only — distributed limiting is ROADMAP.** |
+| 2 | **CORS allow-list** | `config.py`, `main.py`, `docker-compose.yml` | Default `["http://localhost:3000","http://localhost:5173"]`; compose sets `["http://localhost:3000"]`. `Settings.resolved_cors_origins()` drops a `"*"` entry (with a logged warning) whenever `ENV` ∉ {development, dev, local, test}. `allow_credentials` forced off when the list is `"*"`. |
+| 3 | **Short-lived WS ticket** | `core/security.py`, `api/v1/auth.py`, `api/ws_alerts.py`, `frontend/services/mediaTicket.js`, `frontend/services/websocket.js` | `POST /auth/ws-ticket` → HS256 JWT with `purpose="ws"`, ~60s `exp`. `/ws/alerts` accepts **only** that (a session JWT has no `purpose` claim → rejected). Frontend fetches a fresh ticket before every (re)connect. |
+| 4 | **Short-lived media ticket** | same + `frontend/services/api.js`, `investigationApi.js` | `POST /auth/media-ticket` → `purpose="media"`, ~120s. `verify_bearer_header_or_query`'s `?token=` path now requires this ticket, not the session JWT; the `Authorization: Bearer` header path (fetch/XHR) is unchanged. Frontend caches + auto-refreshes the ticket so `evidenceUrl()`/`mockVideoUrl()` stay synchronous. |
+| 5 | **`vehicle_events` retention** | `services/retention.py`, `main.py` (lifespan sweep), `api/v1/admin.py` | `DELETE FROM vehicle_events WHERE timestamp < now()-Nd AND NOT EXISTS (alert referencing it)`. Default N=30 (`VEHICLE_EVENT_RETENTION_DAYS`, `0`=disabled). Periodic sweep every `RETENTION_SWEEP_INTERVAL_HOURS` (24) + admin-only `POST /api/v1/admin/retention/purge`. `watchlist`/`alerts`/`audit_logs`/`users`/`cameras` never touched. Audited as `RETENTION_PURGE`. |
+| 6 | **Audit coverage + no-secret guard** | `services/audit.py` (doc), tests | Added `LOGIN_RATE_LIMITED`, `RETENTION_PURGE`. Tests assert the audit `detail` column never contains a password / JWT / ticket. |
+| 7 | **Header pass-through on error envelope** | `core/exceptions.py` | The standardized-error handler now preserves `Retry-After` / `WWW-Authenticate` headers the raiser set. |
+
+**No DB migration** — tickets are stateless JWTs, the rate limiter is
+in-memory, retention only deletes rows.
+
+**Tests**: `backend/tests/` +5 files (`test_login_rate_limit`, `test_cors`,
+`test_transport_tickets`, `test_retention`, `test_audit_coverage`),
+`test_ws_auth` updated for the ticket flow. Full backend suite **60
+passed**; AI/ingestion **143 passed / 8 skipped**; frontend build clean;
+real cam04 e2e smoke unchanged (events published, plates honestly UNKNOWN).
+
+**Still ROADMAP** (unchanged): RS256, TLS-in-app, encryption at rest,
+distributed rate limiting, GPU/Kafka/K8s.
 
 ---
 
