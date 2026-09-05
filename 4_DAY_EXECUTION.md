@@ -11,7 +11,7 @@
 
 - **Day 2 — Ingestion & AI Pipeline Development**:
   - Build RTSP over TCP stream ingestion workers with PTS timestamping.
-  - Build YOLOv8 vehicle detection and PaddleOCR ANPR pipeline.
+  - Build YOLOv8 vehicle detection and EasyOCR ANPR pipeline.
   - Build FastAPI REST backend endpoints.
 
 - **Day 3 — Integration, Tracking & Watchlist Engine**:

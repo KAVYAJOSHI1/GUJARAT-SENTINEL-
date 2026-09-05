@@ -61,6 +61,15 @@ MOCK_VIDEOS_ROOT = os.getenv(
     os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "trafficdataset"),
 )
 
+# Where THIS process can see the committed H.264 demo clips a
+# data/demo_camera_registry.json entry points at (repo-relative paths like
+# "demo_assets/clips/mockcam01.mp4"). Dockerized backend mounts the folder at
+# a fixed path; bare-metal falls back to the repo-relative folder.
+DEMO_ASSETS_ROOT = os.getenv(
+    "DEMO_ASSETS_ROOT",
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "demo_assets"),
+)
+
 
 def _resolve_mock_video_path(camera_code: str, stored_path: str):
     """Find a browser-playable file for this mock camera.
@@ -81,18 +90,28 @@ def _resolve_mock_video_path(camera_code: str, stored_path: str):
             return None
         if os.path.isfile(path):
             return path
-        marker = f"trafficdataset{os.sep}"
-        idx = path.find(marker)
-        if idx == -1:
-            return None
-        candidate = os.path.join(MOCK_VIDEOS_ROOT, path[idx + len(marker):])
-        return candidate if os.path.isfile(candidate) else None
+        # host/relative path -> whichever mount THIS process can actually see
+        for marker, root in (
+            (f"trafficdataset{os.sep}", MOCK_VIDEOS_ROOT),
+            (f"demo_assets{os.sep}", DEMO_ASSETS_ROOT),
+        ):
+            idx = path.find(marker)
+            if idx != -1:
+                candidate = os.path.join(root, path[idx + len(marker):])
+                if os.path.isfile(candidate):
+                    return candidate
+        return None
 
     # Already container-local by construction (built from MOCK_VIDEOS_ROOT
     # directly) -- no host-path translation needed, just check it exists.
     preview_candidate = os.path.join(MOCK_VIDEOS_ROOT, "_previews", f"{camera_code}.mp4")
     if os.path.isfile(preview_candidate):
         return preview_candidate, "video/mp4"
+    # The committed demo clips are already browser-playable H.264/MP4 -- serve
+    # the source clip directly, no preview remux needed.
+    demo_candidate = os.path.join(DEMO_ASSETS_ROOT, "clips", f"{camera_code}.mp4")
+    if os.path.isfile(demo_candidate):
+        return demo_candidate, "video/mp4"
     raw = _translate(stored_path)
     if raw:
         return raw, ("video/quicktime" if raw.lower().endswith(".mov") else "video/mp4")

@@ -59,7 +59,12 @@ services:
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@sentinel.local}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
-      SEED_WATCHLIST_PLATE: ${SEED_WATCHLIST_PLATE:-}
+      # Seed a demo watchlist hit on first start so the mock ANPR demo lights
+      # up end to end (GJ18TC0450 is the plate in demo_assets/clips/*.mp4).
+      # Idempotent -- re-seeding never duplicates. Set to an empty string in
+      # .env for a clean deployment with no demo data.
+      SEED_WATCHLIST_PLATE: ${SEED_WATCHLIST_PLATE-GJ18TC0450}
+      SEED_WATCHLIST_CATEGORY: ${SEED_WATCHLIST_CATEGORY:-Stolen Vehicle (demo)}
       # The dashboard reaches the API same-origin through the Vite dev proxy
       # (frontend service, :3000), so this only needs the dev host origin.
       # Override with a real https origin (or a comma-free JSON list) in a
@@ -80,6 +85,9 @@ services:
       # translates data/trafficdataset_camera_registry.json's host paths
       # against MOCK_VIDEOS_ROOT, so this stays portable across machines.
       MOCK_VIDEOS_ROOT: /trafficdataset
+      # Committed H.264 demo clips (demo_assets/clips/*.mp4) -- lets
+      # GET /api/v1/cameras/{id}/mock-video stream the mockcam0N clips.
+      DEMO_ASSETS_ROOT: /demo_assets
       # Read-only access to the AI pipeline's local evidence snapshots, as a
       # fallback for the (rare) event whose snapshot was never uploaded to
       # MinIO -- see vehicles.py get_evidence() / EVIDENCE_ROOT.
@@ -96,6 +104,7 @@ services:
       - ./database:/database:ro
       - ./scripts:/scripts:ro
       - ./trafficdataset:/trafficdataset:ro
+      - ./demo_assets:/demo_assets:ro
       - ./evidence:/evidence:ro
 
   frontend:
@@ -119,7 +128,13 @@ services:
       dockerfile: Dockerfile.pipeline
     container_name: sentinel-pipeline
     profiles: ["ai"]
+    # Default: the real Sentinel cameras (data/camera_registry.json, cam04/cam06).
+    # Mock ANPR demo: set PIPELINE_REGISTRY=data/demo_camera_registry.json and
+    # PIPELINE_CAMERAS=mockcam01,mockcam02,mockcam03 in .env -- the committed
+    # H.264 clips under demo_assets/clips/ are mounted read-only below.
+    # See DEMO_RUNBOOK.md.
     command: ["--cameras", "${PIPELINE_CAMERAS:-cam04,cam06}",
+              "--registry", "${PIPELINE_REGISTRY:-data/camera_registry.json}",
               "--backend-url", "http://backend:8000/api/v1/events/ai-detection"]
     environment:
       SENTINEL_INGEST_API_KEY: ${INGEST_API_KEY:-dev-ingest-key}
@@ -127,8 +142,17 @@ services:
       SENTINEL_RTSP_PASSWORD: ${SENTINEL_RTSP_PASSWORD:-}
       SENTINEL_RTSP_BASE: ${SENTINEL_RTSP_BASE:-rtsp://103.250.160.189:8554/stream}
       SENTINEL_SEND_SNAPSHOT: "1"
+      OCR_ENGINE: ${OCR_ENGINE:-easyocr}
       ADMIN_USER: ${ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+    volumes:
+      # Registries + committed demo clips, read-only. demo_assets/clips/*.mp4
+      # and data/demo_camera_registry.json are in the repo; ./trafficdataset
+      # is the optional (git-ignored, machine-local) MOCK_CAM* dataset -- an
+      # empty dir here is harmless when it isn't present.
+      - ./data:/repo/data:ro
+      - ./demo_assets:/repo/demo_assets:ro
+      - ./trafficdataset:/repo/trafficdataset:ro
     depends_on:
       - backend
 

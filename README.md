@@ -274,6 +274,18 @@ a fine-tuned Indian-plate OCR head both require a labeled Sentinel plate
 dataset that does not exist locally; until it does, real-camera ANPR
 accuracy can only be reported qualitatively.
 
+**Known model limitations (future work):**
+
+- **Auto-rickshaws / three-wheelers.** The YOLOv8n class set and the
+  plate-aspect-ratio prior in `ai/anpr/plate_locator.py` are tuned for cars
+  and two-wheelers; three-wheeler plates (smaller, lower-mounted, often
+  angled) are detected less reliably and read less often.
+- **Visual vehicle re-identification.** Cross-camera correlation is done
+  purely by plate-string match. A vehicle whose plate is never read on any
+  camera does **not** get stitched into a journey by appearance/colour/model
+  — there is no Re-ID embedding model. This caps journey recall exactly
+  where ANPR is weakest.
+
 ---
 
 ## 3e. Security & Production Hardening (Phase 4 — IMPLEMENTED)
@@ -469,8 +481,9 @@ Explore the complete technical blueprints contained in this repository branch:
 
 - [`ARCHITECTURE.md`](ARCHITECTURE.md): Hybrid Models 1–5 strategy & master data pipeline.
 - [`API_CONTRACTS.md`](API_CONTRACTS.md): Standardized JSON schemas for REST APIs and WebSockets.
-- [`AI_ARCHITECTURE.md`](AI_ARCHITECTURE.md): YOLOv8, plate crop localization, CLAHE, PaddleOCR & consensus voting.
-- [`CCTV_INTEGRATION.md`](CCTV_INTEGRATION.md): `/api/ingest`, RTSP over TCP, PTS frame timing & backoff engine.
+- [`AI_ARCHITECTURE.md`](AI_ARCHITECTURE.md): YOLOv8, plate crop localization, CLAHE, EasyOCR & consensus voting.
+- [`CCTV_INTEGRATION.md`](CCTV_INTEGRATION.md): `POST /api/v1/cameras/sync` catalogue, RTSP over TCP, PTS frame timing & backoff engine.
+- [`DEMO_RUNBOOK.md`](DEMO_RUNBOOK.md): exact fresh-clone startup + the mock ANPR demo flow (`GJ18TC0450`) and real-camera fallback.
 - [`DATABASE_ARCHITECTURE.md`](DATABASE_ARCHITECTURE.md): PostgreSQL 15 + PostGIS 3.3 schemas & spatial indexing.
 - [`SCALABILITY.md`](SCALABILITY.md): 50 camera PoC to 80,000 camera statewide expansion **roadmap** (not yet implemented — see the doc's own top-of-file note).
 - [`SECURITY.md`](SECURITY.md): JWT (HS256) authentication, RBAC roles, audit logging — each line tagged IMPLEMENTED vs ROADMAP.

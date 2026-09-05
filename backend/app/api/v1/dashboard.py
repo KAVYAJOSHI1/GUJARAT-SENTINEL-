@@ -7,6 +7,7 @@ Dashboard summary API.
       every field a live measurement or NULL (never a placeholder)
 """
 import logging
+import os
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -35,9 +36,12 @@ from app.schemas.health import (
 logger = logging.getLogger("sentinel.dashboard")
 router = APIRouter()
 
-# The AI pipeline pushes a metrics snapshot every few seconds
-# (scripts/run_pipeline_service.py). Older than this -> "stale".
-_PIPELINE_STALE_AFTER_S = 30.0
+# The AI pipeline pushes a metrics snapshot every `--stats-interval` seconds
+# (scripts/run_pipeline_service.py, default 10s). A snapshot older than this
+# many seconds -> "stale". Default is 3x the default push interval, so a
+# single missed push doesn't flap the badge; override with the env var to
+# match a non-default --stats-interval.
+_PIPELINE_STALE_AFTER_S = float(os.getenv("PIPELINE_STALE_AFTER_S", "30"))
 _EVENT_WINDOW = timedelta(minutes=15)
 
 

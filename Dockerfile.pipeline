@@ -8,6 +8,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc libpq-dev libgl1 libglib2.0-0 ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
+# CPU-only torch + torchvision first, from the same index so their builds match
+# (a CPU torch with a PyPI/CUDA torchvision breaks `torchvision::nms`). The
+# pipeline runs device="cpu", so this also skips ~2.5 GB of transitive CUDA
+# wheels ultralytics would otherwise pull. requirements-ai.txt then sees both
+# satisfied. (Matches the note in requirements-ai.txt.)
+RUN pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
 COPY requirements-ai.txt .
 RUN pip install --no-cache-dir -r requirements-ai.txt
 
@@ -15,6 +22,9 @@ COPY ai/ ./ai/
 COPY ingestion/ ./ingestion/
 COPY scripts/ ./scripts/
 COPY data/ ./data/
+# Small committed H.264 demo clips so `PIPELINE_REGISTRY=data/demo_camera_registry.json`
+# works even without the compose bind mount. ~1.4 MB total.
+COPY demo_assets/ ./demo_assets/
 
 ENV PYTHONPATH=/repo
 ENTRYPOINT ["python", "scripts/run_pipeline_service.py"]

@@ -1,0 +1,32 @@
+[
+  {
+    "camera_id": "mockcam01",
+    "name": "Mock Cam 1 - Society Gate",
+    "latitude": 23.03,
+    "longitude": 72.58,
+    "rtsp_url": "demo_assets/clips/mockcam01.mp4",
+    "codec": "H.264 (committed local demo clip)",
+    "status": "ONLINE",
+    "loop": true
+  },
+  {
+    "camera_id": "mockcam02",
+    "name": "Mock Cam 2 - Ring Road Junction",
+    "latitude": 23.05,
+    "longitude": 72.6,
+    "rtsp_url": "demo_assets/clips/mockcam02.mp4",
+    "codec": "H.264 (committed local demo clip)",
+    "status": "ONLINE",
+    "loop": true
+  },
+  {
+    "camera_id": "mockcam03",
+    "name": "Mock Cam 3 - Highway Toll",
+    "latitude": 23.07,
+    "longitude": 72.62,
+    "rtsp_url": "demo_assets/clips/mockcam03.mp4",
+    "codec": "H.264 (committed local demo clip)",
+    "status": "ONLINE",
+    "loop": true
+  }
+]
