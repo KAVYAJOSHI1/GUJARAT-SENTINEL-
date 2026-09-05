@@ -184,13 +184,25 @@ class OCREngine:
         self,
         images: List[np.ndarray],
         normalizer: Any = None,
+        early_exit_score: float = 0.92,
     ) -> Dict[str, Any]:
-        """Run OCR on several preprocessing variants and return the best read.
+        """Run OCR on preprocessing variants and return the best read.
 
         Scoring per variant:  ``ocr_conf * (0.4 + 0.6 * format_score(normalised))``
         so a well-formed Indian plate at medium confidence beats a garbage
         string at high confidence. Empty ``images`` (quality gate failed) ->
         ``UNKNOWN``.
+
+        Early exit (Phase 3 performance finding): a clearly-readable plate
+        with good contrast typically scores at or near the maximum on the
+        FIRST or SECOND variant already -- running the remaining, more
+        expensive variants (denoise, unsharp, adaptive-threshold) then buys
+        nothing but extra OCR latency, which is exactly the per-vehicle
+        multivariant-OCR cost the Phase 2C benchmark identified as the
+        pipeline's dominant per-frame cost. Once a variant's score clears
+        ``early_exit_score`` we stop -- ambiguous/low-quality crops (the
+        cases that actually benefit from trying every variant) are
+        unaffected, since none of their variants reach that bar.
         """
         if not images:
             return {"raw_text": "UNKNOWN", "confidence": 0.0, "variant": -1, "format_score": 0.0}
@@ -214,6 +226,8 @@ class OCREngine:
                 best_score = score
                 best = {"raw_text": raw, "confidence": round(conf, 4),
                         "variant": idx, "format_score": round(fmt, 3)}
+            if best_score >= early_exit_score:
+                break
         return best
 
     def extract_text(self, image: np.ndarray) -> Dict[str, Any]:

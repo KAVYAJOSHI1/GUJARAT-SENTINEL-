@@ -546,7 +546,8 @@ class AIPipeline:
                 fmt_score = self.normalizer.format_score(normalized_plate)
 
                 # Step 6: Multi-Frame Consensus Voting (OCR conf + detection conf
-                # + format validity + temporal stability; stable plates lock)
+                # + format validity + plate-locator quality + temporal
+                # stability; stable plates lock)
                 consensus_res = self.consensus_engine.add_prediction(
                     track_id=track_id,
                     plate_number=normalized_plate,
@@ -554,6 +555,7 @@ class AIPipeline:
                     camera_id=camera_id,
                     detection_confidence=float(vehicle_conf),
                     format_score=fmt_score,
+                    plate_quality=float(locator_res.get("confidence", 1.0)),
                 )
                 final_plate = consensus_res["consensus_plate"]
                 final_conf = consensus_res["confidence"]

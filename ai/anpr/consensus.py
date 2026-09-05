@@ -71,6 +71,7 @@ class MultiFrameConsensus:
         camera_id: str = "CAM-001",
         detection_confidence: float = 1.0,
         format_score: float = 0.0,
+        plate_quality: float = 1.0,
     ) -> Dict[str, Any]:
         """
         Add a frame's plate prediction for a vehicle track and compute current consensus.
@@ -81,6 +82,14 @@ class MultiFrameConsensus:
         :param camera_id: Identifier of camera stream (for multi-camera isolation)
         :param detection_confidence: vehicle-detection confidence for this frame
         :param format_score: Indian-plate format validity of this read (0-1)
+        :param plate_quality: plate-LOCATOR confidence for this frame (0-1) --
+            distinct from ``format_score``: this reflects how much the region
+            fed to OCR looks like an actual, well-localised plate (a real
+            contour match vs. a crude heuristic fallback crop), independent
+            of whether the resulting text happens to parse as a valid
+            Indian format. A vote built on a fallback-crop (low
+            plate_quality) is weighted down even if the OCR text it produced
+            looks superficially well-formed.
         :return: Dict containing consensus plate, confidence, vote breakdown, and full history
         """
         track_key = self._make_key(track_id, camera_id)
@@ -105,7 +114,10 @@ class MultiFrameConsensus:
                 self._locked.pop(track_key, None)
 
         history = self.track_history[track_key]
-        history.append((plate_number, float(confidence), float(detection_confidence), float(format_score)))
+        history.append((
+            plate_number, float(confidence), float(detection_confidence),
+            float(format_score), float(plate_quality),
+        ))
 
         if len(history) > self.max_history:
             self.track_history[track_key] = history[-self.max_history:]
@@ -158,11 +170,16 @@ class MultiFrameConsensus:
             plate, conf = entry[0], entry[1]
             det_conf = entry[2] if len(entry) > 2 else 1.0
             fmt = entry[3] if len(entry) > 3 else 0.0
+            plate_q = entry[4] if len(entry) > 4 else 1.0
             raw_reads.append(plate)
             frequency_counts[plate] += 1
             conf_sum[plate] += conf
-            # weight = ocr_conf * detection_quality * format_validity * recency
-            weight = conf * (0.55 + 0.45 * det_conf) * (0.7 + 0.3 * fmt) * recency_bonus
+            # weight = ocr_conf * detection_quality * format_validity *
+            #          plate_locator_quality * recency
+            weight = (
+                conf * (0.55 + 0.45 * det_conf) * (0.7 + 0.3 * fmt)
+                * (0.7 + 0.3 * plate_q) * recency_bonus
+            )
             weighted_scores[plate] += weight
             recency_bonus = min(1.6, recency_bonus + 0.05)  # newer reads count a little more
 

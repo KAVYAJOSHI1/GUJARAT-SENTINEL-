@@ -21,7 +21,7 @@ The architecture is designed with the seams (stateless backend, per-camera isola
 | Feature Domain | Technical Implementation | Operational Impact |
 | :--- | :--- | :--- |
 | **Stream Ingestion** | RTSP over TCP, WebRTC, HLS, PTS Timestamping, Exponential Backoff | Resilient ingestion across erratic network environments |
-| **AI Analytics** | YOLOv8 Vehicle Detection + EasyOCR (PaddleOCR optional) + Multi-Frame Consensus | ANPR accuracy is **not yet benchmarked against a real labeled dataset** — `scripts/evaluate_anpr.py` supports both a synthetic-font mode (not representative) and a real-`--dataset` mode, and its own output explicitly refuses to let the synthetic numbers be quoted as real accuracy. No ">95%" or any other accuracy figure should be cited until that real-data run has actually been done; see `SENTINEL_System_Audit_Report.md` §3 (ANPR EVALUATION) for the exact benchmark plan. |
+| **AI Analytics** | YOLOv8 Vehicle Detection + EasyOCR (PaddleOCR optional) + Multi-Frame Consensus | ANPR accuracy is **not yet benchmarked against a real labeled dataset** (none exists locally — real-camera accuracy therefore *cannot* be stated statistically, only qualitatively). `scripts/evaluate_anpr.py` has a synthetic-font mode (measured this pass: **87.5% exact / 98.3% char**, up from 70.8% / 85.8% — but rendered fonts are out-of-distribution and its own output refuses to let those be quoted as real accuracy) and a real-`--dataset` mode for when labeled footage exists. No ">95%" or any accuracy figure should be cited as real until that run is done. See §3d below and `SENTINEL_System_Audit_Report.md` §3. |
 | **Cross-Camera Correlation** | ByteTrack Spatial-Temporal Indexing + Normalized Plate Matching | Chronological vehicle journey reconstruction across cameras |
 | **Watchlist & Alerts** | FastAPI Engine + 5-Min Cooldown Deduplication + WebSockets | Sub-second alert delivery to command center operators |
 | **GIS & Investigation** | PostGIS Spatial Point Layers + Leaflet Polyline Vector Mapping | Interactive visual map trajectories & automated PDF evidence reports |
@@ -199,6 +199,80 @@ alongside ingestion — confirmed as host CPU oversubscription (isolated
 component tests all scale correctly), not an architecture defect. **Do not
 enable `SENTINEL_AI_WORKERS>1` in production without re-benchmarking on
 the actual target hardware first.**
+
+---
+
+## 3d. ANPR / Plate-Recognition Accuracy Pass (Phase 3 — IMPLEMENTED)
+
+Targeted improvements to the existing plate pipeline (plate locator →
+preprocessing → OCR → Indian-format normalisation → temporal consensus),
+each tied to an audit finding, with the **honest UNKNOWN behaviour
+deliberately preserved** — nothing here turns an unreadable plate into a
+guessed one.
+
+**Changes:**
+- **Plate localisation** (`ai/anpr/plate_locator.py`): the original
+  Canny→contour search is kept *unchanged*; a second candidate source
+  (CLAHE contrast-enhancement + morphological closing) is added alongside
+  it. Audit finding: `cv2.contourArea()` massively under-counts a thin
+  border/frame contour (observed: 17 px² for a ~27,000 px² region), so the
+  correct candidate was being rejected by the area filter and the code
+  fell back to a fixed-fraction crop that clips real characters. The
+  closed-edge candidate merges characters + border into one solid,
+  correctly-measured blob. Also: mild rotation deskew (only fires on a
+  genuinely tilted candidate), top-2 ranked candidates, a slightly wider
+  fallback window.
+- **OCR** (`ai/ocr/ocr_engine.py`): `extract_best()` now early-exits once a
+  variant scores clearly well (≥0.92) instead of always running all 3–4
+  preprocessing variants — this is the per-vehicle multivariant-OCR cost
+  Phase 2C flagged as the pipeline's dominant per-frame cost. Ambiguous
+  crops still try every variant.
+- **Temporal consensus** (`ai/anpr/consensus.py`): a per-vote
+  `plate_quality` weight (the plate *locator's* own confidence — real
+  contour match vs. crude fallback crop) now feeds the weighted vote,
+  distinct from the existing format-validity weight. A vote built on a
+  fallback crop counts for less.
+- **Normalisation** (`ai/ocr/plate_format.py`): graduated correction cap —
+  ≤1 confusion fixed on the "don't lower validity" rule; 2–3 only if the
+  result *strictly* validates (real state code + exact layout); ≥4 refused
+  outright. Audit finding: the old rule fabricated plates from arbitrary
+  text (`"RANDOMTEXT"` → `"RAN0OM73X7"`, `"12345678"` → `"IZ3A5678"`).
+  Those now pass through unchanged and stay invalid.
+
+**MEASURED — `scripts/evaluate_anpr.py` synthetic set (24 rendered plates,
+same 8-core host). Rendered fonts are OUT OF DISTRIBUTION — this measures
+pipeline wiring, NOT real CCTV accuracy:**
+
+| Metric | Before | After |
+| :--- | :-: | :-: |
+| Exact-plate match | 70.8% (17/24) | **87.5% (21/24)** |
+| Character accuracy | 85.8% | **98.3%** |
+| Valid-format rate (of reads) | — | 21/24 strictly valid |
+| UNKNOWN rate | 0% | 0% (all synthetic plates are readable) |
+| Mean OCR latency / plate | 640.8 ms | **472 ms** (−26%) |
+| Plate localised | 100% | 100% |
+
+Remaining 3 synthetic misses are genuine single-character OCR confusions
+on the rendered font (`3`↔`S`, `J`↔`u`, a split-digit segmentation error),
+not localisation failures — appropriately left as honest errors rather
+than force-corrected.
+
+**REAL SENTINEL CAMERAS — QUALITATIVE ONLY (no labeled data, so no
+statistics):** short spot-checks on cam04 / cam06 / cam09 / cam15 / cam20
+(~900 frames, ~53 vehicles detected, 8 AI events). Every event resolved to
+**UNKNOWN** — these are distance/area-surveillance feeds where plates are
+genuinely not resolvable in frame — and **zero hallucinated plate strings**
+were produced. Vehicle detection, OCR attempts, evidence capture, and the
+event→backend path all ran correctly; the pipeline honestly reports what
+it cannot read. The positive "readable plate → correct plate" path is
+exercised by `tests/test_ai_to_backend.py` and the synthetic evaluation,
+not by these particular real feeds.
+
+**ROADMAP (not done — needs data/labels this repo does not have):** a
+fine-tuned plate-region detector (vs. the current classical-CV locator) and
+a fine-tuned Indian-plate OCR head both require a labeled Sentinel plate
+dataset that does not exist locally; until it does, real-camera ANPR
+accuracy can only be reported qualitatively.
 
 ---
 

@@ -136,6 +136,25 @@ def format_score(plate: str) -> float:
     return is_valid(plate)[1]
 
 
+# A genuine plate misread is a small number of character confusions. The more
+# position-swaps it takes to force a string into plate shape, the more likely
+# the string is NOT a misread plate at all (a dictionary word, a timestamp
+# overlay, a partial/garbage OCR box) and "correcting" it would be
+# fabricating a plate from nothing:
+#   * up to _CORR_SOFT swaps           -> accepted if they don't lower the
+#                                         format score (the original rule)
+#   * _CORR_SOFT+1 .. _CORR_HARD swaps -> accepted ONLY if the result
+#                                         STRICTLY validates (real state code
+#                                         + exact standard/short/BH layout) --
+#                                         a real multi-error plate still
+#                                         lands here, random text almost never
+#                                         does
+#   * more than _CORR_HARD swaps       -> never; leave it to cross-frame
+#                                         consensus, don't single-frame rewrite
+_CORR_SOFT = 1
+_CORR_HARD = 3
+
+
 def correct_by_position(
     plate: str,
     per_char_conf: Optional[List[float]] = None,
@@ -146,6 +165,10 @@ def correct_by_position(
     A character is swapped only when: its class != the expected class for that
     position, a swap mapping exists, and (no confidence array is given, or the
     character's confidence is below ``conf_threshold``).
+
+    Bounded: at most ``_MAX_POSITION_CORRECTIONS`` characters are ever
+    rewritten -- if more than that would need swapping, the original cleaned
+    string is returned untouched rather than fabricated into plate shape.
     """
     p = clean(plate)
     if len(p) < 5:
@@ -155,6 +178,7 @@ def correct_by_position(
         return p
 
     out = list(p)
+    corrections = 0
     for i, (ch, want) in enumerate(zip(out, exp)):
         if want not in ("A", "N"):
             continue
@@ -163,11 +187,22 @@ def correct_by_position(
             continue  # OCR was confident -> trust it
         if want == "N" and ch.isalpha() and ch in DIGIT_IF_ALPHA_EXPECTED_NUM:
             out[i] = DIGIT_IF_ALPHA_EXPECTED_NUM[ch]
+            corrections += 1
         elif want == "A" and ch.isdigit() and ch in ALPHA_IF_DIGIT_EXPECTED_ALPHA:
             out[i] = ALPHA_IF_DIGIT_EXPECTED_ALPHA[ch]
+            corrections += 1
 
+    if corrections == 0:
+        return p
     corrected = "".join(out)
-    # only accept the correction if it did not make the string *less* valid
-    if format_score(corrected) + 1e-9 >= format_score(p):
+
+    if corrections <= _CORR_SOFT:
+        # original rule: accept as long as it did not make the string less valid
+        if format_score(corrected) + 1e-9 >= format_score(p):
+            return corrected
+        return p
+    if corrections <= _CORR_HARD and is_valid(corrected)[0]:
+        # several disagreements, but the result is a strictly valid plate
+        # (real state + exact layout) -- a genuine multi-error read
         return corrected
-    return p
+    return p  # too many disagreements / not strictly valid -> don't fabricate
