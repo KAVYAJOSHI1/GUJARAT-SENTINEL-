@@ -12,18 +12,21 @@ backend). What it owns is:
   3. An optional local FastAPI app exposing GET /api/v1/streams/health,
      useful for local development / Isha's frontend during integration
      testing before Vanshal's backend is wired up.
-  4. An optional push loop that POSTs snapshots to Vanshal's backend if
-     SENTINEL_HEALTH_PUSH_URL is configured.
+  4. An optional push loop that POSTs snapshots to the real backend
+     endpoint, ``POST /api/v1/cameras/health``
+     (``backend/app/api/v1/cameras.py::push_camera_health``), if
+     SENTINEL_HEALTH_PUSH_URL is configured (defaults to
+     ``<backend base>/cameras/health`` when unset -- see
+     ``scripts/run_pipeline_service.py``).
 
-*** SCHEMA PLACEHOLDER -- READ THIS ***
-The exact wire schema for GET /api/v1/streams/health lives in
-docs/API_CONTRACTS.md#5-camera-telemetry--health-schema, owned by
-Vanshal, which hasn't been shared into this session yet. The dict shape
-returned by `build_health_app()` and `push_loop()` below is a reasonable
-placeholder based on what the execution guide asks for (status, FPS, PTS
-jitter, frame drop count). Once you paste the real contract, only the
-two small dict-building blocks marked "PLACEHOLDER SHAPE" need to
-change -- all measurement, storage, and threading logic stays the same.
+This used to target a placeholder URL with no matching backend route
+(SENTINEL_System_Audit_Report.md §11 "health-push endpoint... hasn't been
+shared into this session yet"); ``push_camera_health`` now really exists,
+and the payload shape below matches its ``CameraHealthPush`` schema
+field-for-field. ``build_health_app()`` below is still a separate,
+optional local dev server (not mounted into the real backend) -- useful
+for polling health directly without a database round-trip during local
+development.
 """
 from __future__ import annotations
 
@@ -147,7 +150,6 @@ def build_health_app(registry: HealthRegistry):
 
     @app.get("/api/v1/streams/health")
     def get_health():
-        # PLACEHOLDER SHAPE -- replace with docs/API_CONTRACTS.md#5 once shared.
         return {
             "streams": [
                 {
@@ -172,11 +174,21 @@ def push_loop(
     push_url: str,
     interval_s: float,
     stop_event: threading.Event,
+    headers: Optional[Dict[str, str]] = None,
 ) -> None:
-    """POSTs periodic health snapshots to Vanshal's backend, if configured.
+    """POSTs periodic health snapshots to the backend's
+    ``POST /api/v1/cameras/health`` (``CameraHealthPush`` schema), if
+    configured.
 
     Runs in its own thread; never raises -- network errors are logged and
-    the loop keeps going on the next interval.
+    the loop keeps going on the next interval. This never touches the AI
+    inference hot path: it lives entirely on its own daemon thread, reading
+    only a point-in-time copy of the registry (`get_snapshot()`), so a slow
+    or unreachable backend can only ever delay the NEXT telemetry push, not
+    a single frame of detection.
+
+    ``headers`` carries auth (e.g. ``{"X-Ingest-Key": ...}``) -- callers are
+    responsible for not logging it; this function never logs `headers`.
     """
     import requests
 
@@ -184,7 +196,6 @@ def push_loop(
         try:
             snapshot = registry.get_snapshot()
             payload = {
-                # PLACEHOLDER SHAPE -- replace with docs/API_CONTRACTS.md#5 once shared.
                 "streams": [
                     {
                         "camera_id": m.camera_id,
@@ -193,10 +204,11 @@ def push_loop(
                         "pts_jitter_ms": round(m.pts_jitter_ms, 2),
                         "frame_drop_count": m.frame_drop_count,
                         "reconnect_count": m.reconnect_count,
+                        "last_error": m.last_error,
                     }
                     for m in snapshot
                 ]
             }
-            requests.post(push_url, json=payload, timeout=5.0)
+            requests.post(push_url, json=payload, headers=headers, timeout=5.0)
         except Exception as exc:  # noqa: BLE001 -- never let telemetry push kill the loop
             logger.warning("Health push to %s failed: %s", push_url, exc)

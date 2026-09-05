@@ -10,9 +10,9 @@
 
 ## 1. Executive Overview
 
-**SENTINEL** is a enterprise-grade, vendor-neutral CCTV video analytics and intelligence platform engineered for law enforcement agencies. Built for the **Gujarat Police Innovation Hackathon 2026**, the system standardizes heterogeneous government CCTV streams across departmental boundaries, executes automated vehicle detection, ANPR, and OCR, correlates detections across disparate cameras, matches sightings against real-time watchlists, and visualizes vehicle trajectories on PostGIS-powered Leaflet maps.
+**SENTINEL** is a CCTV video analytics and intelligence platform prototype built for the **Gujarat Police Innovation Hackathon 2026**. As implemented today it is a **single-node Docker Compose PoC** (see `SENTINEL_System_Audit_Report.md` for a full, code-verified teardown): it ingests real Sentinel RTSP camera feeds plus optional local mock-camera clips, runs automated vehicle detection, ANPR, and OCR, correlates detections across cameras by matched plate string, matches sightings against a watchlist, and visualizes vehicle trajectories on PostGIS-powered Leaflet maps.
 
-The core architecture combines **Reference Models 1–5**, establishing a scalable foundation engineered to expand seamlessly from an initial **~50 camera PoC** to a statewide grid of **~80,000 cameras**.
+The architecture is designed with the seams (stateless backend, per-camera isolation, a clean ingestion/AI/backend contract) a larger deployment would need — **ROADMAP, not implemented today**: `SCALABILITY.md`'s statewide **~80,000 camera** / Kubernetes / Kafka / Triton architecture is a target design, evaluated against no infrastructure that exists in this repository yet (no K8s manifests, no Kafka topics, `device="cpu"` hardcoded everywhere). The system currently runs as one process pool against `docker-compose.yml`, correctly scoped to its stated **~50-camera PoC** target.
 
 ---
 
@@ -21,7 +21,7 @@ The core architecture combines **Reference Models 1–5**, establishing a scalab
 | Feature Domain | Technical Implementation | Operational Impact |
 | :--- | :--- | :--- |
 | **Stream Ingestion** | RTSP over TCP, WebRTC, HLS, PTS Timestamping, Exponential Backoff | Resilient ingestion across erratic network environments |
-| **AI Analytics** | YOLOv8 Vehicle Detection + PaddleOCR + Multi-Frame Consensus | $>95\%$ ANPR plate recognition accuracy under motion blur |
+| **AI Analytics** | YOLOv8 Vehicle Detection + EasyOCR (PaddleOCR optional) + Multi-Frame Consensus | ANPR accuracy is **not yet benchmarked against a real labeled dataset** — `scripts/evaluate_anpr.py` supports both a synthetic-font mode (not representative) and a real-`--dataset` mode, and its own output explicitly refuses to let the synthetic numbers be quoted as real accuracy. No ">95%" or any other accuracy figure should be cited until that real-data run has actually been done; see `SENTINEL_System_Audit_Report.md` §3 (ANPR EVALUATION) for the exact benchmark plan. |
 | **Cross-Camera Correlation** | ByteTrack Spatial-Temporal Indexing + Normalized Plate Matching | Chronological vehicle journey reconstruction across cameras |
 | **Watchlist & Alerts** | FastAPI Engine + 5-Min Cooldown Deduplication + WebSockets | Sub-second alert delivery to command center operators |
 | **GIS & Investigation** | PostGIS Spatial Point Layers + Leaflet Polyline Vector Mapping | Interactive visual map trajectories & automated PDF evidence reports |
@@ -60,8 +60,9 @@ Explore the complete technical blueprints contained in this repository branch:
 - [`AI_ARCHITECTURE.md`](AI_ARCHITECTURE.md): YOLOv8, plate crop localization, CLAHE, PaddleOCR & consensus voting.
 - [`CCTV_INTEGRATION.md`](CCTV_INTEGRATION.md): `/api/ingest`, RTSP over TCP, PTS frame timing & backoff engine.
 - [`DATABASE_ARCHITECTURE.md`](DATABASE_ARCHITECTURE.md): PostgreSQL 15 + PostGIS 3.3 schemas & spatial indexing.
-- [`SCALABILITY.md`](SCALABILITY.md): 50 camera PoC to 80,000 camera statewide expansion blueprint.
-- [`SECURITY.md`](SECURITY.md): JWT authentication, RBAC roles, AES-256 evidence encryption & audit logging.
+- [`SCALABILITY.md`](SCALABILITY.md): 50 camera PoC to 80,000 camera statewide expansion **roadmap** (not yet implemented — see the doc's own top-of-file note).
+- [`SECURITY.md`](SECURITY.md): JWT (HS256) authentication, RBAC roles, audit logging — each line tagged IMPLEMENTED vs ROADMAP.
+- [`SENTINEL_System_Audit_Report.md`](SENTINEL_System_Audit_Report.md): full code-verified audit of what's actually implemented vs. documented, with file:line citations.
 - [`DEPLOYMENT.md`](DEPLOYMENT.md): Docker Compose orchestration & environment configuration.
 - [`INFRASTRUCTURE.md`](INFRASTRUCTURE.md): Hardware sizing, GPU memory allocations & network bandwidth budgets.
 - [`WATCHLIST_AND_ALERTS.md`](WATCHLIST_AND_ALERTS.md): Watchlist lookup, alert cooldown deduplication & WebSocket push.

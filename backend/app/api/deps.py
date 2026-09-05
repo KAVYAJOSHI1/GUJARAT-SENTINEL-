@@ -42,7 +42,12 @@ def verify_bearer_header_or_query(
 ) -> str:
     """Accept a JWT from either ``Authorization: Bearer`` OR a ``?token=`` query
     param (needed for ``<img src>`` which cannot set headers). Only checks the
-    token is a valid, non-expired JWT -- no DB lookup."""
+    token is a valid, non-expired JWT -- no DB lookup.
+
+    Returns the token's ``sub`` claim (user id) rather than a bare "ok", so
+    callers that need it for audit logging (e.g. evidence access) have it
+    without decoding the token a second time. Never returns/logs the raw
+    token itself."""
     raw = None
     if authorization and authorization.lower().startswith("bearer "):
         raw = authorization.split(" ", 1)[1].strip()
@@ -52,11 +57,11 @@ def verify_bearer_header_or_query(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
                             detail={"code": "NOT_AUTHENTICATED"})
     try:
-        decode_access_token(raw)
+        payload = decode_access_token(raw)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
                             detail={"code": "INVALID_TOKEN"})
-    return "ok"
+    return payload.get("sub") or "ok"
 
 
 def require_ingest_auth(

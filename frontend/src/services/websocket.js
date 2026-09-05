@@ -1,10 +1,24 @@
 import { makeSimulatedAlert } from "../lib/mockData.js";
+import { getToken } from "./api.js";
 
 // ─── Live alert WebSocket client (DEVELOPER_README Isha §5 / §8 / §15) ────────
 // - connects to ws://localhost:8000/ws/alerts (proxied through Vite in dev)
 // - exponential backoff reconnect: 2s → 4s → 8s (then holds at 8s)
 // - when the socket cannot be established, falls back to a local simulator so
 //   the demo still shows real-time toasts with no backend running.
+//
+// Auth (SENTINEL_System_Audit_Report.md §9/§10/§15 — "/ws/alerts accepts
+// every connection, no token check at all"): the backend now requires the
+// same session JWT the REST API uses before it will register this
+// connection. A browser WebSocket can't set an Authorization header, so the
+// token rides as a WS *subprotocol* (`new WebSocket(url, [token])`) instead
+// of a `?token=` query string — unlike a query string, a subprotocol is
+// never part of the URL, so it never lands in browser history or a
+// request-line access log. If there's no token (not logged in) or the
+// backend rejects it (missing/expired/invalid), the connection is refused
+// and this falls back to the same local alert simulator used for any other
+// unreachable-backend case — clearly labeled SIMULATED, never presented as
+// a live feed (see ConnectionIndicator / AlertRow's "simulated" flag).
 
 function defaultWsUrl() {
   if (import.meta.env.VITE_WS_URL) return import.meta.env.VITE_WS_URL;
@@ -50,8 +64,19 @@ export function createAlertSocket({ onAlert, onStatus, url = defaultWsUrl() }) {
 
   function connect() {
     if (closedByUser) return;
+    // Read the token fresh on every attempt (not just once at socket
+    // creation) so a login/logout/re-login between reconnect attempts is
+    // picked up without needing to recreate the whole socket wrapper.
+    const token = getToken();
+    if (!token) {
+      // Not authenticated -- never dial the real socket with no
+      // credential (it would just be rejected server-side anyway); go
+      // straight to the honestly-labeled simulator and keep checking.
+      scheduleReconnect();
+      return;
+    }
     try {
-      ws = new WebSocket(url);
+      ws = new WebSocket(url, [token]);
     } catch {
       scheduleReconnect();
       return;

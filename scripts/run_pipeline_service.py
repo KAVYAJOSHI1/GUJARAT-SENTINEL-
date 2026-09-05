@@ -39,8 +39,10 @@ import requests  # noqa: E402
 
 from ai.adapter.ingestion_bridge import FrameConsumer  # noqa: E402
 from ai.pipeline import AIPipeline  # noqa: E402
+from ingestion.config import CONFIG  # noqa: E402
 from ingestion.models import CameraLocation, CameraRecord  # noqa: E402
 from ingestion.rtsp_auth import redact_rtsp_url  # noqa: E402
+from ingestion.stream_health import push_loop  # noqa: E402
 from ingestion.stream_manager import StreamManager  # noqa: E402
 
 logging.basicConfig(
@@ -220,6 +222,37 @@ class PipelineService:
                     log.info("  cam %s status=%s fps=%.1f drops=%d reconnects=%d",
                              cam_id, m.status.value, m.measured_fps, m.frame_drop_count, m.reconnect_count)
 
+    # -- stream health push (HealthRegistry -> backend camera status) ---- #
+    def _health_push_url(self) -> str | None:
+        """Where to POST HealthRegistry snapshots so real stream health
+        actually reaches `cameras.status` (SENTINEL_System_Audit_Report.md
+        §11/§15). Defaults to the same backend this pipeline already POSTs
+        detections to (`<api base>/cameras/health`) so it works out of the
+        box in the docker-compose demo with no extra env var; set
+        SENTINEL_HEALTH_PUSH_URL="" explicitly to disable it, or to another
+        URL to override it. Never pushed at all in --no-backend dry runs."""
+        if self.args.no_backend:
+            return None
+        if CONFIG.health_push_url is not None:
+            return CONFIG.health_push_url
+        if os.environ.get("SENTINEL_HEALTH_PUSH_URL", None) == "":
+            return None  # explicitly disabled
+        return f"{self._api_base()}/cameras/health"
+
+    def _start_health_push(self) -> None:
+        url = self._health_push_url()
+        if not url:
+            return
+        headers = {"X-Ingest-Key": self.ingest_key} if self.ingest_key else None
+        threading.Thread(
+            target=push_loop,
+            args=(self.manager.health, url, CONFIG.health_push_interval_s, self._stop),
+            kwargs={"headers": headers},
+            name="health-push",
+            daemon=True,
+        ).start()
+        log.info("stream health push -> %s every %.0fs", url, CONFIG.health_push_interval_s)
+
     # -- lifecycle --------------------------------------------------- #
     def start(self) -> None:
         log.info("cameras: %s", [r.camera_id for r in self.records])
@@ -230,6 +263,7 @@ class PipelineService:
         self.consumer.start()
         self.manager.sync_cameras(self.records)
         threading.Thread(target=self._stats_loop, name="stats", daemon=True).start()
+        self._start_health_push()
 
         supervise_interval = 15.0
         deadline = time.time() + self.args.duration if self.args.duration else None

@@ -11,6 +11,7 @@ from app.models.base import UserRole
 from app.models.watchlist import Watchlist
 from app.schemas.alert import WatchlistCreate, WatchlistRead
 from app.schemas.auth import CurrentUser
+from app.services.audit import record_audit
 from app.services.plate_utils import normalize_plate
 
 router = APIRouter()
@@ -47,6 +48,18 @@ def add_watchlist_entry(
     db.add(entry)
     db.commit()
     db.refresh(entry)
+    record_audit(
+        db,
+        action="WATCHLIST_CREATED",
+        user_id=user.id,
+        resource="watchlist",
+        resource_id=entry.id,
+        detail={
+            "plate": plate_normalized,
+            "priority_level": payload.priority_level.value,
+            "expires_at": payload.expires_at,
+        },
+    )
     return entry
 
 
@@ -54,7 +67,7 @@ def add_watchlist_entry(
 def deactivate_watchlist_entry(
     watchlist_id: str,
     db: Session = Depends(get_db),
-    _=Depends(require_roles(UserRole.ADMIN, UserRole.OFFICER)),
+    user: CurrentUser = Depends(require_roles(UserRole.ADMIN, UserRole.OFFICER)),
 ):
     entry = db.get(Watchlist, watchlist_id)
     if entry is None:
@@ -62,3 +75,11 @@ def deactivate_watchlist_entry(
     entry.active = False
     db.add(entry)
     db.commit()
+    record_audit(
+        db,
+        action="WATCHLIST_DEACTIVATED",
+        user_id=user.id,
+        resource="watchlist",
+        resource_id=watchlist_id,
+        detail={"plate": entry.plate_number_normalized},
+    )

@@ -60,6 +60,23 @@ export default function AlertRow({ alert, onAck, onViewEvidence }) {
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 3, flexWrap: "wrap" }}>
           <SeverityBadge s={alert.severity} />
+          {alert.simulated && (
+            <span
+              title="Backend/WebSocket unreachable — this is a locally-generated demo alert, not a live detection"
+              style={{
+                color: C.violet,
+                border: `1px solid ${C.violet}`,
+                borderRadius: 3,
+                padding: "1px 5px",
+                fontSize: 8,
+                fontWeight: 700,
+                letterSpacing: 0.5,
+                fontFamily: "monospace",
+              }}
+            >
+              SIMULATED
+            </span>
+          )}
           <span style={{ color: C.muted, fontSize: 10, fontFamily: "monospace" }}>{alert.type}</span>
           <span style={{ color: C.accent, fontSize: 10, fontFamily: "monospace" }}>{alert.cam}</span>
         </div>

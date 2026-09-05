@@ -11,6 +11,7 @@ from app.models.alert import Alert
 from app.models.camera import Camera
 from app.schemas.alert import AlertAcknowledge, AlertRead
 from app.schemas.auth import CurrentUser
+from app.services.audit import record_audit
 
 router = APIRouter()
 
@@ -83,5 +84,13 @@ def acknowledge_alert(
     db.add(alert)
     db.commit()
     db.refresh(alert)
+    record_audit(
+        db,
+        action="ALERT_ACKNOWLEDGED",
+        user_id=user.id,
+        resource="alert",
+        resource_id=alert.id,
+        detail={"status": alert.status.value, "plate": alert.plate_number_normalized},
+    )
     code, name, location_desc, lat, lon = _camera_lookup(db, alert.camera_id)
     return _to_alert_read(alert, code, name, location_desc, lat, lon)

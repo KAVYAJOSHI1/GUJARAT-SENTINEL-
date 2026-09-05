@@ -74,5 +74,11 @@ export function makeSimulatedAlert() {
     msg: kind.msg,
     time: new Date().toLocaleTimeString("en-IN", { hour12: false }),
     ack: false,
+    // Never let this be mistaken for a live government-feed alert
+    // (SENTINEL_System_Audit_Report.md §14/§16/§20 — "a judge could be
+    // shown fabricated 'live' alerts without any visual difference").
+    // normalizeAlert() in services/api.js carries this straight through;
+    // AlertRow renders a visible SIMULATED tag whenever it's set.
+    simulated: true,
   };
 }

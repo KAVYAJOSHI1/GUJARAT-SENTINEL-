@@ -1,5 +1,18 @@
 # SENTINEL — Statewide Scalability Roadmap (50 to 80,000 Cameras)
 
+> **ROADMAP — not implemented.** Everything below (Kafka/RabbitMQ,
+> Kubernetes, NVIDIA Triton, PostgreSQL partitioning at the statewide tier)
+> is a target architecture, evaluated against no infrastructure that exists
+> in this repository today. The current implementation is a single-node
+> `docker-compose.yml` stack — one Postgres+PostGIS instance, one MinIO
+> node, one FastAPI backend, CPU-only inference (`device="cpu"` hardcoded),
+> and an in-process `queue.Queue` for frame handoff, correctly scoped to its
+> stated **~50-camera PoC** target. See `SENTINEL_System_Audit_Report.md`
+> §7 for the full code-verified gap analysis between this document and the
+> actual codebase. Nothing here is deleted — it remains a legitimate
+> **production target**, just not a description of the system as it runs
+> today.
+
 ---
 
 ## 1. Multi-Tier Scaling Strategy
