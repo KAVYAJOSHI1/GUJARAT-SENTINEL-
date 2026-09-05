@@ -18,7 +18,10 @@ class VehicleEvent(TimestampMixin, table=True):
     __tablename__ = "vehicle_events"
 
     id: str = Field(default_factory=gen_uuid, primary_key=True, index=True)
-    plate_number: str = Field(nullable=False, index=True)
+    # Raw (pre-normalisation) plate string is stored for traceability but is
+    # NEVER filtered on -- every lookup uses plate_number_normalized. No
+    # index (the production migrations never created one either).
+    plate_number: str = Field(nullable=False)
     plate_number_normalized: str = Field(nullable=False, index=True)
 
     camera_id: str = Field(foreign_key="cameras.id", nullable=False, index=True)
@@ -42,16 +45,32 @@ class VehicleEvent(TimestampMixin, table=True):
 
     location: Optional[str] = Field(
         default=None,
-        sa_column=Column(Geometry(geometry_type="POINT", srid=4326), nullable=True),
+        # spatial_index=False: GeoAlchemy2 otherwise auto-creates a second
+        # GiST index (idx_vehicle_events_location) identical to the explicit
+        # ix_vehicle_events_location_gist below -- see migration 0004.
+        sa_column=Column(
+            Geometry(geometry_type="POINT", srid=4326, spatial_index=False),
+            nullable=True,
+        ),
     )
 
     __table_args__ = (
-        Index("ix_vehicle_events_plate_btree", "plate_number_normalized"),
-        Index("ix_vehicle_events_timestamp_btree", "timestamp"),
+        # --- plate search / journey (WHERE plate = ? ORDER BY timestamp) ---
         Index(
             "ix_vehicle_events_plate_ts_composite",
             "plate_number_normalized",
             "timestamp",
         ),
+        # --- dashboard event feed (ORDER BY timestamp DESC LIMIT n) + the
+        #     retention timestamp < cutoff scan ---
+        Index("ix_vehicle_events_timestamp_btree", "timestamp"),
+        Index("ix_vehicle_events_plate_btree", "plate_number_normalized"),
+        # --- Phase 6: covering indexes for the windowed analytics group-bys
+        #     (index-only scans, no heap fetch) -- benchmark in
+        #     scripts/db_benchmark.py + README "Database Scalability" ---
+        Index("ix_ve_ts_plate", "timestamp", "plate_number_normalized"),
+        Index("ix_ve_ts_camera_code", "timestamp", "camera_code"),
+        Index("ix_ve_vehicle_type", "vehicle_type"),
+        # roadmap: proximity search (no spatial predicate query today)
         Index("ix_vehicle_events_location_gist", "location", postgresql_using="gist"),
     )

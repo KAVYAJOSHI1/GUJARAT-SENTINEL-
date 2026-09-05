@@ -44,10 +44,16 @@ class Camera(TimestampMixin, table=True):
     # ever reported was ONLINE.
     health_updated_at: Optional[datetime] = Field(default=None, nullable=True)
 
-    # PostGIS point (longitude, latitude) — SRID 4326 (WGS84)
+    # PostGIS point (longitude, latitude) — SRID 4326 (WGS84).
+    # spatial_index=False: the explicit ix_cameras_location_gist below is the
+    # single GiST index; GeoAlchemy2's auto idx_cameras_location duplicate is
+    # dropped in migration 0004.
     location: Optional[str] = Field(
         default=None,
-        sa_column=Column(Geometry(geometry_type="POINT", srid=4326), nullable=True),
+        sa_column=Column(
+            Geometry(geometry_type="POINT", srid=4326, spatial_index=False),
+            nullable=True,
+        ),
     )
 
     __table_args__ = (

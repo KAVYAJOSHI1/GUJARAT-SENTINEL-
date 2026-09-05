@@ -21,6 +21,15 @@ class Settings(BaseSettings):
     DB_POOL_SIZE: int = 20
     DB_MAX_OVERFLOW: int = 10
     DB_POOL_TIMEOUT: int = 30
+    # Recycle a pooled connection after this many seconds so a connection
+    # silently dropped by Postgres / a proxy / a firewall idle-timeout is
+    # replaced before it's handed to a request (pool_pre_ping already
+    # catches most of these; this bounds the worst case). 0 disables.
+    DB_POOL_RECYCLE_SECONDS: int = 1800
+    # Server-side per-statement ceiling (ms) -- a runaway analytics/search
+    # query is cancelled instead of holding a pooled connection forever.
+    # 0 disables (Postgres default: no limit).
+    DB_STATEMENT_TIMEOUT_MS: int = 15000
 
     # --- Security / JWT ---
     JWT_SECRET_KEY: str = "CHANGE_ME_IN_PRODUCTION"

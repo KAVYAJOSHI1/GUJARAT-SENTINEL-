@@ -295,10 +295,14 @@ The docs (`SCALABILITY.md`) describe Kafka/RabbitMQ, Kubernetes, NVIDIA Triton, 
 
 ## 12. DATABASE / STORAGE
 
-**Schema** (`database/migrations/versions/0001`, `0002`; matches `backend/app/models/*.py` exactly — verified line-by-line, no drift):
+**Schema** (`database/migrations/versions/0001`–`0004`; columns match
+`backend/app/models/*.py`. Index drift exists: several `Field(index=True)`
+flags on the models were never emitted as migrations, so
+`alembic --autogenerate` reports spurious "added index" diffs — pre-dates
+Phase 6, which added its own indexes to *both* places):
 
 - `cameras` — id (UUID), `code` (unique, external id like `cam04`), name, rtsp_url, status enum, `location` (PostGIS Point/4326, GiST index).
-- `vehicle_events` — every AI detection: plate (raw + normalized), camera_id/camera_code, track_id, vehicle type/color, confidence, snapshot_url (reference only, never raw bytes), lat/lon + geometry point. Indexes: B-Tree on plate, timestamp, and a **composite** `(plate_number_normalized, timestamp)` — this is exactly right for the stated "<50ms trajectory search at 100k+ rows" goal, plus a GiST index on `location` for spatial queries.
+- `vehicle_events` — every AI detection: plate (raw + normalized), camera_id/camera_code, track_id, vehicle type/color, confidence, snapshot_url (reference only, never raw bytes), lat/lon + geometry point. Indexes: B-Tree on plate, timestamp, and a **composite** `(plate_number_normalized, timestamp)` — this is exactly right for the stated "<50ms trajectory search at 100k+ rows" goal, plus a GiST index on `location` for spatial queries. **Phase 6 (§12a) added covering indexes `(timestamp, plate_number_normalized)`, `(timestamp, camera_code)` and `(vehicle_type)` for the `/analytics/overview` group-bys, and removed a duplicate GiST spatial index.**
 - `watchlist` — unique B-Tree on normalized plate (enforces O(log n) lookup + blocks duplicates at the DB level, not just app level).
 - `alerts` — composite index `(plate_number_normalized, camera_id, created_at)`, exactly matching the cooldown query's access pattern (`cooldown.py`).
 - `users` — bcrypt hash, role enum.
@@ -306,9 +310,58 @@ The docs (`SCALABILITY.md`) describe Kafka/RabbitMQ, Kubernetes, NVIDIA Triton, 
 
 **Stored entities**: relational metadata + geometry only. **No embeddings table** (none needed — no embeddings are computed). **Video is never stored** — only JPEG snapshots (one frame + one plate crop per evidence event), referenced by URL/path, in MinIO or local disk — correct separation of "hot metadata in Postgres" vs. "blobs in object storage."
 
-**Retention**: **nothing in the code implements retention/expiry** — `vehicle_events` grows unbounded forever; watchlist entries have an `expires_at` column that is stored but **never checked anywhere** (grep confirms `expires_at` is written on create but no query filters on it — an "expired" watchlist entry still matches forever until manually deactivated).
+**Retention**: ~~nothing in the code implements retention/expiry~~ — **RESOLVED in Phase 4** (`services/retention.py` — configurable `VEHICLE_EVENT_RETENTION_DAYS`, default 30, alert-referenced rows never purged) and **Phase 4** for `watchlist.expires_at` (now filtered by `active_watchlist_clause()`). Phase 6 made the purge **batched** (10K rows/commit) so a large first-run backlog doesn't run one multi-minute transaction.
 
-**What should be permanent vs. ephemeral** (recommendation): `watchlist`, `users`, `alerts`, and `audit_logs` (once implemented) should be retained per a legal/compliance policy (likely years, given law-enforcement use); `vehicle_events` for non-watchlisted, non-alerted plates should be time-boxed (e.g., 90 days) and then aggregated/archived, both for storage cost and for privacy — mass ANPR retention of every vehicle movement is a real policy/privacy question, not just an engineering one, and it's currently unaddressed. Raw evidence snapshots should follow the same or a shorter policy than their parent event row.
+**What should be permanent vs. ephemeral** (recommendation): `watchlist`, `users`, `alerts`, and `audit_logs` should be retained per a legal/compliance policy (likely years, given law-enforcement use); `vehicle_events` for non-watchlisted, non-alerted plates is now time-boxed (Phase 4, 30-day default, alert-referenced rows kept). Raw evidence snapshots should follow the same or a shorter policy than their parent event row (not yet — a MinIO lifecycle policy would be the mechanism).
+
+---
+
+## 12a. PHASE 6 UPDATE — DB query performance (commit on `penultimate`)
+
+Benchmarked the real API queries against a synthetic **1,000,000-row**
+`vehicle_events` table (`scripts/db_benchmark.py` — standalone, writes only
+a disposable `sentinel_bench` DB, no fabricated data reaches the app).
+p50 of 5 warm runs, table `VACUUM ANALYZE`d before each measurement.
+
+**Investigation search / journey — already fast, unchanged:**
+`/vehicles/search` **~2 ms** and `/vehicles/events/recent` **~0.5 ms** at
+1 M rows, both clean index scans. The existing
+`(plate_number_normalized, timestamp)` composite gives an ordered index
+scan for the `WHERE plate = ? ORDER BY timestamp` pattern — **the audit's
+"<50 ms at 100 k rows" target is met with ~25× headroom at 10× the rows**.
+No new index needed here; confirmed by EXPLAIN at 10 K / 100 K / 1 M.
+
+**Analytics (`/analytics/overview`) — migration `0004` + query rewrites:**
+
+| Sub-query @ 1 M rows | BEFORE | AFTER |
+|---|--:|--:|
+| top plates in window | 150 ms | **39 ms** |
+| detections by camera in window | 150 ms | **18 ms** |
+| detections by type (all-time) | 95 ms | **52 ms** |
+| distinct plates in window | 257 ms | **149 ms** |
+| windowed total/readable/distinct (3 → 1 query) | ~272 ms | **~152 ms** |
+| **endpoint total** | **~620 ms** | **~315 ms (≈ 2×)** |
+
+Indexes added (all from the EXPLAIN plans): `ix_ve_ts_plate`,
+`ix_ve_ts_camera_code`, `ix_ve_vehicle_type`, `ix_alerts_vehicle_event_id`
+(the model always declared the last one; migration `0001` never created
+it). Migration `0004` also drops the **duplicate GiST spatial index** on
+each `location` column (GeoAlchemy2 auto-creates one, migration `0001`
+created a second identical one — doubling spatial-index maintenance on
+every insert for an index no query uses).
+
+**Retention DELETE**: single-statement purge of a 613 K-row backlog =
+one **23.8 s** transaction; now issued in **10 K-row batches** (same rows,
+alert-referenced always kept). Pool config gained `pool_recycle` (1800 s),
+a server-side `statement_timeout` (15 s), and `application_name`.
+
+**Remaining DB bottlenecks (honest):** `count(DISTINCT plate)` over the
+window (~149 ms) is inherently O(rows-in-window); all-time `COUNT(*)` /
+`GROUP BY vehicle_type` (~28 / 52 ms) grow with total table size but are
+bounded by the 30-day retention; single Postgres instance, no
+partitioning / read replica (the `SCALABILITY.md` roadmap); a pre-existing
+model↔migration `index=True` drift makes `alembic --autogenerate` noisy
+(Phase 6 narrowed it, did not widen it).
 
 ---
 

@@ -319,6 +319,99 @@ existed; everything else is query-time). Tests: `backend/tests/` +3
 
 ---
 
+## 3g. Database Scalability & Query Performance (Phase 6 — MEASURED)
+
+Benchmarked the exact queries `/vehicles/search`, `/vehicles/events/recent`,
+`/analytics/overview` and the retention sweep issue, against a **synthetic
+1,000,000-row** `vehicle_events` table (`scripts/db_benchmark.py` — a
+standalone script; it never touches app code and only writes a disposable
+`sentinel_bench` DB). Host: same 8-core dev box, Postgres 15 / PostGIS in
+Docker. Numbers are p50 of 5 warm runs; the table was `VACUUM ANALYZE`d
+before every measurement.
+
+**Migration `0004` — indexes added (chosen from the EXPLAIN plans, nothing
+speculative):**
+
+| Index | Serves | Why |
+| :--- | :--- | :--- |
+| `ix_ve_ts_plate (timestamp, plate_number_normalized)` | analytics: top plates / distinct plates in window | covering → index-only scan, no heap fetch for the plate value |
+| `ix_ve_ts_camera_code (timestamp, camera_code)` | analytics: detections by camera in window | covering → index-only scan (with the query rewrite below) |
+| `ix_ve_vehicle_type (vehicle_type)` | analytics: detections by type (all-time) | parallel index-only scan instead of a heap seq scan |
+| `ix_alerts_vehicle_event_id` | retention anti-join + the FK reference check | the model always declared it; migration `0001` never created it |
+
+Migration `0004` also **drops the duplicate GiST spatial index** on both
+`location` columns (GeoAlchemy2 auto-creates `idx_<table>_location`,
+migration `0001` additionally created `ix_<table>_location_gist` — two
+identical GiST indexes doubling spatial-index maintenance on every
+`vehicle_events` insert, for an index no query currently uses). One is kept
+(roadmap: proximity search). And the unused index on the raw
+`vehicle_events.plate_number` column was removed from the model.
+
+**Query rewrites in `analytics.py` (identical responses, fewer scans):**
+- the 3 separate windowed scalar queries (total / readable / distinct
+  plates) → **one** query with `count(*) FILTER (...)`.
+- "detections by camera" → aggregate on `camera_code` first (index-only),
+  then look up the ~30 camera names for just the top N — instead of
+  `GROUP BY camera_code, Camera.name` over a join, which forced a heap
+  fetch of every windowed row.
+
+**MEASURED — `/analytics/overview` sub-queries at 1,000,000 rows:**
+
+| Sub-query | BEFORE (p50) | AFTER (p50) | plan change |
+| :--- | :-: | :-: | :--- |
+| top plates in window | 150 ms | **39 ms** | bitmap-heap → index-only |
+| detections by camera in window | 150 ms | **18 ms** | bitmap-heap + join → index-only + name lookup |
+| detections by type (all-time) | 95 ms | **52 ms** | seq scan → parallel index-only |
+| distinct plates in window | 257 ms | **149 ms** | bitmap-heap → index-only |
+| windowed total/readable/distinct | 3 queries, ~272 ms | **1 query, ~152 ms** | consolidated |
+| `COUNT(*)` all-time | 28 ms | 28 ms | unchanged (already index-only) |
+| hourly activity buckets | 21 ms | 20 ms | unchanged (already index-only) |
+| **endpoint total (sum of sub-queries)** | **~620 ms** | **~315 ms** | **≈ 2×** |
+
+**Vehicle investigation — already fast, left alone:**
+
+| Query | 10 K rows | 100 K rows | 1 M rows | plan |
+| :--- | :-: | :-: | :-: | :--- |
+| `/vehicles/search` (plate → chronological sightings) | ~1 ms | ~1 ms | **~2 ms** | index scan on `ix_vehicle_events_plate_ts_composite` |
+| `/vehicles/events/recent` (dashboard feed) | ~0.4 ms | ~0.4 ms | **~0.5 ms** | backward index scan on the timestamp index |
+
+The existing `(plate_number_normalized, timestamp)` composite already gives
+an ordered index scan for the `WHERE plate = ? ORDER BY timestamp` pattern
+— no new index needed, confirmed by EXPLAIN at every size.
+
+**Retention** — the Phase 4 semantics are unchanged (same rows deleted,
+alert-referenced rows always kept). The single-statement `DELETE` of a
+large backlog (measured: **613 K rows in one 23.8 s transaction** — long
+lock, one giant WAL record, autovacuum starvation) is now issued in
+**bounded 10 K-row batches, committing each** (measured: same 613 K rows in
+~30 s across 62 small transactions). The batch subquery is
+`ORDER BY timestamp LIMIT` so it walks the timestamp index oldest-first.
+
+**Connection pool** (`app/database.py` / `app/config.py`): added
+`DB_POOL_RECYCLE_SECONDS` (default 1800 — replaces a silently-dropped idle
+connection), a server-side `DB_STATEMENT_TIMEOUT_MS` (default 15000 — a
+runaway query is cancelled, not left pinning a pooled connection), and
+`application_name=sentinel-backend` for `pg_stat_activity`. `pool_size` /
+`max_overflow` / `pool_pre_ping` were already configured and are unchanged.
+
+**Remaining DB bottlenecks (honest):**
+- `count(DISTINCT plate)` over the window (~149 ms at 1 M) is now the single
+  largest analytics cost — inherently O(rows-in-window); an approximate
+  count (HyperLogLog) would fix it but is out of scope (no new extensions).
+- All-time `COUNT(*)` / `GROUP BY vehicle_type` are full index-only scans
+  (~28 / 52 ms at 1 M) that grow with total table size — the 30-day
+  retention default keeps the table bounded, so at steady state they stay
+  small; a very long retention window would make them the ceiling.
+- Single Postgres instance, no partitioning / read replica — the
+  `SCALABILITY.md` roadmap, not attempted here.
+- Pre-existing model↔migration index drift: several `Field(index=True)`
+  flags on the models were never emitted as migrations, so
+  `alembic revision --autogenerate` is noisy. Phase 6 did not widen this
+  (its new indexes are in both places) and slightly narrowed it; a full
+  reconciliation is a separate task.
+
+---
+
 ## 4. Team & Repository Branch Matrix
 
 ```text
