@@ -56,6 +56,20 @@ export function exportVehicleReportPDF(result) {
   line(`Last seen         : ${fmt(result.lastSeen)}`);
   line(`Total sightings   : ${result.totalSightings}`);
   line(`Distinct cameras  : ${result.cameraCount}`);
+  line(
+    `Vehicle type      : ${
+      (result.vehicleTypes || []).length ? result.vehicleTypes.join(" / ") : "Unclassified"
+    }`
+  );
+  line(
+    `Journey           : ${
+      result.isSingleSighting
+        ? "Single camera sighting — no journey to plot"
+        : result.hasJourney
+        ? "Camera-sighting trail (chronological, not GPS)"
+        : "Insufficient geolocated sightings to plot a trail"
+    }`
+  );
   line(`Watchlist status  : ${result.watchlistHit ? "ACTIVE WATCHLIST HIT" : "No active watchlist hit"}`, {
     bold: result.watchlistHit,
     color: result.watchlistHit ? [200, 60, 50] : [40, 40, 40],
@@ -63,7 +77,7 @@ export function exportVehicleReportPDF(result) {
   y += 10;
 
   // Movement timeline
-  line("Chronological Movement Timeline (ASC)", { size: 11, bold: true, gap: 18 });
+  line("Chronological Camera-Sighting Timeline (ASC) — not GPS tracking", { size: 11, bold: true, gap: 18 });
   doc.setDrawColor(200);
   doc.line(margin, y - 8, pageW - margin, y - 8);
 
@@ -71,8 +85,11 @@ export function exportVehicleReportPDF(result) {
     line(`${i + 1}.  ${s.cameraName}  (${s.cameraId})`, { size: 10, bold: true, gap: 14 });
     line(`     Time  : ${fmt(s.timestamp)}`, { size: 9, color: [90, 90, 90], gap: 13 });
     line(
-      `     Coords: ${s.lat != null ? `${s.lat.toFixed(5)}, ${s.lng.toFixed(5)}` : "—"}` +
-        (Number.isFinite(s.ocrConfidence) ? `   OCR: ${(s.ocrConfidence * 100).toFixed(1)}%` : ""),
+      `     Coords: ${
+        s.hasLocation && s.lat != null ? `${s.lat.toFixed(5)}, ${s.lng.toFixed(5)}` : "location unavailable"
+      }` +
+        (s.vehicleType ? `   Vehicle: ${s.vehicleType}` : "") +
+        (Number.isFinite(s.ocrConfidence) ? `   Plate conf: ${(s.ocrConfidence * 100).toFixed(1)}%` : ""),
       { size: 9, color: [90, 90, 90], gap: 13 }
     );
     line(`     Event : ${s.eventId}`, { size: 8, color: [140, 140, 140], gap: 18 });
@@ -98,14 +115,15 @@ export function exportVehicleReportCSV(result) {
   if (!result) return;
   const plate = normalizePlate(result.plate);
   const rows = [
-    ["seq", "camera_id", "camera_name", "timestamp", "latitude", "longitude", "ocr_confidence", "event_id"],
+    ["seq", "camera_id", "camera_name", "timestamp", "vehicle_type", "latitude", "longitude", "plate_confidence", "event_id"],
     ...(result.sightings || []).map((s, i) => [
       i + 1,
       s.cameraId,
       `"${String(s.cameraName).replace(/"/g, '""')}"`,
       s.timestamp || "",
-      s.lat ?? "",
-      s.lng ?? "",
+      s.vehicleType || "",
+      s.hasLocation ? s.lat ?? "" : "",
+      s.hasLocation ? s.lng ?? "" : "",
       Number.isFinite(s.ocrConfidence) ? s.ocrConfidence : "",
       s.eventId,
     ]),

@@ -153,11 +153,15 @@ def _reset_login_rate_limiter():
 @pytest.fixture
 def make_camera(db_session):
     def _make(code="cam-test-01", status=CameraStatus.OFFLINE, lat=23.03, lon=72.58, **extra):
+        # pass lat=None (or lon=None) for a camera with no geometry
+        loc = extra.pop("location", None)
+        if loc is None and lat is not None and lon is not None:
+            loc = f"SRID=4326;POINT({lon} {lat})"
         cam = Camera(
             code=code,
-            name=code,
+            name=extra.pop("name", code),
             status=status,
-            location=f"SRID=4326;POINT({lon} {lat})",
+            location=loc,
             **extra,
         )
         db_session.add(cam)

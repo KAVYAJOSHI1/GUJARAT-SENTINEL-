@@ -17,6 +17,7 @@ import { isMockCamera } from "../services/api.js";
 import StatCard from "../components/StatCard.jsx";
 import SystemStatus from "../components/SystemStatus.jsx";
 import MiniBarList from "../components/analytics/MiniBarList.jsx";
+import VehicleIntelPanel from "../components/analytics/VehicleIntelPanel.jsx";
 import CameraGrid from "../components/CameraGrid.jsx";
 import CameraModal from "../components/CameraModal.jsx";
 import AlertFeed from "../components/AlertFeed.jsx";
@@ -127,6 +128,11 @@ export default function Dashboard() {
         <MiniBarList title="Top cameras" icon={BarChart3} items={analytics.byCamera} loading={loading} emptyHint="No detections yet" />
         <MiniBarList title="Vehicle types" icon={Car} items={analytics.byVehicleType} loading={loading} emptyHint="No detections yet" />
         <MiniBarList title="Alert severity" icon={ShieldAlert} items={analytics.bySeverity} loading={loading} emptyHint="No alerts yet" />
+      </div>
+
+      {/* ── Vehicle Intelligence — true DB aggregates (Phase 5 §4) ─────────── */}
+      <div style={{ marginBottom: 14 }}>
+        <VehicleIntelPanel reloadKey={lastRefresh} />
       </div>
 
       <div className="overview-grid">
