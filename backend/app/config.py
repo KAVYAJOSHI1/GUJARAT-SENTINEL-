@@ -27,6 +27,34 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 8
 
+    # --- Login rate limiting ---
+    # In-process (per backend replica) failure counter on POST /auth/login.
+    # After MAX_FAILURES failed attempts for the same (client-ip, username)
+    # within WINDOW_SECONDS, further attempts for that key get 429 for
+    # BLOCK_SECONDS. A successful login clears the counter. Distributed
+    # (cross-replica) rate limiting is ROADMAP -- see SECURITY.md.
+    LOGIN_RATE_LIMIT_ENABLED: bool = True
+    LOGIN_RATE_LIMIT_MAX_FAILURES: int = 5
+    LOGIN_RATE_LIMIT_WINDOW_SECONDS: int = 300
+    LOGIN_RATE_LIMIT_BLOCK_SECONDS: int = 300
+
+    # --- Short-lived, single-purpose tickets ---
+    # A browser WebSocket handshake and an <img>/<video> src cannot send an
+    # Authorization header, so those transports use a short-TTL, purpose-
+    # scoped ticket (issued from a JWT-authenticated POST) instead of the
+    # long-lived session JWT ever appearing in a URL or a WS subprotocol.
+    WS_TICKET_TTL_SECONDS: int = 60
+    MEDIA_TICKET_TTL_SECONDS: int = 120
+
+    # --- Data retention ---
+    # vehicle_events older than this are purged by a periodic sweep. Rows
+    # referenced by an alert are NEVER purged (the alert, its watchlist
+    # entry, and audit_logs are all retained regardless). Set
+    # VEHICLE_EVENT_RETENTION_DAYS=0 to disable purging entirely.
+    VEHICLE_EVENT_RETENTION_DAYS: int = 30
+    RETENTION_SWEEP_INTERVAL_HOURS: int = 24
+    RETENTION_SWEEP_ENABLED: bool = True
+
     # --- MinIO ---
     MINIO_ENDPOINT: str = "localhost:9000"
     MINIO_ACCESS_KEY: str = "minioadmin"
@@ -49,9 +77,35 @@ class Settings(BaseSettings):
     INGEST_AUTO_ONBOARD_CAMERAS: bool = True
 
     # --- CORS ---
-    CORS_ALLOW_ORIGINS: list[str] = ["*"]
+    # Explicit allow-list. "*" is honoured ONLY when ENV is a development
+    # value (see resolved_cors_origins()); in any other environment a "*"
+    # entry is dropped and a warning is logged, so a stray wildcard never
+    # ships to production. The frontend normally reaches the API same-origin
+    # through the Vite/prod proxy, so this list only matters for direct
+    # cross-origin API access (tooling, a separately-hosted dashboard).
+    CORS_ALLOW_ORIGINS: list[str] = [
+        "http://localhost:3000",
+        "http://localhost:5173",
+    ]
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    def is_dev_env(self) -> bool:
+        return self.ENV.strip().lower() in {"dev", "development", "local", "test", "testing"}
+
+    def resolved_cors_origins(self) -> list[str]:
+        """CORS origins with "*" stripped outside a development environment."""
+        origins = list(self.CORS_ALLOW_ORIGINS or [])
+        if "*" in origins and not self.is_dev_env():
+            import logging
+
+            logging.getLogger("sentinel.config").warning(
+                "CORS_ALLOW_ORIGINS contains '*' but ENV=%s is not a development "
+                "environment -- dropping the wildcard. Set an explicit origin list.",
+                self.ENV,
+            )
+            origins = [o for o in origins if o != "*"]
+        return origins
 
 
 @lru_cache

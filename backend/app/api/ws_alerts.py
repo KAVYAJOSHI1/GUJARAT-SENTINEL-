@@ -8,34 +8,30 @@ accepting every connection with zero token check: any network-reachable
 client could subscribe to every live alert (plate numbers, camera ids,
 snapshot URLs). This module closes that gap.
 
-Transport for the token: a browser ``WebSocket`` cannot set an
-``Authorization`` header on the handshake request, so the two realistic
-options are a ``?token=`` query string or the ``Sec-WebSocket-Protocol``
-header (which a plain ``new WebSocket(url, [token])`` call sends). This
-uses the *subprotocol* header, not the query string:
+Transport for the credential: a browser ``WebSocket`` cannot set an
+``Authorization`` header on the handshake, so the credential rides as a
+``Sec-WebSocket-Protocol`` value (``new WebSocket(url, [ticket])``), never
+a ``?token=`` query string -- a subprotocol is only ever a request HEADER,
+so a default access-log config (request line + status) never captures it,
+whereas a query string lands in the URL, browser history, and most
+request-line logs.
 
-  - a query string is part of the URL -> it lands in browser history and in
-    the request line most HTTP/reverse-proxy access logs capture by
-    default, even ones that don't log headers.
-  - a subprotocol value is only ever sent as a request HEADER during the
-    handshake -- it is never part of the URL, so a default access-log
-    configuration (request line + status only) never captures it.
+**Phase 4**: the credential is now a short-lived, single-purpose **WS
+ticket** (``purpose="ws"``, ~60s TTL), issued from
+``POST /api/v1/auth/ws-ticket`` against a valid session JWT -- NOT the
+long-lived session JWT itself. So even a header-capturing proxy only ever
+sees a value that is useless in seconds and useless for anything but this
+one endpoint. A normal session JWT offered here is rejected (it has no
+``purpose`` claim).
 
-Residual limitation (documented, not silently ignored): a log/proxy
-configuration that explicitly captures request headers could still record
-it, and this is still the same long-lived (8h) session JWT the REST API
-uses, not a short-lived single-use ticket. Fully removing that exposure
-would mean issuing scoped, short-TTL WS tickets from a dedicated endpoint
--- out of scope for this hardening pass (see final report / audit §10).
-
-This module never logs the token itself, at any log level, in either the
+This module never logs the ticket itself, at any log level, in either the
 success or failure path.
 """
 import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from app.core.security import decode_access_token
+from app.core.security import decode_scoped_ticket
 from app.database import SessionLocal
 from app.models.user import User
 from app.services.alert_dispatcher import connection_manager
@@ -50,11 +46,10 @@ router = APIRouter()
 WS_POLICY_VIOLATION = 4401
 
 
-def _extract_token(websocket: WebSocket) -> str | None:
-    """The token rides as a WebSocket subprotocol (see module docstring),
-    e.g. ``new WebSocket(url, [jwt])``. Returns the first offered
-    subprotocol, or None if the client didn't send one -- never reads a
-    query parameter."""
+def _extract_ticket(websocket: WebSocket) -> str | None:
+    """The WS ticket rides as a WebSocket subprotocol (see module
+    docstring), e.g. ``new WebSocket(url, [ticket])``. Returns the first
+    offered subprotocol, or None -- never reads a query parameter."""
     proto = websocket.headers.get("sec-websocket-protocol")
     if not proto:
         return None
@@ -63,16 +58,17 @@ def _extract_token(websocket: WebSocket) -> str | None:
 
 
 def _authenticate(websocket: WebSocket) -> User | None:
-    """Validate the offered token exactly like the REST `get_current_user`
-    dependency does (same decode + active-user DB lookup) -- returns None
-    for a missing, malformed, expired, or invalid token, or an inactive/
-    deleted user. Uses its own short-lived DB session since WebSocket routes
-    don't participate in the usual `Depends(get_db)` request lifecycle."""
-    token = _extract_token(websocket)
-    if not token:
+    """Validate the offered short-lived WS ticket (``purpose="ws"``, ~60s):
+    signature, expiry, purpose, then an active-user DB lookup. Returns None
+    for anything missing/malformed/expired/wrong-purpose (including a normal
+    session JWT) or an inactive/deleted user. Uses its own short-lived DB
+    session since WebSocket routes don't join the usual `Depends(get_db)`
+    lifecycle."""
+    ticket = _extract_ticket(websocket)
+    if not ticket:
         return None
     try:
-        payload = decode_access_token(token)
+        payload = decode_scoped_ticket(ticket, "ws")
     except ValueError:
         return None
     user_id = payload.get("sub")

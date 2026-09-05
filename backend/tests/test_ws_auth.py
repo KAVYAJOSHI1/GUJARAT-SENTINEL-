@@ -1,10 +1,14 @@
 """
-WS /ws/alerts authentication (SENTINEL_System_Audit_Report.md §9/§10/§15 —
-"accepts every connection with no token check at all").
+WS /ws/alerts authentication.
 
-Covers: valid/missing/invalid/expired token, a valid client actually
-receiving a real alert broadcast, and an unauthenticated client receiving
-nothing.
+Phase 4: the WS handshake credential is a short-lived, single-purpose
+ticket (`POST /api/v1/auth/ws-ticket`, `purpose="ws"`, ~60s) -- NOT the
+long-lived session JWT. A session JWT offered as the subprotocol is
+rejected.
+
+Covers: valid/missing/invalid/expired ticket, session-JWT-not-accepted, a
+valid client actually receiving a real alert broadcast, and an
+unauthenticated client receiving nothing.
 """
 from datetime import datetime, timedelta, timezone
 
@@ -13,22 +17,23 @@ from jose import jwt
 from starlette.websockets import WebSocketDisconnect
 
 from app.config import settings
-from conftest import bearer
+from app.core.security import create_scoped_ticket
+from conftest import bearer, ws_ticket
 
 
-def _expired_token(user_id: str, role: str) -> str:
+def _expired_ws_ticket(user_id: str) -> str:
     payload = {
         "sub": user_id,
-        "role": role,
+        "purpose": "ws",
         "exp": datetime.now(timezone.utc) - timedelta(minutes=5),
     }
     return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 
-def test_valid_token_accepted(client, operator_user):
+def test_valid_ticket_accepted(client, operator_user):
     _, token = operator_user
-    with client.websocket_connect("/ws/alerts", subprotocols=[token]) as ws:
-        # Connection established without being immediately closed.
+    ticket = ws_ticket(client, token)
+    with client.websocket_connect("/ws/alerts", subprotocols=[ticket]) as ws:
         assert ws is not None
 
 
@@ -46,13 +51,31 @@ def test_invalid_token_rejected(client):
     assert exc_info.value.code == 4401
 
 
-def test_expired_token_rejected(client, operator_user):
+def test_expired_ticket_rejected(client, operator_user):
     user, _ = operator_user
-    expired = _expired_token(user.id, user.role.value)
     with pytest.raises(WebSocketDisconnect) as exc_info:
-        with client.websocket_connect("/ws/alerts", subprotocols=[expired]):
+        with client.websocket_connect("/ws/alerts", subprotocols=[_expired_ws_ticket(user.id)]):
             pass
     assert exc_info.value.code == 4401
+
+
+def test_session_jwt_not_accepted_as_ws_ticket(client, operator_user):
+    """The long-lived session JWT must NOT work as a WS credential -- it has
+    no `purpose="ws"` claim."""
+    _, token = operator_user
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client.websocket_connect("/ws/alerts", subprotocols=[token]):
+            pass
+    assert exc_info.value.code == 4401
+
+
+def test_media_ticket_not_accepted_for_ws(client, operator_user):
+    """A media-purpose ticket must not open the alert socket."""
+    _, token = operator_user
+    media = create_scoped_ticket(subject="u", purpose="media", ttl_seconds=60)
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect("/ws/alerts", subprotocols=[media]):
+            pass
 
 
 def test_authenticated_client_receives_real_alert(client, officer_user, make_camera):
@@ -72,7 +95,7 @@ def test_authenticated_client_receives_real_alert(client, officer_user, make_cam
     )
     assert watchlist_resp.status_code == 201
 
-    with client.websocket_connect("/ws/alerts", subprotocols=[token]) as ws:
+    with client.websocket_connect("/ws/alerts", subprotocols=[ws_ticket(client, token)]) as ws:
         ingest_resp = client.post(
             "/api/v1/events/ai-detection",
             json={
@@ -108,7 +131,7 @@ def test_unauthenticated_client_receives_nothing(client, officer_user, make_came
         headers=bearer(token),
     )
 
-    with client.websocket_connect("/ws/alerts", subprotocols=[token]) as authed_ws:
+    with client.websocket_connect("/ws/alerts", subprotocols=[ws_ticket(client, token)]) as authed_ws:
         with pytest.raises(WebSocketDisconnect):
             with client.websocket_connect("/ws/alerts"):
                 pass

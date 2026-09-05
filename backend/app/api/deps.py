@@ -7,7 +7,7 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlmodel import Session
 
 from app.config import settings
-from app.core.security import decode_access_token
+from app.core.security import decode_access_token, decode_scoped_ticket
 from app.database import get_db
 from app.models.user import User
 from app.schemas.auth import CurrentUser
@@ -40,28 +40,42 @@ def verify_bearer_header_or_query(
     token: Optional[str] = None,
     authorization: Optional[str] = Header(default=None),
 ) -> str:
-    """Accept a JWT from either ``Authorization: Bearer`` OR a ``?token=`` query
-    param (needed for ``<img src>`` which cannot set headers). Only checks the
-    token is a valid, non-expired JWT -- no DB lookup.
+    """Authorise a media read (evidence image / mock-camera video) that a
+    browser ``<img>``/``<video>`` requests.
 
-    Returns the token's ``sub`` claim (user id) rather than a bare "ok", so
-    callers that need it for audit logging (e.g. evidence access) have it
-    without decoding the token a second time. Never returns/logs the raw
-    token itself."""
-    raw = None
+    Two accepted forms:
+      * ``Authorization: Bearer <session JWT>``  -- for a fetch()/XHR caller
+        that CAN set headers.
+      * ``?token=<media ticket>``  -- for a bare ``<img src>``. This path
+        now requires a short-lived, ``purpose="media"`` ticket (issued from
+        POST /api/v1/auth/media-ticket), **not** the long-lived session
+        JWT. A session JWT passed as ``?token=`` is rejected, so the
+        session credential never lands in an access log or browser history.
+
+    No DB lookup. Returns the ``sub`` claim (user id) for audit logging.
+    Never returns or logs the raw token/ticket."""
+    header_raw = None
     if authorization and authorization.lower().startswith("bearer "):
-        raw = authorization.split(" ", 1)[1].strip()
-    elif token:
-        raw = token
-    if not raw:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
-                            detail={"code": "NOT_AUTHENTICATED"})
-    try:
-        payload = decode_access_token(raw)
-    except ValueError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
-                            detail={"code": "INVALID_TOKEN"})
-    return payload.get("sub") or "ok"
+        header_raw = authorization.split(" ", 1)[1].strip()
+
+    if header_raw:
+        try:
+            payload = decode_access_token(header_raw)
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                                detail={"code": "INVALID_TOKEN"})
+        return payload.get("sub") or "ok"
+
+    if token:
+        try:
+            payload = decode_scoped_ticket(token, "media")
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                                detail={"code": "INVALID_MEDIA_TICKET"})
+        return payload.get("sub") or "ok"
+
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail={"code": "NOT_AUTHENTICATED"})
 
 
 def require_ingest_auth(

@@ -276,6 +276,29 @@ accuracy can only be reported qualitatively.
 
 ---
 
+## 3e. Security & Production Hardening (Phase 4 — IMPLEMENTED)
+
+Closes the outstanding `SENTINEL_System_Audit_Report.md` §10/§16 security
+findings. Full detail: `SECURITY.md` §2 and audit report Part II §4b. No
+camera-performance / GPU / distributed-system work (explicitly out of
+scope).
+
+| Area | What it does | Config / endpoint |
+| :--- | :--- | :--- |
+| **Login rate limit** | Failed `/auth/login` attempts counted per `(ip, username)`; **429 + `Retry-After`** after 5 in 300s; a successful login clears it. Generic 429 body (no user-existence oracle, no credential echo). | `LOGIN_RATE_LIMIT_*` env |
+| **CORS** | Explicit origin allow-list; a `"*"` entry is dropped (with a warning) unless `ENV` is a development value; `allow_credentials` off when list is `"*"`. | `CORS_ALLOW_ORIGINS`, `ENV` |
+| **WebSocket ticket** | `/ws/alerts` now needs a **short-lived `purpose="ws"` ticket** (~60s), fetched from `POST /api/v1/auth/ws-ticket` — the long-lived session JWT is never put on the WS wire. | `WS_TICKET_TTL_SECONDS` |
+| **Media ticket** | Evidence-image / mock-video `?token=` now carries a **short-lived `purpose="media"` ticket** (~120s) from `POST /api/v1/auth/media-ticket`, not the session JWT. `Authorization: Bearer` header path unchanged. | `MEDIA_TICKET_TTL_SECONDS` |
+| **Retention** | Periodic purge of `vehicle_events` older than **30 days** (configurable; `0` disables). Rows referenced by an alert are never deleted; `watchlist` / `alerts` / `audit_logs` untouched. Also admin-only `POST /api/v1/admin/retention/purge`. | `VEHICLE_EVENT_RETENTION_DAYS`, `RETENTION_SWEEP_*` |
+| **Audit** | Added `LOGIN_RATE_LIMITED`, `RETENTION_PURGE`; tests assert the audit `detail` column never holds a password / JWT / ticket / RTSP credential. | — |
+
+**No DB migration** (tickets are stateless JWTs; the rate limiter is
+in-memory; retention only deletes rows). **Still ROADMAP:** RS256 signing,
+TLS-in-app, encryption at rest, **distributed** (cross-replica) rate
+limiting, GPU/Kafka/K8s.
+
+---
+
 ## 4. Team & Repository Branch Matrix
 
 ```text

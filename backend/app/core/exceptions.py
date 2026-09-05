@@ -56,7 +56,13 @@ def register_exception_handlers(app):
             message = detail.get("message", str(detail))
         else:
             code, message = "HTTP_ERROR", str(detail)
-        return JSONResponse(status_code=exc.status_code, content=_envelope(code, message))
+        # Preserve response headers the raiser set (e.g. Retry-After on a
+        # 429, WWW-Authenticate on a 401) -- they are part of the contract.
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=_envelope(code, message),
+            headers=getattr(exc, "headers", None) or None,
+        )
 
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(request: Request, exc: RequestValidationError):

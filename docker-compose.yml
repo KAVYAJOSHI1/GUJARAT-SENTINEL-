@@ -60,7 +60,14 @@ services:
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@sentinel.local}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       SEED_WATCHLIST_PLATE: ${SEED_WATCHLIST_PLATE:-}
-      CORS_ALLOW_ORIGINS: '["*"]'
+      # The dashboard reaches the API same-origin through the Vite dev proxy
+      # (frontend service, :3000), so this only needs the dev host origin.
+      # Override with a real https origin (or a comma-free JSON list) in a
+      # non-local deployment -- never "*" outside development (the backend
+      # drops a "*" when ENV is not a development value anyway).
+      ENV: ${SENTINEL_ENV:-development}
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-'["http://localhost:3000"]'}
+      VEHICLE_EVENT_RETENTION_DAYS: ${VEHICLE_EVENT_RETENTION_DAYS:-30}
       UVICORN_RELOAD: ${UVICORN_RELOAD:-1}
       # Read-only access to the local mock-camera source clips, so
       # GET /api/v1/cameras/{id}/mock-video can actually stream them (see
