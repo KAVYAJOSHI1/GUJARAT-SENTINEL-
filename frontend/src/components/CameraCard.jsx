@@ -53,11 +53,13 @@ export default function CameraCard({ cam, selected, onClick, preview, detectionC
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
         <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ color: C.accent, fontSize: 11, fontFamily: "monospace", fontWeight: 700 }}>{cam.id}</span>
-          {/* Unobtrusive REAL-vs-MOCK indicator (README §"Mock cameras"): a
+          {/* Explicit REAL-vs-MOCK indicator (SENTINEL_System_Audit_Report.md
+              §14/§16 — a judge must never mistake one for the other). A
               LOCAL trafficdataset demo feed must never look like a real
-              government camera. Real cameras get no badge at all (zero
-              visual change from before this existed). */}
-          {cam.isMock && (
+              government camera, and a real Sentinel feed is now labeled
+              just as explicitly rather than relying on "no badge" to imply
+              it. */}
+          {cam.isMock ? (
             <span
               title="Local mock camera — trafficdataset demo source, not a live government feed"
               style={{
@@ -72,6 +74,22 @@ export default function CameraCard({ cam, selected, onClick, preview, detectionC
               }}
             >
               MOCK
+            </span>
+          ) : (
+            <span
+              title="Real Sentinel government camera feed"
+              style={{
+                color: C.green,
+                border: `1px solid ${C.green}`,
+                borderRadius: 3,
+                padding: "1px 5px",
+                fontSize: 8,
+                fontWeight: 700,
+                letterSpacing: 0.5,
+                fontFamily: "monospace",
+              }}
+            >
+              REAL
             </span>
           )}
         </span>

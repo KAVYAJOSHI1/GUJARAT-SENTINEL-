@@ -9,8 +9,17 @@ Pipeline (per DEVELOPER_README.md #9):
   ingest -> save event -> watchlist lookup
     match      -> cooldown check -> suppress | create alert + broadcast
     no match   -> return success (normal event logged)
+
+Expiry (SENTINEL_System_Audit_Report.md §12/§15 "watchlist.expires_at never
+enforced"): an entry with a past `expires_at` must never match, even while
+`active` is still True (an operator may not have gotten around to manually
+deactivating it yet) -- `active_watchlist_clause()` is the single shared
+filter both this module and the vehicle-search API use, so the two can
+never drift out of sync on what "currently on the watchlist" means.
 """
-from sqlalchemy import select
+from datetime import datetime
+
+from sqlalchemy import and_, or_, select
 from sqlmodel import Session
 
 from app.models.alert import Alert
@@ -19,12 +28,25 @@ from app.models.watchlist import Watchlist
 from app.services.cooldown import is_within_cooldown
 
 
+def active_watchlist_clause(now: datetime | None = None):
+    """SQLAlchemy WHERE clause matching only *currently valid* watchlist
+    entries: active, and either no expiry or an expiry still in the future.
+    An inactive or expired entry never matches, regardless of how it was
+    deactivated (manual PATCH/DELETE or simply its `expires_at` elapsing)."""
+    now = now or datetime.utcnow()
+    return and_(
+        Watchlist.active.is_(True),
+        or_(Watchlist.expires_at.is_(None), Watchlist.expires_at > now),
+    )
+
+
 def find_watchlist_match(db: Session, plate_normalized: str) -> Watchlist | None:
-    """Exact match against active watchlist entries. O(log n) via unique B-Tree index."""
+    """Exact match against currently-valid watchlist entries (active,
+    non-expired). O(log n) via the unique B-Tree index on the plate."""
     stmt = (
         select(Watchlist)
         .where(Watchlist.plate_number_normalized == plate_normalized)
-        .where(Watchlist.active.is_(True))
+        .where(active_watchlist_clause())
         .limit(1)
     )
     return db.execute(stmt).scalar_one_or_none()

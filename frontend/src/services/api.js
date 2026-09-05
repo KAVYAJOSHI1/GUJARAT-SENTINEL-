@@ -199,6 +199,11 @@ export function normalizeAlert(raw) {
       status === "ACKNOWLEDGED" ||
       status === "RESOLVED",
     snapshotUrl: pick(raw, ["snapshot_url", "evidence_snapshot_url"], null),
+    // True only for the local WS-fallback simulator (lib/mockData.js
+    // makeSimulatedAlert) -- every real alert from the backend is left
+    // false/undefined. Lets AlertRow mark it so it's never mistaken for a
+    // live government-feed alert (SENTINEL_System_Audit_Report.md §14/§16).
+    simulated: Boolean(pick(raw, ["simulated"], false)),
   };
 }
 

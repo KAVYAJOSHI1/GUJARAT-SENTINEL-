@@ -17,8 +17,11 @@ from app.database import get_db
 from app.models.camera import Camera
 from app.models.vehicle_event import VehicleEvent
 from app.models.watchlist import Watchlist
+from app.schemas.auth import CurrentUser
 from app.schemas.vehicle import VehicleHistoryResponse, VehicleSighting
+from app.services.audit import record_audit
 from app.services.plate_utils import normalize_plate
+from app.services.watchlist_engine import active_watchlist_clause
 
 router = APIRouter()
 
@@ -55,7 +58,7 @@ def search_vehicle(
     plate: str = Query(..., min_length=2, description="Registration plate to search, e.g. GJ01AB1234"),
     limit: int = Query(default=200, le=1000),
     db: Session = Depends(get_db),
-    _=Depends(get_current_user),
+    user: CurrentUser = Depends(get_current_user),
 ):
     plate_normalized = normalize_plate(plate)
 
@@ -99,10 +102,23 @@ def search_vehicle(
         db.execute(
             select(Watchlist.id)
             .where(Watchlist.plate_number_normalized == plate_normalized)
-            .where(Watchlist.active.is_(True))
+            .where(active_watchlist_clause())
             .limit(1)
         ).first()
         is not None
+    )
+
+    # Investigation / vehicle-search is a sensitive lookup on a real person's
+    # movement history -- audit who searched what (SENTINEL_System_Audit_Report.md
+    # §10 "Vehicle investigation/search"). Never blocks the response if the
+    # audit write itself fails (see services/audit.py).
+    record_audit(
+        db,
+        action="VEHICLE_SEARCH",
+        user_id=user.id,
+        resource="vehicle",
+        resource_id=plate_normalized,
+        detail={"total_sightings": len(sightings), "is_watchlisted": is_watchlisted},
     )
 
     return VehicleHistoryResponse(
@@ -156,7 +172,7 @@ def recent_vehicle_events(
 @router.get("/evidence/{event_id}")
 def get_evidence(
     event_id: str,
-    _=Depends(verify_bearer_header_or_query),
+    requesting_user_id: str = Depends(verify_bearer_header_or_query),
     db: Session = Depends(get_db),
 ):
     """Serve (or redirect to) the snapshot image for one vehicle event.
@@ -168,6 +184,13 @@ def get_evidence(
     ev = db.get(VehicleEvent, event_id)
     if ev is None or not ev.snapshot_url:
         raise NotFoundError("Evidence", event_id)
+    record_audit(
+        db,
+        action="EVIDENCE_ACCESSED",
+        user_id=requesting_user_id,
+        resource="vehicle_event",
+        resource_id=event_id,
+    )
     url = ev.snapshot_url
 
     # Proxy the bytes through the backend so it works from any network (browser

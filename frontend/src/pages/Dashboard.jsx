@@ -104,7 +104,7 @@ export default function Dashboard() {
     <div>
       {!backendLive && (
         <ErrorBanner
-          message="Backend connection lost — showing simulated data. Retrying…"
+          message="OFFLINE — DEMO DATA. Backend unreachable: cameras, stats and alerts below are simulated fallback data, not a live feed. Retrying…"
           onRetry={reload}
           retrying={retrying}
         />
