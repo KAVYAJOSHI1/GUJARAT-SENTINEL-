@@ -15,7 +15,9 @@ import {
 import { C } from "../theme.js";
 import { isMockCamera } from "../services/api.js";
 import StatCard from "../components/StatCard.jsx";
-import SystemStatus from "../components/SystemStatus.jsx";
+import SystemHealthPanel from "../components/observability/SystemHealthPanel.jsx";
+import AiPipelinePanel from "../components/observability/AiPipelinePanel.jsx";
+import IncidentBar from "../components/observability/IncidentBar.jsx";
 import MiniBarList from "../components/analytics/MiniBarList.jsx";
 import VehicleIntelPanel from "../components/analytics/VehicleIntelPanel.jsx";
 import CameraGrid from "../components/CameraGrid.jsx";
@@ -33,6 +35,8 @@ export default function Dashboard() {
     cameras,
     alerts,
     detections,
+    health,
+    healthLive,
     latestDetectionByCamera,
     detectionCountByCamera,
     loading,
@@ -111,6 +115,9 @@ export default function Dashboard() {
         />
       )}
 
+      {/* Phase 7 — unhandled HIGH/CRITICAL incidents pinned to the top */}
+      <IncidentBar alerts={alerts} onOpenDrawer={() => setDrawerOpen(true)} />
+
       <div className="stat-row" style={{ marginBottom: 14 }}>
         <StatCard label="Total Cameras" value={stats?.totalCameras ?? cameras.length} sub="Registered feeds" icon={Video} color={C.accent} loading={loading} />
         <StatCard label="Online Cameras" value={onlineFeeds} sub={`${cameras.filter((c) => c.status === "alert").length} in incident`} icon={Activity} color={C.green} loading={loading} />
@@ -121,13 +128,18 @@ export default function Dashboard() {
         <StatCard label="Active Alerts" value={activeAlerts} sub="Requires attention" icon={BellRing} color={activeAlerts > 0 ? C.red : C.green} pulse={activeAlerts > 0} loading={loading} />
       </div>
 
-      {/* ── System Status + compact analytics (README task §1) ──────────────── */}
+      {/* ── System health + compact live analytics ─────────────────────────── */}
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
-        <SystemStatus backendLive={backendLive} cameras={cameras} detections={detections} lastRefresh={lastRefresh} />
+        <SystemHealthPanel health={health} healthLive={healthLive} cameras={cameras} lastRefresh={lastRefresh} />
         <MiniBarList title="Detections / hour" icon={Clock} items={analytics.byHour} loading={loading} emptyHint="Waiting for detections…" />
         <MiniBarList title="Top cameras" icon={BarChart3} items={analytics.byCamera} loading={loading} emptyHint="No detections yet" />
         <MiniBarList title="Vehicle types" icon={Car} items={analytics.byVehicleType} loading={loading} emptyHint="No detections yet" />
         <MiniBarList title="Alert severity" icon={ShieldAlert} items={analytics.bySeverity} loading={loading} emptyHint="No alerts yet" />
+      </div>
+
+      {/* ── AI pipeline metrics (Phase 7) — pipeline self-report, honest —— */}
+      <div style={{ marginBottom: 14 }}>
+        <AiPipelinePanel health={health} />
       </div>
 
       {/* ── Vehicle Intelligence — true DB aggregates (Phase 5 §4) ─────────── */}

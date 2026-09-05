@@ -279,23 +279,65 @@ The docs (`SCALABILITY.md`) describe Kafka/RabbitMQ, Kubernetes, NVIDIA Triton, 
 | Capability | Status |
 |---|---|
 | Logs | **Yes** — Python `logging` throughout, structured-ish messages, sensible levels; no centralized log shipping (no ELK/Loki config). |
-| Metrics (Prometheus-style) | **No** — no `/metrics` endpoint, no Prometheus client anywhere. |
+| Metrics (Prometheus-style) | **No `/metrics` endpoint** — but **Phase 7** added an app-level observability aggregate (`GET /api/v1/dashboard/health`) fed by a real DB probe + camera health + an AI-pipeline self-report (`POST /api/v1/pipeline/status`). See §11a. |
 | Traces | **No** — no OpenTelemetry/Jaeger integration. |
-| Camera health (status/FPS/jitter/drops/reconnects) | **Yes, but only in-memory and only reachable two ways**: (1) `ingestion.stream_health.HealthRegistry` + an *optional*, separate dev-only FastAPI app (`build_health_app()`, not mounted into the main backend) exposing `GET /api/v1/streams/health`; (2) an optional push loop to a backend URL that **doesn't correspond to any real endpoint in `backend/app/api/v1/`** (the module docstring itself calls this a "SCHEMA PLACEHOLDER... hasn't been shared into this session yet"). **The main dashboard's camera-status field comes from the DB `cameras.status` column, which the AI/ingestion layer never updates** — it's set once at auto-onboard time and only changed via the `PATCH /cameras/{id}` admin endpoint. So the pretty "ONLINE/OFFLINE" badges on the dashboard are not actually wired to live stream health. |
-| Inference latency | Self-instrumented (`AIPipeline.get_benchmark_stats()`), but nothing polls/exposes it via an API — only logged locally by `run_pipeline_service.py`'s stats loop. |
+| Camera health (status/FPS/jitter/drops/reconnects) | **RESOLVED (Phase 1)**: `POST /api/v1/cameras/health` now really exists; ingestion pushes `HealthRegistry` snapshots to it and `_effective_status()` treats a camera whose last push is stale as OFFLINE regardless of its last-reported status. **Phase 7** surfaces the counts (online/degraded/offline/**stale**/never-reported + oldest-health-age) in `GET /api/v1/dashboard/health`, and the dashboard camera cards show per-camera health-push age + a "connected, no AI frames yet" marker (connected != AI-processed). |
+| Inference latency | **RESOLVED (Phase 7)**: `AIPipeline.get_metrics()` (YOLO/OCR p50/p95, queue depth, per-camera frame/event counts, CPU/RSS) is POSTed by `run_pipeline_service.py` to `POST /api/v1/pipeline/status` every stats interval; the dashboard reads it back via `GET /api/v1/dashboard/health -> ai_pipeline` and an "AI Pipeline Metrics" panel. Prometheus `/metrics` still not exposed (roadmap). |
 | GPU utilization | N/A — no GPU path exists. |
-| Queue depth | Logged ad hoc (`consumer.frames_processed`, `frames_skipped` in the stats loop) — not exposed as a metric endpoint. |
-| Dropped frames | Tracked in `HealthRegistry.frame_drop_count`, same reachability caveat as camera health above. |
-| Service health | `/health` on the backend (simple 200 OK), Docker `HEALTHCHECK` on backend/postgis/minio containers. No readiness vs. liveness distinction. |
-| Alert latency | Not measured/logged anywhere as a metric, though the design (`ConnectionManager.broadcast`) is architecturally sub-100ms per the code comment. |
+| Queue depth | **RESOLVED (Phase 7)** — `event_queue_depth` / `event_queue_max_depth` in the pipeline status report, shown on the dashboard. |
+| Dropped frames / dropped events | **RESOLVED (Phase 7)** — the pipeline report carries `events_dropped` (queue-full + backend-rejected + retry-buffer-full); the dashboard flags it red when non-zero. |
+| Service health | `/health` on the backend (simple 200 OK) + Docker `HEALTHCHECK`s. **Phase 7** adds `GET /api/v1/dashboard/health` with a real timed `SELECT 1` DB probe and a component-by-component status roll-up (backend / DB / AI-pipeline / cameras / event-flow / alerts). Still no formal readiness-vs-liveness split. |
+| Alert latency | Not measured as a metric (the WS broadcast design is architecturally sub-100ms). Phase 7 does surface active / HIGH-CRITICAL alert counts + a pinned incident bar. |
 
-**Recommended production observability**: Prometheus + Grafana (FPS/queue-depth/drop-count/inference-latency dashboards fed from `HealthRegistry` and `AIPipeline.stats`), OpenTelemetry tracing across ingestion→AI→backend→DB, structured JSON logs shipped to Loki/ELK, and — critically — **wire `HealthRegistry` into the real backend** so the dashboard's camera status reflects actual stream health instead of a stale DB column.
+**Still roadmap**: Prometheus `/metrics` + Grafana, OpenTelemetry tracing across ingestion→AI→backend→DB, structured-JSON log shipping to Loki/ELK. The `pipeline_status` table is a single latest-snapshot row per service, not a time series — historical FPS/latency trends would need a metrics store.
+
+---
+
+## 11a. PHASE 7 UPDATE — command center + observability (commit on `penultimate`)
+
+Closes the §11 gaps between "the pipeline instruments itself" and "an
+operator can see it". No RTSP / YOLO / OCR / ANPR / worker-pool changes;
+`run_pipeline_service.py` gained a metrics-push hop, the same pattern
+ingestion already uses for camera health.
+
+- **`POST /api/v1/pipeline/status`** (ingest auth) — the AI pipeline POSTs
+  a snapshot of `AIPipeline.get_metrics()` (processed FPS, frames,
+  vehicles, events generated/delivered/dropped, event-queue depth/max,
+  YOLO+OCR p50/p95, CPU/RSS, per-camera frame/event counts) every stats
+  interval into the new `pipeline_status` table (migration `0005`, one
+  upserted row per `service_id`). A missing metric is stored NULL, never a
+  fabricated 0.
+- **`GET /api/v1/pipeline/status`** (JWT) — reads it back with a computed
+  `age_seconds`.
+- **`GET /api/v1/dashboard/health`** (JWT) — the command-center aggregate:
+  a real timed `SELECT 1` DB probe; camera counts by *effective* status
+  plus `stale` / `never_reported` / oldest-health-age; AI-pipeline status
+  (`online` / `stale` / `unknown` from the report's freshness) + its
+  metrics; event-flow freshness (last-event age, 15-min readable/UNKNOWN
+  counts); alert counts (total / active / acknowledged / HIGH-CRITICAL
+  active). `dashboard/stats` is unchanged.
+- **Frontend**: `SystemHealthPanel` (replaces the old derived-only
+  `SystemStatus`), `AiPipelinePanel`, and an `IncidentBar` that pins
+  unhandled HIGH/CRITICAL watchlist alerts to the top with plate / camera /
+  location / time and a one-click "Trace" to the vehicle journey. Camera
+  cards show per-camera health-push age and a "connected, no AI frames yet"
+  marker. Every panel shows an explicit "unavailable" / "no report" state
+  when the backend data is missing — no mock numbers.
+
+Tests: `backend/tests/` +2 (`test_pipeline_status`, `test_dashboard_health`
+— 11 tests). Full backend 111 passed; AI/ingestion 143 passed / 8 skipped;
+frontend build clean.
+
+**Remaining**: still a single-snapshot table (no time series / trend
+charts), no Prometheus `/metrics`, no tracing. Pipeline status shows
+`unknown` until the pipeline runs with a reachable `--backend-url`
+(a `--no-backend` dry run never reports).
 
 ---
 
 ## 12. DATABASE / STORAGE
 
-**Schema** (`database/migrations/versions/0001`–`0004`; columns match
+**Schema** (`database/migrations/versions/0001`–`0005`; columns match
 `backend/app/models/*.py`. Index drift exists: several `Field(index=True)`
 flags on the models were never emitted as migrations, so
 `alembic --autogenerate` reports spurious "added index" diffs — pre-dates

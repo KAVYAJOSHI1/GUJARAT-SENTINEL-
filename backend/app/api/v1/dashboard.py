@@ -1,23 +1,44 @@
 """
-Dashboard summary API — GET /api/v1/dashboard/stats
+Dashboard summary API.
 
-Small aggregate counts for the command-center header strip. Every number is
-a live DB query; nothing is mocked.
+  GET /api/v1/dashboard/stats    — small header-strip counts (unchanged)
+  GET /api/v1/dashboard/health   — command-center observability aggregate:
+      backend / DB / AI-pipeline / camera / event-flow / alert health,
+      every field a live measurement or NULL (never a placeholder)
 """
-from datetime import datetime, timedelta
+import logging
+import time
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlmodel import Session
 
 from app.api.deps import get_current_user
+from app.api.v1.cameras import HEALTH_STALE_AFTER, _effective_status
 from app.database import get_db
 from app.models.alert import Alert
-from app.models.base import AlertStatus, CameraStatus
+from app.models.base import AlertStatus, CameraStatus, PriorityLevel
 from app.models.camera import Camera
+from app.models.pipeline_status import PipelineStatus
 from app.models.vehicle_event import VehicleEvent
+from app.schemas.health import (
+    AiPipelineHealth,
+    AlertHealth,
+    CameraHealthCounts,
+    ComponentHealth,
+    EventFlowHealth,
+    Latency,
+    SystemHealth,
+)
 
+logger = logging.getLogger("sentinel.dashboard")
 router = APIRouter()
+
+# The AI pipeline pushes a metrics snapshot every few seconds
+# (scripts/run_pipeline_service.py). Older than this -> "stale".
+_PIPELINE_STALE_AFTER_S = 30.0
+_EVENT_WINDOW = timedelta(minutes=15)
 
 
 @router.get("/stats")
@@ -89,3 +110,123 @@ def dashboard_stats(db: Session = Depends(get_db), _=Depends(get_current_user)):
         "anpr_reads_per_hour": reads_last_hour,
         "zones_online": zones_online,
     }
+
+
+# --------------------------------------------------------------------------- #
+#  GET /dashboard/health -- command-center observability aggregate            #
+# --------------------------------------------------------------------------- #
+def _camera_health(db: Session) -> CameraHealthCounts:
+    now = datetime.utcnow()
+    cams = db.execute(select(Camera)).scalars().all()
+    online = degraded = offline = stale = never = 0
+    oldest_age: float | None = None
+    for cam in cams:
+        eff = _effective_status(cam)
+        if eff == CameraStatus.ONLINE:
+            online += 1
+        elif eff == CameraStatus.DEGRADED:
+            degraded += 1
+        else:
+            offline += 1
+        if cam.health_updated_at is None:
+            never += 1
+        else:
+            age = (now - cam.health_updated_at).total_seconds()
+            oldest_age = age if oldest_age is None else max(oldest_age, age)
+            if age > HEALTH_STALE_AFTER.total_seconds():
+                stale += 1
+    return CameraHealthCounts(
+        total=len(cams), online=online, degraded=degraded, offline=offline,
+        stale=stale, never_reported=never,
+        oldest_health_age_seconds=round(oldest_age, 1) if oldest_age is not None else None,
+    )
+
+
+def _ai_pipeline_health(db: Session) -> AiPipelineHealth:
+    row = db.get(PipelineStatus, "default")
+    if row is None:
+        return AiPipelineHealth(status="unknown")
+    now = datetime.now(timezone.utc)
+    reported = row.reported_at if row.reported_at.tzinfo else row.reported_at.replace(tzinfo=timezone.utc)
+    age = (now - reported).total_seconds()
+    return AiPipelineHealth(
+        status="online" if age <= _PIPELINE_STALE_AFTER_S else "stale",
+        reported_at=row.reported_at,
+        age_seconds=round(age, 1),
+        num_workers=row.num_workers,
+        processed_fps=row.processed_fps,
+        frames_processed=row.processed_frames,
+        vehicles_detected=row.vehicles_detected,
+        events_generated=row.events_generated,
+        events_delivered=row.events_delivered,
+        events_dropped=row.events_dropped,
+        event_queue_depth=row.event_queue_depth,
+        event_queue_max_depth=row.event_queue_max_depth,
+        yolo_latency_ms=Latency(p50_ms=row.yolo_p50_ms, p95_ms=row.yolo_p95_ms),
+        ocr_latency_ms=Latency(p50_ms=row.ocr_p50_ms, p95_ms=row.ocr_p95_ms),
+        cpu_percent=row.cpu_percent,
+        rss_mb=row.rss_mb,
+        cameras_processing=row.cameras_processing,
+    )
+
+
+def _event_flow_health(db: Session) -> EventFlowHealth:
+    now = datetime.utcnow()
+    window_start = now - _EVENT_WINDOW
+    last_ts = db.execute(select(func.max(VehicleEvent.timestamp))).scalar()
+    total_15 = db.execute(
+        select(func.count(VehicleEvent.id)).where(VehicleEvent.timestamp >= window_start)
+    ).scalar() or 0
+    readable_15 = db.execute(
+        select(func.count(VehicleEvent.id))
+        .where(VehicleEvent.timestamp >= window_start)
+        .where(VehicleEvent.plate_number_normalized != "UNKNOWN")
+    ).scalar() or 0
+    return EventFlowHealth(
+        last_event_at=last_ts,
+        last_event_age_seconds=round((now - last_ts).total_seconds(), 1) if last_ts else None,
+        events_last_15min=int(total_15),
+        readable_last_15min=int(readable_15),
+        unknown_last_15min=int(total_15) - int(readable_15),
+    )
+
+
+def _alert_health(db: Session) -> AlertHealth:
+    total = db.execute(select(func.count(Alert.id))).scalar() or 0
+    active = db.execute(
+        select(func.count(Alert.id)).where(Alert.status == AlertStatus.NEW)
+    ).scalar() or 0
+    ack = db.execute(
+        select(func.count(Alert.id)).where(Alert.status == AlertStatus.ACKNOWLEDGED)
+    ).scalar() or 0
+    high_active = db.execute(
+        select(func.count(Alert.id))
+        .where(Alert.status == AlertStatus.NEW)
+        .where(Alert.priority_level.in_([PriorityLevel.HIGH, PriorityLevel.CRITICAL]))
+    ).scalar() or 0
+    return AlertHealth(
+        total=int(total), active=int(active), acknowledged=int(ack),
+        high_or_critical_active=int(high_active),
+    )
+
+
+@router.get("/health", response_model=SystemHealth)
+def system_health(db: Session = Depends(get_db), _=Depends(get_current_user)):
+    # DB probe -- a real round-trip, timed
+    t0 = time.perf_counter()
+    try:
+        db.execute(text("SELECT 1"))
+        db_latency = round((time.perf_counter() - t0) * 1000.0, 2)
+        database = ComponentHealth(status="ok", latency_ms=db_latency)
+    except Exception:  # noqa: BLE001
+        database = ComponentHealth(status="down", detail="SELECT 1 failed")
+
+    return SystemHealth(
+        generated_at=datetime.now(timezone.utc),
+        backend=ComponentHealth(status="ok"),
+        database=database,
+        ai_pipeline=_ai_pipeline_health(db),
+        cameras=_camera_health(db),
+        events=_event_flow_health(db),
+        alerts=_alert_health(db),
+    )

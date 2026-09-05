@@ -9,5 +9,9 @@ from app.models.watchlist import Watchlist
 from app.models.alert import Alert
 from app.models.user import User
 from app.models.audit_log import AuditLog
+from app.models.pipeline_status import PipelineStatus
 
-__all__ = ["Camera", "VehicleEvent", "Watchlist", "Alert", "User", "AuditLog"]
+__all__ = [
+    "Camera", "VehicleEvent", "Watchlist", "Alert", "User", "AuditLog",
+    "PipelineStatus",
+]

@@ -184,6 +184,12 @@ export function normalizeCamera(raw) {
     fps: pick(raw, ["fps", "frame_rate"], "—"),
     protocol: String(pick(raw, ["protocol", "stream_protocol"], "RTSP")).toUpperCase(),
     streamUrl: pick(raw, ["stream_url", "hls_url", "webrtc_url", "rtsp_url"], null),
+    // Real stream-health telemetry (ingestion -> POST /cameras/health).
+    // null until at least one health push has landed for this camera --
+    // "never reported" is a distinct state from "offline".
+    healthUpdatedAt: pick(raw, ["health_updated_at", "healthUpdatedAt"], null),
+    frameDrops: pick(raw, ["frame_drop_count", "frameDrops"], null),
+    reconnects: pick(raw, ["reconnect_count", "reconnects"], null),
   };
 }
 

@@ -189,6 +189,47 @@ class PipelineService:
     def _api_base(self) -> str:
         return self.backend_events_url.split("/events/ai-detection")[0]
 
+    # -- pipeline metrics push (AIPipeline.get_metrics() -> backend) ------ #
+    def _push_pipeline_status(self, metrics: dict, *, processed_fps: float,
+                              num_workers: int) -> None:
+        """Best-effort POST of the current metrics snapshot to
+        `<api base>/pipeline/status` so the command-center dashboard can show
+        real processed-FPS / queue-depth / YOLO+OCR latency / per-camera
+        processing state (Phase 7). Never raises, never blocks the stats
+        loop; skipped entirely on --no-backend."""
+        if self.args.no_backend:
+            return
+        url = f"{self._api_base()}/pipeline/status"
+        payload = {
+            "service_id": "default",
+            "num_workers": num_workers,
+            "processed_frames": metrics.get("processed_frames"),
+            "processed_fps": round(processed_fps, 2),
+            "total_vehicles_detected": metrics.get("total_vehicles_detected"),
+            "total_ai_events_generated": metrics.get("total_ai_events_generated"),
+            "events_sent_ok": metrics.get("events_sent_ok"),
+            "events_dropped": (
+                (metrics.get("events_dropped_queue_full") or 0)
+                + (metrics.get("events_dropped_backend_rejected") or 0)
+                + (metrics.get("events_dropped_buffer_full") or 0)
+            ),
+            "event_queue_depth": metrics.get("event_queue_depth"),
+            "event_queue_max_depth": metrics.get("event_queue_max_depth"),
+            "yolo_latency_ms": metrics.get("yolo_latency_ms")
+            or metrics.get("combined_latency", {}).get("yolo_latency_ms"),
+            "ocr_latency_ms": metrics.get("ocr_latency_ms")
+            or metrics.get("combined_latency", {}).get("ocr_latency_ms"),
+            "cpu_percent": metrics.get("resource_usage", {}).get("cpu_percent"),
+            "rss_mb": metrics.get("resource_usage", {}).get("rss_mb"),
+            "frames_by_camera": metrics.get("frames_by_camera") or {},
+            "events_by_camera": metrics.get("events_by_camera") or {},
+        }
+        headers = {"X-Ingest-Key": self.ingest_key} if self.ingest_key else None
+        try:
+            requests.post(url, json=payload, headers=headers, timeout=5.0)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("pipeline status push to %s failed: %s", url, exc)
+
     def sync_registry_to_backend(self) -> None:
         if self.args.no_backend:
             return
@@ -284,6 +325,7 @@ class PipelineService:
                              round(m.last_reconnect_duration_s, 1) if m.last_reconnect_duration_s else "n/a",
                              metrics["frames_by_camera"].get(cam_id, 0),
                              metrics["events_by_camera"].get(cam_id, 0))
+            self._push_pipeline_status(metrics, processed_fps=fps, num_workers=1)
 
     def _stats_loop_pool(self) -> None:
         interval = self.args.stats_interval
@@ -317,6 +359,33 @@ class PipelineService:
                              cam_id, m.status.value, m.measured_fps, m.frame_drop_count, m.reconnect_count,
                              metrics["frames_by_camera"].get(cam_id, 0),
                              metrics["events_by_camera"].get(cam_id, 0), stale)
+            # normalise the pool snapshot to the single-pipeline metric names
+            # the push helper expects
+            _cl = metrics.get("combined_latency", {})
+            _res = (metrics.get("per_worker_resource_usage") or [{}])
+            self._push_pipeline_status(
+                {
+                    "processed_frames": frames_now,
+                    "total_vehicles_detected": metrics.get("total_ai_events_generated"),
+                    "total_ai_events_generated": metrics.get("total_ai_events_generated"),
+                    "events_sent_ok": metrics.get("events_sent_ok"),
+                    "events_dropped_queue_full": metrics.get("events_dropped_queue_full"),
+                    "events_dropped_backend_rejected": metrics.get("events_dropped_backend_rejected"),
+                    "events_dropped_buffer_full": metrics.get("events_dropped_buffer_full"),
+                    "event_queue_depth": sum(metrics.get("per_worker_queue_depth", {}).values()) or None,
+                    "event_queue_max_depth": metrics.get("event_queue_max_depth"),
+                    "yolo_latency_ms": _cl.get("yolo_latency_ms"),
+                    "ocr_latency_ms": _cl.get("ocr_latency_ms"),
+                    "resource_usage": {
+                        "cpu_percent": sum(w.get("cpu_percent") or 0 for w in _res) or None,
+                        "rss_mb": sum(w.get("rss_mb") or 0 for w in _res) or None,
+                    },
+                    "frames_by_camera": metrics.get("frames_by_camera"),
+                    "events_by_camera": metrics.get("events_by_camera"),
+                },
+                processed_fps=fps,
+                num_workers=metrics.get("num_workers", 1),
+            )
 
     # -- stream health push (HealthRegistry -> backend camera status) ---- #
     def _health_push_url(self) -> str | None:
