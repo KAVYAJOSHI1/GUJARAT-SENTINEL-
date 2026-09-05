@@ -25,6 +25,11 @@ torch>=2.2
 # --- HTTP (catalogue ingest, health push, backend event dispatch) ---
 requests>=2.31
 
+# --- Optional CPU%/RSS instrumentation (ai/pipeline.py get_resource_usage(),
+# scripts/benchmark_pipeline.py). Soft dependency: both degrade to reporting
+# null instead of crashing if this isn't installed. ---
+psutil>=5.9
+
 # --- Optional local health telemetry API (ingestion/stream_health.py) ---
 fastapi>=0.110
 uvicorn[standard]>=0.29

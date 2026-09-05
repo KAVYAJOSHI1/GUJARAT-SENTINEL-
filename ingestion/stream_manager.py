@@ -143,6 +143,7 @@ class StreamWorker(threading.Thread):
             self._cap = None
 
     def _reconnect(self) -> bool:
+        t0 = time.monotonic()  # wall-clock reconnect duration -- monotonic, never PTS
         self._health.on_status(self.camera.camera_id, StreamStatus.RECONNECTING)
         self._release_capture()
 
@@ -168,7 +169,9 @@ class StreamWorker(threading.Thread):
         self._seq_num = 0  # new connection = new sequence / possible discontinuity
         self._reset_playback_clock()
         self._health.on_status(self.camera.camera_id, StreamStatus.ONLINE)
-        logger.info("Camera %s: reconnected", self.camera.camera_id)
+        duration_s = time.monotonic() - t0
+        self._health.on_reconnect_duration(self.camera.camera_id, duration_s)
+        logger.info("Camera %s: reconnected in %.1fs", self.camera.camera_id, duration_s)
         return True
 
     # -- MOCK camera (local file) helpers --------------------------------------

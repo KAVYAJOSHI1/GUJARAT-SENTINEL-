@@ -3,8 +3,11 @@ import cv2
 import time
 import uuid
 import logging
+import queue
 import requests
+import threading
 import numpy as np
+from collections import deque, OrderedDict
 from typing import Dict, List, Any, Optional, Union
 
 from ai.adapter.frame_interface import FrameInput
@@ -17,6 +20,19 @@ from ai.ocr.normalizer import PlateNormalizer
 from ai.tracking.tracker import ByteTrackTracker
 
 logger = logging.getLogger("AIPipeline")
+
+
+def _percentile(sorted_samples: List[float], pct: float) -> float:
+    """Linear-interpolation percentile over an already-sorted list.
+    Callers only ever pass a non-empty list."""
+    if len(sorted_samples) == 1:
+        return sorted_samples[0]
+    k = (len(sorted_samples) - 1) * (pct / 100.0)
+    f = int(k)
+    c = min(f + 1, len(sorted_samples) - 1)
+    if f == c:
+        return sorted_samples[f]
+    return sorted_samples[f] + (sorted_samples[c] - sorted_samples[f]) * (k - f)
 
 class AIPipeline:
     """
@@ -94,7 +110,6 @@ class AIPipeline:
         # Bounded in-memory buffer for retry on API *unreachability* (5xx /
         # connection errors). 4xx responses are NOT buffered -- retrying a
         # rejected payload forever never helps.
-        from collections import deque
         self.event_buffer: "deque[Dict[str, Any]]" = deque(maxlen=2000)
 
         # One ByteTrack tracker per camera feed -> track IDs are camera-local and
@@ -117,8 +132,186 @@ class AIPipeline:
             "ocr_skipped_count": 0,
             "vehicle_detection_time_ms": 0.0,
             "ocr_time_ms": 0.0,
-            "total_pipeline_time_ms": 0.0
+            "total_pipeline_time_ms": 0.0,
+            # Async event-delivery outcome counters (Phase 2A Task 2) -- every
+            # one of these is a REPORTED count, never a silent drop.
+            "events_enqueued": 0,
+            "events_sent_ok": 0,
+            "events_dropped_queue_full": 0,
+            "events_dropped_backend_rejected": 0,
+            "events_dropped_buffer_full": 0,
         }
+
+        # --- Async event delivery (Phase 2A Task 2) -------------------------
+        # SENTINEL_System_Audit_Report.md flagged the synchronous
+        # `requests.post` inside process_frame() as sitting in the AI hot
+        # path -- a slow/down backend used to add up to 5s of stall per
+        # event, serialized behind every camera sharing this pipeline
+        # instance. process_frame() now only enqueues (non-blocking); a
+        # single background thread drains the queue and performs the actual
+        # (retrying) HTTP POST via the EXISTING _dispatch_event /
+        # _post_one / _flush_buffer logic below, completely unchanged --
+        # only the CALLER moved off the inference thread. The queue is
+        # bounded so a stuck backend can never grow memory unboundedly; a
+        # full queue drops the new event and counts it
+        # (events_dropped_queue_full), it never blocks detection.
+        self.event_queue_maxsize = int(os.getenv("SENTINEL_EVENT_QUEUE_SIZE", "500"))
+        self._event_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue(maxsize=self.event_queue_maxsize)
+        self._event_queue_max_depth = 0
+        self._sender_stop = threading.Event()
+        self._sender_thread: Optional[threading.Thread] = None
+
+        # event_id -> monotonic frame-received timestamp, so the sender
+        # thread can compute "compute latency" (frame ingested -> event
+        # hand-off) and "end-to-end latency" (frame ingested -> delivered)
+        # without putting any extra field into the wire payload itself.
+        # Bounded (oldest evicted first) so a never-dequeued id can't leak.
+        self._event_timing: "OrderedDict[str, float]" = OrderedDict()
+        self._event_timing_lock = threading.Lock()
+        self._EVENT_TIMING_MAX = 2000
+
+        # Bounded raw-sample windows (milliseconds) for p50/p95 reporting --
+        # Task 1 wants percentiles, not just the running averages self.stats
+        # already tracks. monotonic-clock durations only; never PTS.
+        self._yolo_latency_samples: "deque[float]" = deque(maxlen=2000)
+        self._ocr_latency_samples: "deque[float]" = deque(maxlen=2000)
+        self._send_latency_samples: "deque[float]" = deque(maxlen=2000)
+        self._compute_latency_samples: "deque[float]" = deque(maxlen=2000)
+        self._e2e_latency_samples: "deque[float]" = deque(maxlen=2000)
+
+        # Per-camera processed-frame / generated-event counts (Task 1).
+        # Only ever touched from process_frame(), which this codebase's own
+        # architecture guarantees runs on a single consumer thread -- no
+        # lock needed (see ai/adapter/ingestion_bridge.py's own docstring).
+        self._frames_by_camera: Dict[str, int] = {}
+        self._events_by_camera: Dict[str, int] = {}
+
+        # Optional CPU%/RSS sampling (psutil). Never a hard dependency --
+        # get_resource_usage() just returns Nones if it isn't importable.
+        self._psutil_process = None
+        try:
+            import psutil  # noqa: F401 -- deliberately local/lazy
+            self._psutil_process = psutil.Process()
+            self._psutil_process.cpu_percent(interval=None)  # prime the counter
+        except Exception:  # noqa: BLE001
+            logger.debug("psutil unavailable -- CPU/RAM metrics will report null")
+
+        self._start_sender_thread()
+
+    # ------------------------------------------------------------------ #
+    #  Async event delivery: bounded queue + background sender thread     #
+    # ------------------------------------------------------------------ #
+    def _start_sender_thread(self) -> None:
+        if self._sender_thread is not None and self._sender_thread.is_alive():
+            return
+        self._sender_stop.clear()
+        self._sender_thread = threading.Thread(
+            target=self._sender_loop, name="ai-event-sender", daemon=True
+        )
+        self._sender_thread.start()
+
+    def _sender_loop(self) -> None:
+        """Runs on its own daemon thread for the pipeline's whole lifetime.
+        Pulls one event at a time and dispatches it through the EXISTING
+        _dispatch_event (buffer-on-5xx / drop-on-4xx / flush-on-success)
+        logic -- nothing about that retry policy changed, only which thread
+        calls it. A backend that's slow or down therefore only ever delays
+        this thread, never the inference hot path calling process_frame()."""
+        while not (self._sender_stop.is_set() and self._event_queue.empty()):
+            try:
+                payload = self._event_queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            t_dequeue = time.monotonic()
+            event_id = payload.get("event_id")
+            recv_mono = None
+            if event_id is not None:
+                with self._event_timing_lock:
+                    recv_mono = self._event_timing.pop(event_id, None)
+            try:
+                ok = self._dispatch_event(payload)
+            except Exception:  # noqa: BLE001 -- the sender thread must never die
+                logger.exception("event sender: unexpected error dispatching %s", event_id)
+                ok = False
+            send_ms = (time.monotonic() - t_dequeue) * 1000.0
+            self._send_latency_samples.append(send_ms)
+            if ok and recv_mono is not None:
+                compute_ms = (t_dequeue - recv_mono) * 1000.0
+                self._compute_latency_samples.append(compute_ms)
+                self._e2e_latency_samples.append(compute_ms + send_ms)
+            try:
+                self._event_queue.task_done()
+            except (ValueError, AttributeError):
+                pass
+
+    def _enqueue_event(self, payload: Dict[str, Any], recv_mono: Optional[float] = None) -> None:
+        """Non-blocking hand-off from the inference hot path to the
+        background sender. Never touches the network. A full queue means
+        the sender/backend genuinely can't keep up -- the event is COUNTED
+        as dropped (events_dropped_queue_full), never silently discarded."""
+        event_id = payload.get("event_id")
+        if recv_mono is not None and event_id is not None:
+            with self._event_timing_lock:
+                self._event_timing[event_id] = recv_mono
+                while len(self._event_timing) > self._EVENT_TIMING_MAX:
+                    self._event_timing.popitem(last=False)
+        try:
+            self._event_queue.put_nowait(payload)
+            self.stats["events_enqueued"] += 1
+            depth = self._event_queue.qsize()
+            if depth > self._event_queue_max_depth:
+                self._event_queue_max_depth = depth
+        except queue.Full:
+            self.stats["events_dropped_queue_full"] += 1
+            if event_id is not None:
+                with self._event_timing_lock:
+                    self._event_timing.pop(event_id, None)
+            logger.warning(
+                "Event queue full (maxsize=%d) -- dropping event %s for camera %s "
+                "(sender/backend can't keep up)",
+                self.event_queue_maxsize, event_id, payload.get("camera_id"),
+            )
+
+    def _wait_for_queue_empty(self, timeout: float = 5.0) -> bool:
+        """Poll (never a blind sleep) until every event handed to
+        _enqueue_event so far has been picked up by the sender thread, or
+        `timeout` elapses. Used by flush_events()/shutdown() so callers that
+        need a deterministic "it's been sent (or moved to the retry
+        buffer)" point still have one now that dispatch is asynchronous."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self._event_queue.unfinished_tasks == 0:
+                return True
+            time.sleep(0.02)
+        return self._event_queue.unfinished_tasks == 0
+
+    def shutdown(self, drain_timeout: float = 5.0) -> int:
+        """Graceful shutdown (Task 2): stop the sender thread, giving it up
+        to `drain_timeout` to finish whatever's already queued through the
+        normal retrying path. Anything still stuck in the queue afterward
+        (e.g. the thread was mid-backoff-sleep on one stubborn event) is
+        moved into the existing retry buffer rather than discarded, so a
+        subsequent flush_events() still picks it up. Returns how many
+        events remain buffered/unsent. Safe to call more than once."""
+        self._wait_for_queue_empty(timeout=drain_timeout)
+        self._sender_stop.set()
+        if self._sender_thread is not None:
+            self._sender_thread.join(timeout=drain_timeout)
+        moved = 0
+        while True:
+            try:
+                payload = self._event_queue.get_nowait()
+            except queue.Empty:
+                break
+            self.event_buffer.append(payload)
+            moved += 1
+            try:
+                self._event_queue.task_done()
+            except (ValueError, AttributeError):
+                pass
+        if moved:
+            logger.info("shutdown: moved %d unsent queued event(s) into the retry buffer", moved)
+        return len(self.event_buffer)
 
     # ------------------------------------------------------------------ #
     #  Per-camera ByteTrack tracker registry                              #
@@ -178,7 +371,12 @@ class AIPipeline:
         :param metadata: Additional frame metadata
         :return: List of generated AI Detection Event dictionaries
         """
-        t_start = time.time()
+        # Internal duration timers use time.monotonic() throughout this method
+        # (never wall time, never PTS) -- PTS is stream-relative and wall
+        # time can jump; monotonic is the only clock safe for measuring
+        # elapsed processing latency. The wire event's own `timestamp` field
+        # (frame_timestamp, derived below) is unaffected and stays wall-clock.
+        t_start = time.monotonic()
         self.stats["total_frames"] += 1
 
         # Unpack FrameInput object if provided
@@ -212,17 +410,19 @@ class AIPipeline:
             return []
 
         self.stats["processed_frames"] += 1
+        self._frames_by_camera[camera_id] = self._frames_by_camera.get(camera_id, 0) + 1
         events: List[Dict[str, Any]] = []
 
         # Step 1: Vehicle Detection
-        t_det0 = time.time()
+        t_det0 = time.monotonic()
         try:
             detections = self.vehicle_detector.detect(frame)
         except Exception as e:
             logger.error(f"Error during vehicle detection: {e}")
             return []
-        t_det = (time.time() - t_det0) * 1000.0
+        t_det = (time.monotonic() - t_det0) * 1000.0
         self.stats["vehicle_detection_time_ms"] += t_det
+        self._yolo_latency_samples.append(t_det)
 
         if not detections:
             # Advance this camera's tracker on empty frames too, so lost tracks
@@ -232,7 +432,7 @@ class AIPipeline:
                     self._trackers[camera_id].update([])
                 except Exception as e:
                     logger.error(f"ByteTrack update failed on {camera_id}: {e}")
-            t_total = (time.time() - t_start) * 1000.0
+            t_total = (time.monotonic() - t_start) * 1000.0
             self.stats["total_pipeline_time_ms"] += t_total
             return []
 
@@ -320,7 +520,7 @@ class AIPipeline:
                 enhanced_plate = plate_crop
             else:
                 # Step 4: quality gate -> multi-variant preprocessing -> OCR
-                t_ocr0 = time.time()
+                t_ocr0 = time.monotonic()
                 if self.multivariant_ocr:
                     variants = self.preprocessor.variants(plate_crop, max_variants=self.ocr_max_variants)
                     if variants:
@@ -334,8 +534,9 @@ class AIPipeline:
                 else:
                     enhanced_plate = self.preprocessor.preprocess(plate_crop)
                     ocr_res = self.ocr_engine.extract_text(enhanced_plate)
-                t_ocr = (time.time() - t_ocr0) * 1000.0
+                t_ocr = (time.monotonic() - t_ocr0) * 1000.0
                 self.stats["ocr_time_ms"] += t_ocr
+                self._ocr_latency_samples.append(t_ocr)
 
                 raw_text = ocr_res["raw_text"]
                 ocr_conf = ocr_res["confidence"]
@@ -447,9 +648,21 @@ class AIPipeline:
                 self._emitted_tracks[emit_key] = final_plate
                 events.append(event_payload)
                 self.stats["total_detections"] += 1
-                self._dispatch_event(event_payload)
+                self._events_by_camera[camera_id] = self._events_by_camera.get(camera_id, 0) + 1
+                # Hand off to the background sender (Task 2) -- NEVER a
+                # blocking network call on this thread. `recv_mono` (this
+                # frame's ingestion-side monotonic receipt time, if the
+                # ingestion bridge supplied one) lets the sender compute a
+                # real compute/end-to-end latency without adding any field
+                # to the event payload itself -- the wire schema is
+                # untouched.
+                recv_mono = None
+                _raw_recv = (metadata or {}).get("received_at_s")
+                if isinstance(_raw_recv, (int, float)):
+                    recv_mono = float(_raw_recv)
+                self._enqueue_event(event_payload, recv_mono=recv_mono)
 
-        t_total = (time.time() - t_start) * 1000.0
+        t_total = (time.monotonic() - t_start) * 1000.0
         self.stats["total_pipeline_time_ms"] += t_total
 
         return events
@@ -475,6 +688,64 @@ class AIPipeline:
             "avg_pipeline_latency_ms": round(avg_total_ms, 2),
             "estimated_fps": round(fps, 2)
         }
+
+    @staticmethod
+    def _samples_summary(samples: "deque[float]") -> Dict[str, Optional[float]]:
+        """count/avg/p50/p95 over a bounded latency-sample window. Reports
+        None (never a fabricated number) when there aren't enough/any
+        samples yet -- e.g. OCR p95 before a single OCR call has run."""
+        if not samples:
+            return {"count": 0, "avg_ms": None, "p50_ms": None, "p95_ms": None}
+        ordered = sorted(samples)
+        return {
+            "count": len(ordered),
+            "avg_ms": round(sum(ordered) / len(ordered), 2),
+            "p50_ms": round(_percentile(ordered, 50), 2),
+            "p95_ms": round(_percentile(ordered, 95), 2),
+        }
+
+    def get_resource_usage(self) -> Dict[str, Optional[float]]:
+        """This process's CPU%/RSS-MB, if psutil was importable at startup
+        (Task 1 "CPU/RAM if practical"). Never raises; returns Nones
+        otherwise so callers can tell "not measured" from "zero"."""
+        if self._psutil_process is None:
+            return {"cpu_percent": None, "rss_mb": None}
+        try:
+            cpu = self._psutil_process.cpu_percent(interval=None)
+            rss_mb = self._psutil_process.memory_info().rss / (1024.0 * 1024.0)
+            return {"cpu_percent": round(cpu, 1), "rss_mb": round(rss_mb, 1)}
+        except Exception:  # noqa: BLE001
+            return {"cpu_percent": None, "rss_mb": None}
+
+    def get_metrics(self) -> Dict[str, Any]:
+        """Full instrumentation snapshot (Phase 2A Task 1): everything
+        get_benchmark_stats() already reports, PLUS event-queue depth /
+        backpressure, per-outcome event-delivery counts, latency
+        percentiles (not just running averages), per-camera frame/event
+        counts, and CPU/RAM. Pure in-memory reads -- no I/O, cheap enough
+        to poll from a stats loop or the benchmark script every few
+        seconds."""
+        metrics = self.get_benchmark_stats()
+        metrics.update({
+            "event_queue_depth": self._event_queue.qsize(),
+            "event_queue_max_depth": self._event_queue_max_depth,
+            "event_queue_maxsize": self.event_queue_maxsize,
+            "events_enqueued": self.stats["events_enqueued"],
+            "events_sent_ok": self.stats["events_sent_ok"],
+            "events_dropped_queue_full": self.stats["events_dropped_queue_full"],
+            "events_dropped_backend_rejected": self.stats["events_dropped_backend_rejected"],
+            "events_dropped_buffer_full": self.stats["events_dropped_buffer_full"],
+            "events_buffered_for_retry": len(self.event_buffer),
+            "yolo_latency_ms": self._samples_summary(self._yolo_latency_samples),
+            "ocr_latency_ms": self._samples_summary(self._ocr_latency_samples),
+            "send_latency_ms": self._samples_summary(self._send_latency_samples),
+            "compute_latency_ms": self._samples_summary(self._compute_latency_samples),
+            "end_to_end_latency_ms": self._samples_summary(self._e2e_latency_samples),
+            "frames_by_camera": dict(self._frames_by_camera),
+            "events_by_camera": dict(self._events_by_camera),
+            "resource_usage": self.get_resource_usage(),
+        })
+        return metrics
 
     def _post_headers(self) -> Dict[str, str]:
         h = {"Content-Type": "application/json"}
@@ -508,10 +779,19 @@ class AIPipeline:
         if outcome == "ok":
             plate = payload.get("license_plate", {}).get("text", payload.get("plate_number"))
             logger.info("Event %s published to backend (%s)", payload.get("event_id"), plate)
+            self.stats["events_sent_ok"] += 1
             self._flush_buffer()
             return True
         if outcome == "retry":
+            # Reported, never silent: the retry deque is bounded (maxlen=2000)
+            # -- if it's already full, this append evicts the oldest queued
+            # event, so count that eviction explicitly (Task 2 "no unbounded
+            # memory growth" + "do not silently lose events").
+            if len(self.event_buffer) >= (self.event_buffer.maxlen or 0):
+                self.stats["events_dropped_buffer_full"] += 1
             self.event_buffer.append(payload)
+        elif outcome == "drop":
+            self.stats["events_dropped_backend_rejected"] += 1
         return False
 
     def _flush_buffer(self) -> None:
@@ -526,15 +806,21 @@ class AIPipeline:
             outcome = self._post_one(payload)
             if outcome == "ok":
                 self.event_buffer.popleft()
+                self.stats["events_sent_ok"] += 1
                 flushed += 1
             elif outcome == "drop":
                 self.event_buffer.popleft()
+                self.stats["events_dropped_backend_rejected"] += 1
             else:  # retry -- backend still down, stop for now
                 break
         if flushed:
             logger.info("Flushed %d buffered events (%d remaining)", flushed, len(self.event_buffer))
 
     def flush_events(self) -> int:
-        """Public: force a buffer flush. Returns the number still buffered."""
+        """Public: wait for the background sender to drain whatever's
+        already queued (Task 2 async hand-off means that's no longer
+        instantaneous), then retry the backlog same as before. Returns the
+        number of events still buffered/unsent afterward."""
+        self._wait_for_queue_empty(timeout=5.0)
         self._flush_buffer()
         return len(self.event_buffer)

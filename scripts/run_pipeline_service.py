@@ -127,8 +127,6 @@ class PipelineService:
         self.backend_events_url = args.backend_url
         self.ingest_key = os.getenv("SENTINEL_INGEST_API_KEY") or os.getenv("INGEST_API_KEY")
         self._stop = threading.Event()
-        self.backend_ok = 0
-        self.backend_fail = 0
 
         self.manager = StreamManager(max_queue_size=args.max_queue)
         self.pipeline = AIPipeline(
@@ -191,13 +189,15 @@ class PipelineService:
 
     # -- event callback -------------------------------------------------- #
     def _on_events(self, camera_id: str, events: list) -> None:
+        # Dispatch is async now (Task 2) -- events_buffer here reflects the
+        # RETRY backlog only, not "in flight, not yet attempted" (those are
+        # in the event queue, see get_metrics()['event_queue_depth']).
         for ev in events:
             plate = ev.get("license_plate", {}).get("plate_number", "?")
-            log.info("AI event  cam=%s track=%s plate=%s buffered=%d",
-                     camera_id, ev.get("track_id"), plate, len(self.pipeline.event_buffer))
-        # delivery status is inferred from the pipeline buffer
-        self.backend_ok = self.pipeline.stats["total_detections"] - len(self.pipeline.event_buffer)
-        self.backend_fail = len(self.pipeline.event_buffer)
+            log.info("AI event  cam=%s track=%s plate=%s queued=%d buffered=%d",
+                     camera_id, ev.get("track_id"),
+                     plate, self.pipeline.get_metrics()["event_queue_depth"],
+                     len(self.pipeline.event_buffer))
 
     # -- stats loop ---------------------------------------------------- #
     def _stats_loop(self) -> None:
@@ -205,22 +205,33 @@ class PipelineService:
         last_frames = 0
         while not self._stop.wait(interval):
             snap = {m.camera_id: m for m in self.manager.health.get_snapshot()}
-            bs = self.pipeline.get_benchmark_stats()
+            metrics = self.pipeline.get_metrics()
             fps = (self.consumer.frames_processed - last_frames) / max(interval, 1e-9)
             last_frames = self.consumer.frames_processed
+            res = metrics["resource_usage"]
             log.info(
                 "STATS | consumed=%d skipped=%d fps=%.1f | vehicles=%d events=%d "
-                "yolo=%.0fms ocr=%.0fms | backend_ok~%d buffered=%d",
+                "yolo=%.0fms(p95=%s) ocr=%.0fms(p95=%s) | "
+                "queue=%d/%d(max %d) sent=%d q_full_drop=%d rejected=%d retry_buf=%d | "
+                "cpu=%s%% rss=%sMB",
                 self.consumer.frames_processed, self.consumer.frames_skipped, fps,
-                bs["total_vehicles_detected"], bs["total_ai_events_generated"],
-                bs["avg_vehicle_detection_ms"], bs["avg_ocr_ms"],
-                max(0, self.backend_ok), self.backend_fail,
+                metrics["total_vehicles_detected"], metrics["total_ai_events_generated"],
+                metrics["avg_vehicle_detection_ms"], metrics["yolo_latency_ms"]["p95_ms"],
+                metrics["avg_ocr_ms"], metrics["ocr_latency_ms"]["p95_ms"],
+                metrics["event_queue_depth"], metrics["event_queue_maxsize"], metrics["event_queue_max_depth"],
+                metrics["events_sent_ok"], metrics["events_dropped_queue_full"],
+                metrics["events_dropped_backend_rejected"], metrics["events_buffered_for_retry"],
+                res["cpu_percent"], res["rss_mb"],
             )
             for cam_id in self.camera_names:
                 m = snap.get(cam_id)
                 if m:
-                    log.info("  cam %s status=%s fps=%.1f drops=%d reconnects=%d",
-                             cam_id, m.status.value, m.measured_fps, m.frame_drop_count, m.reconnect_count)
+                    log.info("  cam %s status=%s fps=%.1f drops=%d reconnects=%d last_reconnect=%ss "
+                             "frames=%d events=%d",
+                             cam_id, m.status.value, m.measured_fps, m.frame_drop_count, m.reconnect_count,
+                             round(m.last_reconnect_duration_s, 1) if m.last_reconnect_duration_s else "n/a",
+                             metrics["frames_by_camera"].get(cam_id, 0),
+                             metrics["events_by_camera"].get(cam_id, 0))
 
     # -- stream health push (HealthRegistry -> backend camera status) ---- #
     def _health_push_url(self) -> str | None:
@@ -284,6 +295,15 @@ class PipelineService:
         try:
             left = self.pipeline.flush_events()
             log.info("final flush: %d events still buffered", left)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            # Graceful drain (Task 2): stop the background sender thread,
+            # moving anything still stuck in its queue into the retry
+            # buffer rather than losing it on process exit.
+            still_buffered = self.pipeline.shutdown(drain_timeout=5.0)
+            if still_buffered:
+                log.warning("%d event(s) never delivered before shutdown", still_buffered)
         except Exception:  # noqa: BLE001
             pass
         log.info("stopped. frames processed=%d, AI events=%d",

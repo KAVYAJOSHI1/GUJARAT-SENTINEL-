@@ -59,7 +59,10 @@ class TestAIToBackend(unittest.TestCase):
         # clean slate + one admin user
         with SessionLocal() as s:
             from sqlalchemy import text
-            for t in ("alerts", "vehicle_events", "watchlist", "cameras"):
+            # audit_logs first: real audit writes (login, watchlist, ...)
+            # FK-reference users.id, so a leftover row from a previous run
+            # of this test would block DELETE FROM users below otherwise.
+            for t in ("audit_logs", "alerts", "vehicle_events", "watchlist", "cameras"):
                 s.execute(text(f"DELETE FROM {t}"))
             s.execute(text("DELETE FROM users WHERE username='e2e-admin'"))
             s.add(User(username="e2e-admin", email="e2e@x.com",
@@ -132,6 +135,11 @@ class TestAIToBackend(unittest.TestCase):
             evs = pipe.process_frame(np.full((480, 640, 3), 110, np.uint8),
                                      camera_id=cam, frame_timestamp=ts)
             self.assertEqual(len(evs), 1)
+        # Phase 2A: dispatch is now async (a background sender thread, not
+        # process_frame() itself) -- flush_events() waits for the queue to
+        # drain before retrying the backlog, giving this a deterministic
+        # point after which "delivered or buffered" is actually true.
+        pipe.flush_events()
         self.assertEqual(len(pipe.event_buffer), 0, "events must not stay buffered")
 
         # 4. events landed in the DB
@@ -178,6 +186,7 @@ class TestAIToBackend(unittest.TestCase):
         for i in range(3):
             evs = pipe.process_frame(np.full((480, 640, 3), 110, np.uint8),
                                      camera_id="cam09", frame_timestamp=f"2026-09-02T08:00:0{i}Z")
+        pipe.flush_events()  # Phase 2A: dispatch is async, wait before reading the DB
         r = self.client.get("/api/v1/alerts?status=NEW", headers=self.auth)
         got = [a for a in r.json() if a.get("plate_number_normalized") == "GJ09ZZ0009"]
         self.assertEqual(len(got), 1, "cooldown must suppress the 2nd/3rd alert on the same camera")
@@ -191,6 +200,7 @@ class TestAIToBackend(unittest.TestCase):
                                  camera_id="cam20", frame_timestamp="2026-09-02T09:00:00Z")
         self.assertEqual(len(evs), 1)
         self.assertEqual(evs[0]["license_plate"]["plate_number"], "UNKNOWN")
+        pipe.flush_events()  # Phase 2A: dispatch is async, wait before reading the DB
         with self.SessionLocal() as s:
             from sqlalchemy import text
             n = s.execute(text("SELECT count(*) FROM vehicle_events WHERE camera_code='cam20'")).scalar()

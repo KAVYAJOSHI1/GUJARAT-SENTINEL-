@@ -128,6 +128,14 @@ class HealthRegistry:
         with self._lock:
             self._get_or_create(camera_id).record_status(status, error)
 
+    def on_reconnect_duration(self, camera_id: str, duration_s: float) -> None:
+        """Record how long the most recently completed (re)connect took,
+        wall-clock, timed by the caller with time.monotonic() deltas --
+        Task 1 "reconnect count/time" (count was already tracked via
+        on_status(..., RECONNECTING); this adds the missing duration)."""
+        with self._lock:
+            self._get_or_create(camera_id).metrics.last_reconnect_duration_s = duration_s
+
     def remove(self, camera_id: str) -> None:
         with self._lock:
             self._cameras.pop(camera_id, None)
@@ -159,6 +167,7 @@ def build_health_app(registry: HealthRegistry):
                     "pts_jitter_ms": round(m.pts_jitter_ms, 2),
                     "frame_drop_count": m.frame_drop_count,
                     "reconnect_count": m.reconnect_count,
+                    "last_reconnect_duration_s": m.last_reconnect_duration_s,
                     "last_error": m.last_error,
                     "updated_at": m.updated_at_s,
                 }
@@ -204,6 +213,7 @@ def push_loop(
                         "pts_jitter_ms": round(m.pts_jitter_ms, 2),
                         "frame_drop_count": m.frame_drop_count,
                         "reconnect_count": m.reconnect_count,
+                        "last_reconnect_duration_s": m.last_reconnect_duration_s,
                         "last_error": m.last_error,
                     }
                     for m in snapshot

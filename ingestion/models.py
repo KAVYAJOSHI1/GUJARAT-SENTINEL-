@@ -96,3 +96,8 @@ class StreamMetrics:
     last_pts_ms: Optional[float] = None
     last_error: Optional[str] = None
     updated_at_s: float = field(default_factory=time.time)
+    # Wall-clock duration (seconds) of the most recently completed
+    # (re)connect -- from RECONNECTING/first-attempt to ONLINE. None until
+    # the first successful connect. Timed with time.monotonic() deltas in
+    # StreamWorker._reconnect(), never PTS.
+    last_reconnect_duration_s: Optional[float] = None
