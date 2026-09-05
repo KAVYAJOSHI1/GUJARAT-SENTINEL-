@@ -185,6 +185,23 @@ GPU configuration.
 
 ---
 
+## 3c. Parallel AI Worker Pool (Phase 2C — IMPLEMENTED, not recommended on this host)
+
+**MEASURED, not fabricated**: `SENTINEL_AI_WORKERS` (default `1`, unchanged
+behavior) now supports camera-sharded, multi-process AI workers with a
+fair per-camera round-robin scheduler (`ai/worker_pool.py`) — see
+`SCALABILITY.md` §4 for the full architecture, isolation guarantees, and
+measured results. Headline finding: on this 8-core shared test host,
+`SENTINEL_AI_WORKERS=2` or `=4` measured **worse** than the `=1` baseline
+at every camera-count tier tested (0-0.06 processed FPS vs. 0.7-1.1 FPS),
+because the host has no spare CPU for a second real YOLO+EasyOCR process
+alongside ingestion — confirmed as host CPU oversubscription (isolated
+component tests all scale correctly), not an architecture defect. **Do not
+enable `SENTINEL_AI_WORKERS>1` in production without re-benchmarking on
+the actual target hardware first.**
+
+---
+
 ## 4. Team & Repository Branch Matrix
 
 ```text
