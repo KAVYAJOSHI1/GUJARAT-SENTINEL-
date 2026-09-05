@@ -77,6 +77,11 @@ class Sampler:
                     "t": time.monotonic(),
                     "health": health,
                     "frame_queue_depth": self.svc.manager.frame_queue.qsize(),
+                    # Sampled WHILE the run is live -- a reading taken after
+                    # svc.shutdown() (workers/sender threads stopped) would
+                    # understate real load, especially at higher camera
+                    # counts where CPU/RAM peak during the run, not after.
+                    "resource_usage": self.svc.pipeline.get_resource_usage(),
                 })
             except Exception:  # noqa: BLE001 -- a sampling hiccup must never kill the run
                 service_log.exception("benchmark sampler: snapshot failed")
@@ -133,6 +138,25 @@ def build_report(svc: PipelineService, sampler: "Sampler", args, elapsed_s: floa
     total_processed_fps = round(total_processed_frames / elapsed_s, 2) if elapsed_s > 0 else None
     frame_queue_depths = [s["frame_queue_depth"] for s in samples]
 
+    # CPU/RAM: use the DURING-RUN samples (see Sampler._run's comment) --
+    # avg CPU reflects sustained load, max CPU/RSS the observed peak. A
+    # post-shutdown-only reading would understate both.
+    cpu_samples = [
+        s["resource_usage"]["cpu_percent"] for s in samples
+        if s["resource_usage"]["cpu_percent"] is not None
+    ]
+    rss_samples = [
+        s["resource_usage"]["rss_mb"] for s in samples
+        if s["resource_usage"]["rss_mb"] is not None
+    ]
+    resource_usage = {
+        "cpu_percent_avg": round(sum(cpu_samples) / len(cpu_samples), 1) if cpu_samples else None,
+        "cpu_percent_max": round(max(cpu_samples), 1) if cpu_samples else None,
+        "rss_mb_max": round(max(rss_samples), 1) if rss_samples else None,
+        "rss_mb_final": final_metrics["resource_usage"]["rss_mb"],
+        "sample_count": len(cpu_samples),
+    }
+
     return {
         "cameras": list(svc.camera_names.keys()),
         "no_backend": bool(args.no_backend),
@@ -161,6 +185,8 @@ def build_report(svc: PipelineService, sampler: "Sampler", args, elapsed_s: floa
             "events_dropped_buffer_full": final_metrics["events_dropped_buffer_full"],
             "events_buffered_for_retry": final_metrics["events_buffered_for_retry"],
             "event_queue_maxsize": final_metrics["event_queue_maxsize"],
+            # True high-water-mark, tracked continuously inside AIPipeline
+            # itself -- unaffected by sampling interval or shutdown timing.
             "event_queue_max_depth": final_metrics["event_queue_max_depth"],
         },
         "latency_ms": {
@@ -170,7 +196,7 @@ def build_report(svc: PipelineService, sampler: "Sampler", args, elapsed_s: floa
             "compute": final_metrics["compute_latency_ms"],
             "end_to_end": final_metrics["end_to_end_latency_ms"],
         },
-        "resource_usage": final_metrics["resource_usage"],
+        "resource_usage": resource_usage,
     }
 
 
@@ -232,7 +258,11 @@ def print_human_report(report: dict) -> None:
             print(f"  {name:<36} n={s['count']:<5} avg={s['avg_ms']:<8} p50={s['p50_ms']:<8} p95={s['p95_ms']}")
     print("-" * 72)
     r = report["resource_usage"]
-    print(f" RESOURCE  cpu={_fmt(r['cpu_percent'], '%')}  rss={_fmt(r['rss_mb'], 'MB')}")
+    print(
+        f" RESOURCE (n={r['sample_count']} in-run samples)  "
+        f"cpu avg={_fmt(r['cpu_percent_avg'], '%')} max={_fmt(r['cpu_percent_max'], '%')}  "
+        f"rss max={_fmt(r['rss_mb_max'], 'MB')} (final={_fmt(r['rss_mb_final'], 'MB')})"
+    )
     print("=" * 72)
 
 

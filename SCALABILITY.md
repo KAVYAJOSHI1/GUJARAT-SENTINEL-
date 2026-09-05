@@ -50,8 +50,29 @@ measurement of the current single-node system — see
   drop (queue-full, backend-rejected, retry-buffer-full) counted, never
   silent. See README.md §3 for the measured result of one real run.
 - `scripts/benchmark_pipeline.py` is a reusable harness for the 1/5/10/20/30
-  camera load ladder the audit's Part II described — it has been run at 2
-  cameras (see README.md §3); the full ladder has not been run yet.
+  camera load ladder the audit's Part II described — it has now been run at
+  all five tiers (1/5/10/20/30 MOCK cameras, one 8-core host, 45s each,
+  `--no-backend`). Full table + analysis: README.md §3b.
+
+**Load-ladder headline result (MEASURED, README.md §3b has the full
+table)**: total pipeline throughput is **flat at ~1.0–1.3 processed
+frames/sec regardless of camera count (1 through 30)** — the single
+`FrameConsumer` thread is already the hard ceiling at N=1 on this host/
+dataset, not something that only appears at higher camera counts. CPU is
+already near its ~800%-of-8-cores ceiling (667% avg) at N=1 and stays flat
+through N=30. This directly confirms, with real numbers rather than
+architectural inference, this document's own §7-of-the-audit conclusion
+that the current single-process design does not scale past a handful of
+cameras without the GPU/worker-pool changes in §2 above — it is not a
+50-camera-vs-30,000-camera question, it is already the binding constraint
+at 1 camera on CPU.
+
+A related but distinct finding: at N≥10, only 5 of N cameras ever get a
+processed frame in a 45s run (the rest are fully starved) — this is a FIFO
+frame-queue fairness artifact (worker start order determines who fills the
+queue first), not the same thing as the CPU ceiling, and was intentionally
+NOT fixed this pass (the safe fix needs a different queue/eviction
+structure, more than the "smallest safe change" this pass allowed for).
 
 **Still ROADMAP, unaffected by this pass**: everything in §1/§2 above
 (Kafka/RabbitMQ, Kubernetes, Triton, PostgreSQL partitioning, GPU inference,
@@ -60,4 +81,9 @@ deliberately did not add it (see the task brief this was implemented under:
 "measure first," not "add distributed infrastructure"). Closing the
 single-CPU-consumer-thread bottleneck the benchmark run reconfirmed still
 requires the GPU/worker-pool work described in §8 of the audit report, not
-attempted here.
+attempted here. The 1,250 FPS / 62,500 FPS / 2,000,000 FPS figures in §1
+above remain entirely aspirational — the measured total across this
+codebase's actual single-consumer-thread design tops out at ~1.3 FPS
+regardless of camera count, a ~1,000x gap from even the stated PoC-tier
+target that no config change closes; only GPU inference and true worker
+parallelism (§2 above, not implemented) can.
