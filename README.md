@@ -93,12 +93,95 @@ any of these numbers in a different environment):
 | Ingestion frame-queue | filled to its max (500) — confirms the **already-known, unrelated** single-CPU-consumer-thread bottleneck (§6/§7 of the audit), not a regression from this change |
 
 **ROADMAP, not implemented / not run here**: sustained multi-hour soak tests,
-CPU/RAM trend-over-time leak detection, the 1/5/10/20/30-camera load ladder
-itself (the harness supports it; running all five tiers back-to-back and
-publishing the breakdown point wasn't done in this pass), and anything at
-the real `cam04`/`cam06` Sentinel source (unreachable from this environment
-when this was written — the harness works identically against it once
-reachable).
+and anything at the real `cam04`/`cam06` Sentinel source (unreachable from
+this environment both when this was written and when the load ladder below
+was run — the harness works identically against it once reachable).
+
+---
+
+## 3b. Camera Scalability Load Ladder (1 / 5 / 10 / 20 / 30 — MEASURED)
+
+**MEASURED** — a real 1/5/10/20/30-MOCK-camera ladder was run (not
+estimated), one `scripts/benchmark_pipeline.py` invocation per tier, 45s
+each, `--no-backend` (isolates AI/pipeline CPU capacity from network
+variance, per the audit's own methodology), same 8-core host as §3:
+
+```bash
+.venv/bin/python scripts/generate_mock_camera_registry.py --count 30
+.venv/bin/python scripts/benchmark_pipeline.py --cameras MOCK_CAM01 \
+    --registry data/trafficdataset_camera_registry.json --duration 45 --no-backend
+# ...repeated with --cameras MOCK_CAM01..05 / ..10 / ..20 / ..30
+```
+
+| N cameras | input FPS (sum) | processed FPS (total) | dropped frames | frame-queue max | CPU avg/max % | RSS max | YOLO p50/p95 ms | OCR p50/p95 ms | E2E p50/p95 ms | cameras that got ≥1 processed frame |
+| :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
+| 1 | 30 | 1.18 | 6 | 500/500 | 667/733 | 4039 MB | 37/60 | 168/346 | 3007/11937 | 1/1 |
+| 5 | 150 | 1.31 | 153 | 500/500 | 660/703 | 4449 MB | 39/68 | 147/345 | 11247/35487 | 5/5 |
+| 10 | 300 | 1.20 | 371 | 500/500 | 682/725 | 4939 MB | 42/64 | 155/339 | 12456/40185 | 5/10 |
+| 20 | 600 | 1.09 | 787 | 500/500 | 692/720 | 5841 MB | 42/62 | 177/378 | 13559/38334 | 5/20 |
+| 30 | 900 | 1.04 | 1186 | 500/500 | 700/723 | 6747 MB | 43/96 | 176/418 | 15169/44051 | 5/30 |
+
+All 30 mock cameras ingested successfully at every tier (every worker
+reached `status=ONLINE`, one clean initial connect each, zero ingestion
+errors/crashes) — ingestion itself scales cleanly to 30 concurrent
+connections. Event delivery stayed healthy throughout (event-queue depth
+never exceeded 1/500 at any tier; `--no-backend` means `events_sent_ok`
+reads 0 by the script's own documented convention, not a delivery failure).
+
+**Bottleneck, from these numbers alone:**
+- **The frame queue saturates (500/500) already at N=1.** This is not a
+  multi-camera-only problem: even one camera's raw 30fps input outpaces the
+  single AI consumer thread on this clip (dense multi-vehicle frames).
+- **Total processed FPS is flat (~1.0–1.3) across every tier.** Going from 1
+  to 30 cameras did not change the pipeline's aggregate throughput at all —
+  conclusive evidence of a single hard ceiling (the one `FrameConsumer`
+  thread), not a per-camera or queue-size limit.
+- **CPU is already at its ceiling at N=1** (667% avg of a possible ~800% on
+  this 8-core host) and stays flat (660–700%) through N=30 — CPU is the
+  limiting resource, and it does not get more saturated with more cameras
+  because it is already maxed out by the compute cost of processing frames
+  from as few as one busy camera.
+- **OCR (p50 147–177ms) consistently costs ~4x more than YOLO (p50 37–43ms)
+  per operation** — OCR is the dominant per-vehicle compute cost, though at
+  these camera counts most cameras never process enough frames to reach the
+  existing OCR-throttling threshold (3 votes) in the first place.
+- **Only 5 of N cameras ever get a single processed frame once N≥10** (25 of
+  30 cameras: zero frames processed in 45s). Root cause, from reading
+  `ingestion/stream_manager.py`/`ai/adapter/ingestion_bridge.py`: workers
+  start sequentially and the shared `frame_queue` is pure FIFO with no
+  eviction of stale entries — whichever cameras' frames fill the queue's
+  500 slots first (a function of worker start order, not any per-camera
+  cap) occupy essentially the entire queue for the whole run, because the
+  consumer drains at ~1 frame/sec against ~900 incoming/sec combined at
+  N=30. This is a **fairness** artifact of a plain FIFO queue under massive
+  sustained overload, distinct from the raw CPU ceiling above.
+- **RAM grows roughly linearly with camera count** (4.0 GB → 6.7 GB, N=1→30)
+  — proportional to the number of concurrent `StreamWorker`/OpenCV capture
+  threads, not a leak (each run is a fresh process; there is no
+  within-run growth trend evidence either way from a single snapshot per
+  tier — see "not run" below).
+- **Frame drops scale roughly linearly with camera count** (6 → 1186,
+  N=1→30), consistent with more producers competing for the same
+  saturated single consumer + FIFO queue.
+
+**Optimization decision**: no pipeline code change was made. Every
+candidate considered (configurable worker count, OCR throttling, frame
+skipping, batching, moving OCR off the main path) either doesn't address
+what was actually measured (most starved cameras never reach the
+frame-count where OCR throttling would matter) or requires more than a
+small, contained change to fix safely (true parallelism needs a
+thread-safety review of the currently single-consumer-assumed
+`AIPipeline` state; fixing the FIFO fairness issue needs a different
+queue/eviction data structure, a bigger change than "smallest safe" for
+this pass). See `SENTINEL_System_Audit_Report.md` for the deferred
+GPU/worker-pool architecture this genuinely requires.
+
+**NOT measured in this pass** (do not assume, do not extrapolate): a
+sustained multi-hour run at any tier (RAM-growth-over-time / leak
+detection needs one, not a single end-of-run snapshot); the real
+`cam04`/`cam06` Sentinel RTSP source (unreachable from this environment);
+any tier with a live (non-`--no-backend`) backend under this much load; any
+GPU configuration.
 
 ---
 
