@@ -182,9 +182,14 @@ def _event_flow_health(db: Session) -> EventFlowHealth:
         .where(VehicleEvent.timestamp >= window_start)
         .where(VehicleEvent.plate_number_normalized != "UNKNOWN")
     ).scalar() or 0
+    # clamp at 0: a camera/host clock skewed ahead can stamp an event in the
+    # future -- "-11886s ago" on the command center is worse than "0s ago"
+    age = None
+    if last_ts is not None:
+        age = round(max(0.0, (now - last_ts).total_seconds()), 1)
     return EventFlowHealth(
         last_event_at=last_ts,
-        last_event_age_seconds=round((now - last_ts).total_seconds(), 1) if last_ts else None,
+        last_event_age_seconds=age,
         events_last_15min=int(total_15),
         readable_last_15min=int(readable_15),
         unknown_last_15min=int(total_15) - int(readable_15),

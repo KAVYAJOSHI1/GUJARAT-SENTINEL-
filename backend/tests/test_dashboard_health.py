@@ -105,3 +105,14 @@ def test_event_flow_and_alert_counts(client, officer_user, make_camera, make_veh
     assert b["alerts"]["total"] == 1
     assert b["alerts"]["active"] == 1
     assert b["alerts"]["high_or_critical_active"] == 1
+
+
+def test_future_event_timestamp_does_not_produce_negative_age(client, officer_user, make_camera, make_vehicle_event):
+    """A camera/host clock skewed ahead can stamp an event in the future --
+    the command center must show 0, never a negative 'age'."""
+    _, token = officer_user
+    cam = make_camera(code="cam-h-future")
+    make_vehicle_event(cam, plate="GJ01FUTURE1", track_id=1,
+                       ts=datetime.utcnow() + timedelta(hours=3))
+    age = _health(client, token)["events"]["last_event_age_seconds"]
+    assert age is not None and age >= 0
