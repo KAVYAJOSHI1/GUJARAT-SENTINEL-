@@ -80,6 +80,9 @@ export function normalizeSighting(raw) {
   const resolvedLat = Number.isFinite(lat) ? lat : Array.isArray(coords) ? coords[1] : null;
   const resolvedLng = Number.isFinite(lng) ? lng : Array.isArray(coords) ? coords[0] : null;
   const cameraId = String(pick(raw, ["camera_id", "cam_id", "cameraId"], "CAM-?"));
+  // Backend sends an explicit `has_location`; trust it, but fall back to a
+  // coordinate check for older / mock payloads.
+  const backendHasLoc = pick(raw, ["has_location", "hasLocation"], null);
   return {
     eventId,
     cameraId,
@@ -92,10 +95,15 @@ export function normalizeSighting(raw) {
     // Journey task §4: a sighting with no camera fix must still show up on
     // the timeline ("mark location unavailable") -- it just can't be
     // plotted/routed on the map. Never invented here.
-    hasLocation: resolvedLat != null && resolvedLng != null,
+    hasLocation:
+      backendHasLoc != null ? Boolean(backendHasLoc) : resolvedLat != null && resolvedLng != null,
     snapshotUrl: pick(raw, ["evidence_snapshot_url", "snapshot_url", "evidence_url", "image_url"], "") || "",
     plateCropUrl: pick(raw, ["plate_crop_url", "plate_image_url", "crop_url"], "") || "",
-    ocrConfidence: Number(pick(raw, ["ocr_confidence", "confidence", "ocrConfidence"], NaN)),
+    // Backend field is `confidence_score` (the plate/OCR confidence stored
+    // on the vehicle_event row); keep the older spellings for the mock.
+    ocrConfidence: Number(
+      pick(raw, ["confidence_score", "ocr_confidence", "confidence", "ocrConfidence"], NaN)
+    ),
     vehicleType: pick(raw, ["vehicle_type", "vehicleType", "type"], null),
   };
 }
@@ -110,18 +118,45 @@ export function normalizeVehicleSearch(raw, fallbackPlate = "") {
     .map(normalizeSighting)
     .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp)); // chronological ASC
 
+  // The backend now returns a real `journey` block derived purely from the
+  // sighting rows; older payloads / the mock have a `summary` block or
+  // nothing. Prefer `journey`, fall back to `summary`, then to a
+  // client-side recompute -- never fabricated.
+  const journey = raw?.journey || {};
   const summary = raw?.summary || {};
+  const distinctCameras = new Set(sightings.map((s) => s.cameraId)).size;
+  const geolocated = sightings.filter((s) => s.hasLocation).length;
+  const distinctGeoCameras = new Set(
+    sightings.filter((s) => s.hasLocation).map((s) => s.cameraId)
+  ).size;
+
   const cameraCount =
+    pick(journey, ["distinct_cameras"], null) ??
     pick(summary, ["total_cameras", "camera_count"], null) ??
-    new Set(sightings.map((s) => s.cameraId)).size;
+    distinctCameras;
 
   return {
     plate: normalizePlate(pick(raw, ["query_plate", "plate", "plate_number"], fallbackPlate)),
     totalSightings: pick(raw, ["total_sightings"], sightings.length),
-    firstSeen: pick(summary, ["first_seen", "firstSeen"], sightings[0]?.timestamp || null),
-    lastSeen: pick(summary, ["last_seen", "lastSeen"], sightings[sightings.length - 1]?.timestamp || null),
+    firstSeen:
+      pick(journey, ["first_seen"], null) ??
+      pick(summary, ["first_seen", "firstSeen"], sightings[0]?.timestamp || null),
+    lastSeen:
+      pick(journey, ["last_seen"], null) ??
+      pick(summary, ["last_seen", "lastSeen"], sightings[sightings.length - 1]?.timestamp || null),
     cameraCount,
-    watchlistHit: Boolean(pick(summary, ["has_active_watchlist_hit", "watchlist_hit", "is_watchlisted"], false)),
+    geolocatedSightings: pick(journey, ["geolocated_sightings"], geolocated),
+    vehicleTypes: pick(journey, ["vehicle_types"], [
+      ...new Set(sightings.map((s) => s.vehicleType).filter(Boolean)),
+    ]),
+    // a plottable trail needs >= 2 distinct geolocated cameras
+    hasJourney: pick(journey, ["has_journey"], distinctGeoCameras >= 2),
+    isSingleSighting: pick(journey, ["is_single_sighting"], sightings.length === 1),
+    // Backend puts the flag at the top level of the response.
+    watchlistHit: Boolean(
+      pick(raw, ["is_watchlisted"], false) ||
+        pick(summary, ["has_active_watchlist_hit", "watchlist_hit", "is_watchlisted"], false)
+    ),
     sightings,
   };
 }

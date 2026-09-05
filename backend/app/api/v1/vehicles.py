@@ -18,7 +18,11 @@ from app.models.camera import Camera
 from app.models.vehicle_event import VehicleEvent
 from app.models.watchlist import Watchlist
 from app.schemas.auth import CurrentUser
-from app.schemas.vehicle import VehicleHistoryResponse, VehicleSighting
+from app.schemas.vehicle import (
+    VehicleHistoryResponse,
+    VehicleJourneySummary,
+    VehicleSighting,
+)
 from app.services.audit import record_audit
 from app.services.plate_utils import normalize_plate
 from app.services.watchlist_engine import active_watchlist_clause
@@ -36,6 +40,32 @@ EVIDENCE_ROOT = os.getenv(
     "EVIDENCE_ROOT",
     os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "evidence"),
 )
+
+
+def _build_journey_summary(sightings: list[VehicleSighting]) -> VehicleJourneySummary:
+    """All fields derived from the real sighting rows only. `sightings` is
+    already chronological ascending."""
+    if not sightings:
+        return VehicleJourneySummary()
+
+    first = sightings[0].timestamp
+    last = sightings[-1].timestamp
+    span = int((last - first).total_seconds()) if last >= first else 0
+    distinct_cameras = len({s.camera_id for s in sightings})
+    geolocated = sum(1 for s in sightings if s.has_location)
+    types = sorted({s.vehicle_type for s in sightings if s.vehicle_type})
+    distinct_geo_cameras = len({s.camera_id for s in sightings if s.has_location})
+
+    return VehicleJourneySummary(
+        first_seen=first,
+        last_seen=last,
+        span_seconds=span,
+        distinct_cameras=distinct_cameras,
+        geolocated_sightings=geolocated,
+        vehicle_types=types,
+        is_single_sighting=len(sightings) == 1,
+        has_journey=distinct_geo_cameras >= 2,
+    )
 
 
 def _resolve_local_evidence_path(stored_path: str):
@@ -78,25 +108,31 @@ def search_vehicle(
     )
     rows = db.execute(stmt).all()
 
-    sightings = [
-        VehicleSighting(
-            event_id=ev.id,
-            camera_id=ev.camera_id,
-            camera_code=camera_code,
-            camera_name=camera_name,
-            location_desc=location_desc,
-            timestamp=ev.timestamp,
-            # prefer the event's own fix; fall back to the camera's location
-            latitude=ev.latitude if ev.latitude is not None else cam_lat,
-            longitude=ev.longitude if ev.longitude is not None else cam_lon,
-            snapshot_url=ev.snapshot_url,
-            confidence_score=ev.confidence_score,
-            track_id=ev.track_id,
-            vehicle_type=ev.vehicle_type,
-            plate_number=ev.plate_number,
+    sightings = []
+    for ev, camera_name, camera_code, location_desc, cam_lat, cam_lon in rows:
+        # prefer the event's own fix; fall back to the camera's location
+        lat = ev.latitude if ev.latitude is not None else cam_lat
+        lon = ev.longitude if ev.longitude is not None else cam_lon
+        sightings.append(
+            VehicleSighting(
+                event_id=ev.id,
+                camera_id=ev.camera_id,
+                camera_code=camera_code,
+                camera_name=camera_name,
+                location_desc=location_desc,
+                timestamp=ev.timestamp,
+                latitude=lat,
+                longitude=lon,
+                has_location=lat is not None and lon is not None,
+                snapshot_url=ev.snapshot_url,
+                confidence_score=ev.confidence_score,
+                track_id=ev.track_id,
+                vehicle_type=ev.vehicle_type,
+                plate_number=ev.plate_number,
+            )
         )
-        for ev, camera_name, camera_code, location_desc, cam_lat, cam_lon in rows
-    ]
+
+    journey = _build_journey_summary(sightings)
 
     is_watchlisted = (
         db.execute(
@@ -118,7 +154,11 @@ def search_vehicle(
         user_id=user.id,
         resource="vehicle",
         resource_id=plate_normalized,
-        detail={"total_sightings": len(sightings), "is_watchlisted": is_watchlisted},
+        detail={
+            "total_sightings": len(sightings),
+            "is_watchlisted": is_watchlisted,
+            "distinct_cameras": journey.distinct_cameras,
+        },
     )
 
     return VehicleHistoryResponse(
@@ -126,6 +166,7 @@ def search_vehicle(
         total_sightings=len(sightings),
         is_watchlisted=is_watchlisted,
         sightings=sightings,
+        journey=journey,
     )
 
 
@@ -149,24 +190,29 @@ def recent_vehicle_events(
         .order_by(VehicleEvent.timestamp.desc())
         .limit(limit)
     )
-    return [
-        VehicleSighting(
-            event_id=ev.id,
-            camera_id=ev.camera_id,
-            camera_code=code,
-            camera_name=name,
-            location_desc=location_desc,
-            timestamp=ev.timestamp,
-            latitude=ev.latitude if ev.latitude is not None else cam_lat,
-            longitude=ev.longitude if ev.longitude is not None else cam_lon,
-            snapshot_url=ev.snapshot_url,
-            confidence_score=ev.confidence_score,
-            track_id=ev.track_id,
-            vehicle_type=ev.vehicle_type,
-            plate_number=ev.plate_number,
+    out = []
+    for ev, name, code, location_desc, cam_lat, cam_lon in db.execute(stmt).all():
+        lat = ev.latitude if ev.latitude is not None else cam_lat
+        lon = ev.longitude if ev.longitude is not None else cam_lon
+        out.append(
+            VehicleSighting(
+                event_id=ev.id,
+                camera_id=ev.camera_id,
+                camera_code=code,
+                camera_name=name,
+                location_desc=location_desc,
+                timestamp=ev.timestamp,
+                latitude=lat,
+                longitude=lon,
+                has_location=lat is not None and lon is not None,
+                snapshot_url=ev.snapshot_url,
+                confidence_score=ev.confidence_score,
+                track_id=ev.track_id,
+                vehicle_type=ev.vehicle_type,
+                plate_number=ev.plate_number,
+            )
         )
-        for ev, name, code, location_desc, cam_lat, cam_lon in db.execute(stmt).all()
-    ]
+    return out
 
 
 @router.get("/evidence/{event_id}")

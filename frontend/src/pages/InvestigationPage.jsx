@@ -385,9 +385,15 @@ export default function InvestigationPage() {
             {/* RIGHT — GIS map + trajectory + selected-sighting detail */}
             <section style={panel}>
               <div style={panelHead}>
-                <span>Route Trajectory</span>
+                <span>Camera Sighting Trail</span>
                 <span style={{ color: C.muted, fontWeight: 400 }}>
-                  {playing ? `playing · ${selectedIndex + 1}/${sightings.length}` : "polyline + direction arrows"}
+                  {playing
+                    ? `playing · ${selectedIndex + 1}/${sightings.length}`
+                    : result?.hasJourney
+                    ? "sightings connected in time order"
+                    : result?.isSingleSighting
+                    ? "single sighting — nothing to connect"
+                    : "not enough geolocated sightings to draw a trail"}
                 </span>
               </div>
               <div style={{ padding: 12 }}>

@@ -1,4 +1,4 @@
-import { Calendar, Camera, Clock, Hourglass, MapPin, ShieldAlert } from "lucide-react";
+import { Calendar, Camera, Car, Clock, Hourglass, MapPin, Route, ShieldAlert } from "lucide-react";
 import { C } from "../../theme.js";
 import { formatPlate } from "../../utils/plate.js";
 
@@ -44,7 +44,29 @@ function Metric({ icon: Icon, label, value, color = C.text }) {
 
 export default function VehicleProfileCard({ result }) {
   if (!result) return null;
-  const { plate, totalSightings, cameraCount, firstSeen, lastSeen, watchlistHit } = result;
+  const {
+    plate,
+    totalSightings,
+    cameraCount,
+    firstSeen,
+    lastSeen,
+    watchlistHit,
+    vehicleTypes = [],
+    hasJourney,
+    isSingleSighting,
+    geolocatedSightings,
+  } = result;
+
+  // Honest journey status — never claim a route we can't plot.
+  const journeyLabel = isSingleSighting
+    ? "Single sighting — no journey to plot"
+    : hasJourney
+    ? `${cameraCount} cameras · trail plotted`
+    : `${totalSightings} sightings, ${geolocatedSightings ?? 0} geolocated — not enough to plot a trail`;
+
+  const vehicleLabel = vehicleTypes.length
+    ? vehicleTypes.map((t) => t[0].toUpperCase() + t.slice(1)).join(" / ")
+    : "Unclassified";
 
   return (
     <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: 16 }}>
@@ -75,9 +97,24 @@ export default function VehicleProfileCard({ result }) {
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         <Metric icon={MapPin} label="Total sightings" value={totalSightings} color={C.accent} />
         <Metric icon={Camera} label="Cameras" value={cameraCount} />
+        <Metric icon={Car} label="Vehicle type" value={vehicleLabel} />
         <Metric icon={Calendar} label="First seen" value={fmt(firstSeen)} />
         <Metric icon={Clock} label="Last seen" value={fmt(lastSeen)} />
         <Metric icon={Hourglass} label="Journey duration" value={formatDuration(firstSeen, lastSeen)} color={C.violet} />
+      </div>
+
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          marginTop: 10,
+          fontSize: 10.5,
+          color: C.muted,
+        }}
+      >
+        <Route size={11} color={C.dim} />
+        <span>{journeyLabel}</span>
       </div>
     </div>
   );

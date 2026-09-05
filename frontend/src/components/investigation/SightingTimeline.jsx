@@ -1,7 +1,34 @@
-import { ChevronRight, MapPin, MapPinOff } from "lucide-react";
+import { Bike, Bus, Car, ChevronRight, MapPin, MapPinOff, Truck } from "lucide-react";
 import { C } from "../../theme.js";
 import { isMockCamera } from "../../services/api.js";
 import EmptyState from "../ui/EmptyState.jsx";
+
+// Icon for a canonical vehicle type; falls back to a generic car glyph. The
+// label text is always the real stored value (or "unclassified"), never
+// invented.
+const VEHICLE_ICON = { car: Car, motorcycle: Bike, bicycle: Bike, bus: Bus, truck: Truck };
+function VehicleTypeChip({ type }) {
+  const label = type || "unclassified";
+  const Icon = VEHICLE_ICON[type] || Car;
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 3,
+        color: type ? C.dim : C.muted,
+        border: `1px solid ${C.border}`,
+        borderRadius: 3,
+        padding: "0 5px",
+        fontSize: 9,
+        fontWeight: 600,
+        textTransform: "capitalize",
+      }}
+    >
+      <Icon size={9} /> {label}
+    </span>
+  );
+}
 
 // Chronological Movement Timeline (DEVELOPER_README §14.6): vertical list of
 // camera sightings sorted by timestamp ASC. Clicking a card opens the evidence
@@ -83,8 +110,11 @@ export default function SightingTimeline({ sightings = [], activeId, onSelect })
                     </span>
                   )}
                 </div>
-                <div style={{ fontSize: 11, color: C.muted, marginTop: 3, fontFamily: "monospace" }}>
-                  {fmtTime(s.timestamp)}
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 3, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 11, color: C.muted, fontFamily: "monospace" }}>
+                    {fmtTime(s.timestamp)}
+                  </span>
+                  <VehicleTypeChip type={s.vehicleType} />
                 </div>
                 {s.locationDesc && (
                   <div style={{ fontSize: 10.5, color: C.muted, marginTop: 2 }}>{s.locationDesc}</div>

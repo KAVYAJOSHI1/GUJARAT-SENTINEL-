@@ -25,6 +25,7 @@ from app.services.alert_dispatcher import connection_manager
 from app.services.camera_resolver import resolve_camera
 from app.services.minio_service import get_minio_service
 from app.services.plate_utils import normalize_plate
+from app.services.vehicle_types import canonical_vehicle_type
 from app.services.watchlist_engine import process_event_against_watchlist
 from sqlmodel import Session
 
@@ -95,7 +96,7 @@ async def ingest_ai_detection(
         camera_code=camera_code,
         track_id=payload.resolved_track_id(),
         timestamp=payload.timestamp,
-        vehicle_type=payload.resolved_vehicle_type(),
+        vehicle_type=canonical_vehicle_type(payload.resolved_vehicle_type()),
         vehicle_color=payload.vehicle_color,
         confidence_score=payload.resolved_confidence(),
         snapshot_url=snapshot_url,

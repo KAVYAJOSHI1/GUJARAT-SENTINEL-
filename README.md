@@ -299,6 +299,26 @@ limiting, GPU/Kafka/K8s.
 
 ---
 
+## 3f. Vehicle Intelligence & Investigation (Phase 5 — IMPLEMENTED)
+
+Strengthens the plate-search → camera-journey → evidence flow. No changes
+to RTSP ingestion, the worker pool, camera performance, or ANPR internals.
+No GPS/routes/locations are invented — this is a **camera-sighting** trail,
+labelled as such everywhere.
+
+| Area | Change |
+| :--- | :--- |
+| **Vehicle metadata** | `canonical_vehicle_type()` (`backend/app/services/vehicle_types.py`) folds the pipeline's YOLO classes + common synonyms onto one consistent spelling (`car`/`motorcycle`/`bus`/`truck`/…) at ingest. `None` stays `None` — never invented; an unrecognised real value is kept, not upgraded. `vehicle_type` now flows consistently: DB → `/vehicles/search` + `/vehicles/events/recent` → timeline chip + profile card + PDF/CSV. |
+| **Vehicle journey** | `/vehicles/search` gains a `journey` block derived purely from the real sighting rows: `first_seen`, `last_seen`, `span_seconds`, `distinct_cameras`, `geolocated_sightings`, `vehicle_types`, `is_single_sighting`, `has_journey` (≥2 distinct geolocated cameras). Sightings are always chronological ascending; each carries an explicit `has_location`. Single / no-coordinate / unknown-plate cases are reported honestly (no fabricated trail). |
+| **Investigation UI** | Timeline rows now show camera id, location, timestamp, **plate confidence** (was blank on real data — the frontend was reading the wrong field), and a **vehicle-type chip**. Profile card shows vehicle type + an honest journey-status line. Map panel renamed "Camera Sighting Trail" with a status that says plainly when there's nothing to connect. Watchlist flag now reads the backend's top-level `is_watchlisted` (was always false on real data). |
+| **Analytics** | New `GET /api/v1/analytics/overview` — live aggregates over the real tables: detections by type, detections by camera (top N, windowed), top observed plates (UNKNOWN excluded), hourly activity, watchlist matches (total + windowed), active alerts, readable-vs-UNKNOWN counts. Rendered in a **Vehicle Intelligence** dashboard panel that shows an explicit "DATA UNAVAILABLE" state on failure — **never** mock numbers. |
+
+**No DB migration** (no schema change — `vehicle_type` column already
+existed; everything else is query-time). Tests: `backend/tests/` +3
+(`test_vehicle_journey`, `test_analytics`, `test_vehicle_types`).
+
+---
+
 ## 4. Team & Repository Branch Matrix
 
 ```text
