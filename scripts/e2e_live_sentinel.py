@@ -136,13 +136,19 @@ def main():
         time.sleep(2.0)
         mgr.sync_cameras(records)
 
+    # Snapshot health BEFORE stop_all() -- stopping every worker marks each
+    # camera OFFLINE and can reset its PTS-derived measured_fps window,
+    # which would otherwise overwrite the fps/status a camera actually had
+    # for the whole run with a shutdown artifact (same fix already applied
+    # to scripts/benchmark_pipeline.py).
+    health = {m.camera_id: m for m in mgr.health.get_snapshot()}
+    metrics = pipe.get_metrics()  # per-camera frames/events (Phase 2A instrumentation)
     mgr.stop_all()
     stop.set()
     consumer.join(timeout=5)
     pipe.flush_events()
 
     # -------- report --------
-    health = {m.camera_id: m for m in mgr.health.get_snapshot()}
     bs = pipe.get_benchmark_stats()
     elapsed = time.time() - t0
     print("\n" + "-" * 70)
@@ -155,8 +161,11 @@ def main():
         fps = m.measured_fps if m else 0.0
         drops = m.frame_drop_count if m else 0
         rec = m.reconnect_count if m else 0
+        frames_this_cam = metrics["frames_by_camera"].get(r.camera_id, 0)
+        events_this_cam = metrics["events_by_camera"].get(r.camera_id, 0)
         print(f"  {r.camera_id}: status={m.status.value if m else 'n/a'} "
-              f"fps={fps:.1f} drops={drops} reconnects={rec}")
+              f"fps={fps:.1f} drops={drops} reconnects={rec} "
+              f"ai_frames={frames_this_cam} ai_events={events_this_cam}")
     print("-" * 70)
     print(f" frames received (consumer) . {consumer.frames_processed + consumer.frames_skipped}")
     print(f" frames processed (AI) ...... {consumer.frames_processed}")
