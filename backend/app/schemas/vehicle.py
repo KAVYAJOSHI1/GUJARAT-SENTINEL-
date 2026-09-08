@@ -26,6 +26,10 @@ class VehicleSighting(BaseModel):
     vehicle_type: Optional[str] = None
     vehicle_color: Optional[str] = None
     plate_number: Optional[str] = None
+    # Phase 15B: explicit ANPR outcome for this sighting.
+    anpr_status: str = "OK"
+    anpr_failure_reason: Optional[str] = None
+    anpr_quality_score: Optional[float] = None
     # Phase 13: REAL government camera vs a local MOCK/demo feed. Derived
     # from the camera code prefix (never labels a real feed as mock).
     is_mock: bool = False

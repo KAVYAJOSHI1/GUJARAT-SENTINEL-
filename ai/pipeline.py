@@ -106,6 +106,9 @@ class AIPipeline:
         self.ocr_engine = OCREngine()
         self.normalizer = PlateNormalizer()
         self.consensus_engine = MultiFrameConsensus(min_confidence_threshold=self.ocr_confidence_threshold)
+        # Phase 15B: per-crop quality metrics + explicit ANPR failure reasons.
+        from ai.anpr.quality import PlateQualityAssessor
+        self.quality_assessor = PlateQualityAssessor()
 
         # Bounded in-memory buffer for retry on API *unreachability* (5xx /
         # connection errors). 4xx responses are NOT buffered -- retrying a
@@ -510,6 +513,11 @@ class AIPipeline:
                 if (curr_count % self.ocr_throttle_frames) != 0:
                     skip_ocr = True
 
+            # Phase 15B defaults (overwritten in the OCR branch below).
+            fmt_score = 1.0
+            quality_obj = None
+            located = bool(locator_res.get("confidence", 0.0) > 0.0)
+
             if skip_ocr:
                 # Reuse cached stable consensus result
                 self.stats["ocr_skipped_count"] += 1
@@ -545,6 +553,12 @@ class AIPipeline:
                 normalized_plate = self.normalizer.normalize(raw_text)
                 fmt_score = self.normalizer.format_score(normalized_plate)
 
+                # Phase 15B: assess THIS crop's quality (cheap, single-pass).
+                try:
+                    quality_obj = self.quality_assessor.assess(plate_crop)
+                except Exception:  # noqa: BLE001 -- quality is best-effort
+                    quality_obj = None
+
                 # Step 6: Multi-Frame Consensus Voting (OCR conf + detection conf
                 # + format validity + plate-locator quality + temporal
                 # stability; stable plates lock)
@@ -562,6 +576,26 @@ class AIPipeline:
 
             # Determine whether a valid license plate was successfully recognized
             plate_detected = bool(final_plate != "UNKNOWN" and final_conf > 0.0)
+
+            # Phase 15B: explicit ANPR status + failure reason instead of a
+            # bare UNKNOWN. A recognised plate -> status OK, reason NONE.
+            from ai.anpr.quality import FailureReason, PlateQuality
+            _q = quality_obj if quality_obj is not None else PlateQuality()
+            _reads = consensus_res.get("raw_reads", []) if isinstance(consensus_res, dict) else []
+            if plate_detected and final_conf >= self.ocr_confidence_threshold:
+                anpr_status = "OK"
+                anpr_failure_reason = FailureReason.NONE
+            else:
+                anpr_status = "UNKNOWN"
+                try:
+                    anpr_failure_reason = self.quality_assessor.classify_failure(
+                        _q, located=located, ocr_text=raw_text,
+                        normalized_plate=(final_plate if final_plate != "UNKNOWN" else None),
+                        format_score=float(fmt_score), confidence=float(final_conf),
+                        raw_reads=_reads, conf_threshold=self.ocr_confidence_threshold,
+                    )
+                except Exception:  # noqa: BLE001
+                    anpr_failure_reason = FailureReason.LOW_CONFIDENCE
 
             # Step 7: Save Evidence Snapshots (Optimized to avoid redundant disk writes per frame)
             ts_str = str(int(time.time()))
@@ -620,7 +654,16 @@ class AIPipeline:
                     "frame_path": snapshot_path,
                     "frame_snapshot_path": snapshot_path,
                     "plate_crop_path": crop_path
-                }
+                },
+                # Phase 15B: ANPR quality + explicit failure reason.
+                "anpr": {
+                    "status": anpr_status,
+                    "failure_reason": anpr_failure_reason,
+                    "plate_quality": round(float(locator_res.get("confidence", 0.0)), 4),
+                    "quality": _q.to_dict() if hasattr(_q, "to_dict") else {},
+                    "quality_score": _q.overall_score if hasattr(_q, "overall_score") else 0.0,
+                    "ocr_confidence": round(float(final_conf), 4),
+                },
             }
 
             # Optionally inline the snapshot so the backend can store it in

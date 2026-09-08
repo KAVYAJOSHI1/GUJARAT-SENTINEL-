@@ -5,6 +5,18 @@ from typing import List
 
 logger = logging.getLogger("ImagePreprocessor")
 
+
+def _order_quad(pts: np.ndarray) -> np.ndarray:
+    """Order 4 points as top-left, top-right, bottom-right, bottom-left."""
+    rect = np.zeros((4, 2), dtype="float32")
+    s = pts.sum(axis=1)
+    rect[0] = pts[np.argmin(s)]
+    rect[2] = pts[np.argmax(s)]
+    d = np.diff(pts, axis=1)
+    rect[1] = pts[np.argmin(d)]
+    rect[3] = pts[np.argmax(d)]
+    return rect
+
 class ImagePreprocessor:
     """
     Image Preprocessor module for license plate character enhancement.
@@ -48,6 +60,63 @@ class ImagePreprocessor:
         new_w = int(np.clip(w * scale, 80, 600))
         interp = cv2.INTER_CUBIC if scale >= 1.0 else cv2.INTER_AREA
         return cv2.resize(img, (new_w, self.ocr_height), interpolation=interp)
+
+    # ------------------------------------------------------------------ #
+    #  perspective correction (Phase 15B)                                 #
+    # ------------------------------------------------------------------ #
+    def perspective_correct(self, plate_crop: np.ndarray) -> np.ndarray:
+        """Flatten a plate photographed at an angle via a 4-point warp.
+
+        Finds the largest quadrilateral in the crop (the plate outline); if
+        it is clearly non-rectangular, warps it to a front-parallel view.
+        Returns the ORIGINAL crop unchanged when no good quad is found or the
+        quad is already near-rectangular -- pure recall aid, never a
+        regression on the (already axis-aligned) common case.
+        """
+        if plate_crop is None or plate_crop.size == 0 or plate_crop.ndim < 2:
+            return plate_crop
+        h, w = plate_crop.shape[:2]
+        if h < 12 or w < 24:
+            return plate_crop
+        gray = cv2.cvtColor(plate_crop, cv2.COLOR_BGR2GRAY) if plate_crop.ndim == 3 else plate_crop
+        try:
+            edges = cv2.Canny(cv2.bilateralFilter(gray, 7, 40, 40), 40, 160)
+            edges = cv2.dilate(edges, np.ones((3, 3), np.uint8), iterations=1)
+            cnts, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        except cv2.error:
+            return plate_crop
+        best_quad = None
+        best_area = 0.30 * h * w
+        for c in cnts:
+            peri = cv2.arcLength(c, True)
+            approx = cv2.approxPolyDP(c, 0.03 * peri, True)
+            if len(approx) != 4 or not cv2.isContourConvex(approx):
+                continue
+            area = cv2.contourArea(approx)
+            if area > best_area:
+                best_area = area
+                best_quad = approx.reshape(4, 2).astype("float32")
+        if best_quad is None:
+            return plate_crop
+
+        rect = _order_quad(best_quad)
+        (tl, tr, br, bl) = rect
+        widths = [np.linalg.norm(br - bl), np.linalg.norm(tr - tl)]
+        heights = [np.linalg.norm(tr - br), np.linalg.norm(tl - bl)]
+        out_w, out_h = int(max(widths)), int(max(heights))
+        if out_w < 24 or out_h < 12:
+            return plate_crop
+        # skip if already near-rectangular (corners agree within ~6%)
+        if abs(widths[0] - widths[1]) < 0.06 * out_w and abs(heights[0] - heights[1]) < 0.10 * out_h:
+            return plate_crop
+        dst = np.array([[0, 0], [out_w - 1, 0], [out_w - 1, out_h - 1], [0, out_h - 1]], "float32")
+        try:
+            M = cv2.getPerspectiveTransform(rect, dst)
+            warped = cv2.warpPerspective(plate_crop, M, (out_w, out_h), flags=cv2.INTER_CUBIC,
+                                         borderMode=cv2.BORDER_REPLICATE)
+        except cv2.error:
+            return plate_crop
+        return warped if warped is not None and warped.size else plate_crop
 
     def variants(self, plate_crop: np.ndarray, max_variants: int = 4) -> List[np.ndarray]:
         """Return a small set of preprocessing variants for the OCR engine to

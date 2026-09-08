@@ -91,6 +91,7 @@ async def ingest_ai_detection(
 
     lat = payload.latitude
     lon = payload.longitude
+    _anpr = payload.resolved_anpr()
     event = VehicleEvent(
         plate_number=plate_raw,
         plate_number_normalized=plate_normalized,
@@ -101,6 +102,10 @@ async def ingest_ai_detection(
         vehicle_type=canonical_vehicle_type(payload.resolved_vehicle_type()),
         vehicle_color=payload.vehicle_color,
         confidence_score=payload.resolved_confidence(),
+        anpr_status=_anpr["status"],
+        anpr_failure_reason=_anpr["failure_reason"],
+        anpr_quality_score=_anpr["quality_score"],
+        plate_quality=_anpr["plate_quality"],
         snapshot_url=snapshot_url,
         latitude=lat,
         longitude=lon,
