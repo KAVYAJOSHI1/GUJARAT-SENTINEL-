@@ -30,6 +30,27 @@ router = APIRouter()
 _UNKNOWN = "UNKNOWN"
 
 
+@router.get("/anpr")
+def anpr_analytics(
+    window_hours: int = Query(default=24, ge=1, le=24 * 90),
+    camera_code: str | None = None,
+    vehicle_type: str | None = None,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+    db: Session = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    """Phase 15H §10 -- ANPR performance dashboard data. SQL aggregates over
+    vehicle_events (anpr_status / failure_reason / quality). Accuracy is NOT
+    claimed (no ground-truth set)."""
+    from app.services.ai.anpr_analytics import AnprAnalyticsService
+
+    return AnprAnalyticsService(db).summary(
+        window_hours=window_hours, camera_code=camera_code, vehicle_type=vehicle_type,
+        date_from=date_from, date_to=date_to,
+    )
+
+
 @router.get("/overview", response_model=AnalyticsOverview)
 def analytics_overview(
     window_hours: int = Query(default=24, ge=1, le=24 * 30),

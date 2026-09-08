@@ -55,6 +55,35 @@ journey / GIS / investigation → incidents → evidence → cases → audit
 | `confidence` | `vehicle_events.confidence_score` | search `min_confidence`, Copilot confidence, sighting display |
 | `snapshot_base64` / path | MinIO object → `vehicle_events.snapshot_url` | evidence proxy + media ticket |
 
+## 3a. Feed-source abstraction (Phase 15H §12)
+
+One derived field, `feed_source`, decides how anything is presented:
+
+```
+DEMO  -- is_demo is set (seed_ai_demo / DEMO scenarios). Badged "DEMO DATA".
+MOCK  -- code matches ^mock[_-]?cam (a local simulated clip). Badged "MOCK STREAM".
+REAL  -- everything else (a government RTSP feed). Badged "REAL FEED".
+```
+
+`cameras.is_demo` + `vehicle_events.is_demo` (migration `0014`, default
+false). `app/services/feed_source.py` is the single decision point;
+`CameraRead` and `CameraStreamProfile` both carry `feed_source`; the
+frontend `CameraPlayer` badges it explicitly. **Seeded demo data is never
+presented as government CCTV.**
+
+### Browser playback when feeds return (Phase 15A)
+
+Set `cameras.hls_url` / `cameras.webrtc_url` (operator PATCH or registry
+sync) and run a media gateway (MediaMTX) in front of the RTSP feed:
+
+```
+rtsp://<gov-camera>  ──►  MediaMTX  ──┬──►  /whep/<cam>     (webrtc_url)
+                                      └──►  /hls/<cam>.m3u8 (hls_url)
+```
+
+`CameraStreamService.profile()` then returns `mode: LIVE` and the frontend
+`CameraPlayer` plays the real stream. No code change, no migration.
+
 ## 4. REAL vs MOCK
 
 A camera / sighting is **MOCK** iff its code matches `^mock[_-]?cam` — a

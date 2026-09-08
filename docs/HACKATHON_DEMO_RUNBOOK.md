@@ -92,6 +92,23 @@ code change.*
 | F | **Cam Intel** tab | Cameras ranked worst-first — **CAM-07** `LOW` (health score ~3, "4 disconnects, avg recovery 140s", FPS 3.4); others `UNKNOWN` (no live telemetry offline). Click CAM-07 → transition log. |
 | G | Copilot → "Show camera transition intelligence for CAM-01" *(or)* API `GET /ai/correlation/transitions` | Historical `CAM-01 → CAM-02` travel band (3 seeded passes) + PLAUSIBLE/SLOW/IMPOSSIBLE classification on the journey transitions. |
 
+## 4b. Phase 15 — Real Video Intelligence (add-on clicks)
+
+| # | Click / do | What the judge sees |
+| :-- | :--- | :--- |
+| H | **Cameras** → click **CAM-04** | `CameraModal` — real player: honest `RECORDED` / `OFFLINE` mode badge (no live gov feed), `DEMO DATA` chip, snapshot with **"LAST FRAME — NOT A LIVE FEED"** overlay, info panel (code, status, location, FPS, last frame, last detection, AI status). |
+| I | **Workspace** tab → `GJ18TC0450` | The 3-panel investigation workspace: LEFT identity + ANPR readable/unknown split · CENTER camera + journey map · RIGHT **[Run Investigation]** → agent summary + gaps · BOTTOM `● CAM-01 → ● CAM-02 → …` timeline with per-hop INFERRED gap/distance/classification. |
+| J | **ANPR** tab | ANPR Intelligence dashboard: ~89% success rate, low-quality frames, **failure reasons** (BLUR / LOW_RESOLUTION / OCCLUDED / OCR_DISAGREEMENT), **worst camera CAM-05** (0% — unreadable plates), success-by-hour, plate-confidence distribution, OCR latency. |
+| K | **System** tab | `Observability` panel — pipeline status, ANPR success, camera online/reconnects, open work, snapshot age. |
+| L | **Cam Intel** tab | New **Video quality** + **ANPR OK** columns + "Poor video quality" KPI (distinct from reliability/uptime). |
+| M | API `GET /ai/reid/status` | `attribute` backend, `cpu`, dim 29, `fell_back_to_attribute: false` (no torch in the backend image — the torch backbone activates in the pipeline tier / with `REID_BACKEND=torch`). |
+
+**Talking point:** *A snapshot is never shown as a live feed. Every plate
+that failed says WHY (LOW_RESOLUTION / BLUR / OCCLUDED …), not just
+"UNKNOWN". Demo data is badged DEMO DATA — it is never presented as
+government CCTV. When the feeds return: set `hls_url`/`webrtc_url` + point a
+media gateway at the RTSP, and everything here lights up with real video.*
+
 **API-only (Phase 14):**
 ```bash
 curl -s -X POST localhost:8000/api/v1/ai/reid/search -H "Authorization: Bearer $TOKEN" \

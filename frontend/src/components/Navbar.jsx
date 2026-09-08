@@ -17,6 +17,7 @@ const TABS = [
   { to: "/camera-intelligence", label: "Cam Intel" },
   { to: "/alerts", label: "Alerts" },
   { to: "/anomalies", label: "Anomalies" },
+  { to: "/anpr-intelligence", label: "ANPR" },
   { to: "/traffic", label: "Traffic" },
   { to: "/incidents", label: "Incidents" },
   { to: "/cases", label: "Cases" },

@@ -61,6 +61,8 @@ class CameraStreamService:
     # ------------------------------------------------------------------ #
     def profile(self, cam: Camera) -> dict:
         is_mock = bool(cam.code and _MOCK_RE.match(cam.code))
+        is_demo = bool(getattr(cam, "is_demo", False))
+        feed = "DEMO" if is_demo else ("MOCK" if is_mock else "REAL")
         eff = self._effective_status(cam)
         health_fresh = (
             cam.health_updated_at is not None
@@ -140,6 +142,8 @@ class CameraStreamService:
             "camera_name": cam.name,
             "location_desc": cam.location_desc,
             "is_mock": is_mock,
+            "is_demo": is_demo,
+            "feed_source": feed,
             "effective_status": eff.value,
             "mode": mode,
             "mode_reasons": reasons,

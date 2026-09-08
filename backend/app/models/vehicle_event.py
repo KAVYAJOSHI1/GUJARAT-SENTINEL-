@@ -45,6 +45,8 @@ class VehicleEvent(TimestampMixin, table=True):
     # `plate_quality` (0-1) is the plate-locator confidence.
     anpr_status: str = Field(default="OK", nullable=False, index=True)
     anpr_failure_reason: Optional[str] = Field(default=None, nullable=True, index=True)
+    # Phase 15H §12: this detection is seeded demo data, not a real/mock feed.
+    is_demo: bool = Field(default=False, nullable=False, index=True)
     anpr_quality_score: Optional[float] = Field(default=None, sa_column=Column(Float))
     plate_quality: Optional[float] = Field(default=None, sa_column=Column(Float))
 

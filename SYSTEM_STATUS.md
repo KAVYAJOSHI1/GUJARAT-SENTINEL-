@@ -617,3 +617,117 @@ Torch Re-ID in the backend tier (architected, needs crop storage +
 per-camera calibrated congestion / reliability thresholds; road-graph path
 model for gap detection (straight-line corridor used); LLM tool-planner
 (`plan_tools` hook present, deterministic planner is the default).
+
+---
+
+## N. PHASE 15 — REAL VIDEO INTELLIGENCE & LIVE DEMO HARDENING (2026-09-09)
+
+Turns the analytics platform into a convincing **real video intelligence
+platform**. Additive throughout — no rewrite, no removed functionality.
+Eight logical commits (15A–15H), tests + fresh-Docker smoke + offline
+regression after each. Detail in `docs/REAL_VIDEO_PIPELINE.md`,
+`docs/ANPR_PIPELINE.md`, `docs/LIVE_INVESTIGATION.md`.
+
+### Data model (migrations `0012`–`0014`, additive only; round-trip verified)
+
+| Migration | Object |
+| :--- | :--- |
+| `0012` | `cameras.hls_url` + `cameras.webrtc_url` (browser-playable sources; NULL until a media gateway is deployed) |
+| `0013` | `vehicle_events.anpr_status` / `anpr_failure_reason` / `anpr_quality_score` / `plate_quality` (indexed; existing rows → `OK`) |
+| `0014` | `cameras.is_demo` + `vehicle_events.is_demo` (feed-source abstraction; default false) |
+
+### 15A — Real CCTV video experience
+
+`CameraStreamService.profile()` → ordered sources (webrtc → hls → recorded
+clip → snapshot) + honest **mode** (`LIVE` / `DEGRADED` / `RECORDED` /
+`OFFLINE`) + `mode_reasons[]`. `GET /cameras/{id}/stream`.
+Frontend `CameraPlayer`: HLS via `hls.js`, recorded clip via media-ticket,
+WebRTC WHEP attempt, snapshot with a permanent **"LAST FRAME — NOT A LIVE
+FEED"** overlay. Mode badge always reflects reality. Replaces the old
+"stream renders here in production" placeholder in `CameraModal`.
+**A snapshot is never presented as a live feed.** WebRTC/HLS live playback
+needs `webrtc_url`/`hls_url` + a media gateway (MediaMTX) — ready, not
+bundled.
+
+### 15B — ANPR quality pipeline
+
+`ai/anpr/quality.py` `PlateQualityAssessor` — per-crop metrics (resolution,
+blur = Laplacian variance, contrast, angle = Hough, edge density, char
+estimate → `overall_score`). `classify_failure()` → one of `NO_PLATE` /
+`LOW_RESOLUTION` / `BLUR` / `OCCLUDED` / `OCR_DISAGREEMENT` /
+`INVALID_FORMAT` / `LOW_CONFIDENCE` / `NONE`. **Thresholds are not lowered
+blindly** — a low-confidence read stays `UNKNOWN` + `LOW_CONFIDENCE`.
+Perspective correction (4-point warp) added to `ImagePreprocessor`. The
+pipeline attaches an additive `anpr` block to every event; the backend
+stores it and `/vehicles/search` surfaces it.
+
+### 15C — Temporal ANPR fusion
+
+`ai/anpr/plate_track_state.py` — `PlateTrackState` adds **character-level**
+consensus on top of the whole-string `MultiFrameConsensus`: among reads of
+the modal length it votes per position, reconstructing the plate when no
+single string wins. A weak disagreeing frame never disturbs a lock.
+`PlateTrackStore` — bounded (LRU + per-track history cap + TTL).
+
+### 15D — Live investigation workspace
+
+`GET /vehicles/profile?plate=` → consolidated `VehicleProfile` (first/last
+seen, per-camera `CameraSeen[]`, journey, ANPR readable/unknown +
+failure-reason tally, watchlist, `counts{}`, `related[]`,
+`visual_match_count`). Frontend `/workspace` — the spec §8 layout
+(LEFT identity · CENTER camera + map · RIGHT [Run Investigation] agent ·
+BOTTOM journey timeline). `CONFIRMED` vs `INFERRED` never conflated.
+
+### 15E — Real Torch Re-ID backend
+
+`TorchEmbeddingBackend` — ImageNet-pretrained torchvision backbone
+(MobileNetV3-Small default, ResNet-50 optional), GPU-auto, CPU fallback,
+L2-normalised. `REID_BACKEND=attribute|torch`; torch-import failure →
+silent fallback. `GET /ai/reid/status` (backend, model, device, loaded,
+`fell_back_to_attribute`, `embedding_dimension`, `candidate_limit`).
+Pipeline-side `ai/reid/embed.py` `VehicleEmbedder` (SENTINEL_REID_EMBED=1 →
+event carries a real embedding). **No from-scratch training.**
+
+### 15F — Camera video quality
+
+`CameraReliabilityService` gains a **video quality** axis, distinct from
+reliability/uptime: `video_quality_score` 0–100 (from ANPR success rate,
+mean crop quality, mean locator confidence, FPS vs nominal) →
+`GOOD`/`FAIR`/`POOR`/`UNKNOWN` + `video_quality_reasons[]`.
+"A camera can be online but produce unusable video."
+
+### 15G — Observability
+
+`GET /system/metrics/summary` — one lightweight snapshot (pipeline
+frames/fps/detections/events/queue/latency/CPU/RSS + ANPR window split +
+open work + cameras). **No Prometheus.** Performance (§14): audited
+`ai/worker_pool.py` — per-camera fair round-robin, bounded queues,
+latest-frame-wins backpressure **already implemented** (Phase 2C); no one
+camera can starve the others.
+
+### 15H — Final integration
+
+`GET /analytics/anpr` + frontend `/anpr-intelligence` — ANPR performance
+dashboard (success rate, low-quality frames, failure reasons, best/worst
+cameras, success-by-hour, plate-confidence distribution, OCR latency).
+**Accuracy is not claimed** — no ground-truth set. Feed-source abstraction
+(§12): `feed_source` derived `DEMO` > `MOCK` > `REAL`, badged explicitly in
+the player (`DEMO DATA` / `MOCK STREAM` / `REAL FEED`) — demo data is never
+shown as government CCTV. Demo seed flags everything it creates `is_demo`
+and now seeds a realistic ANPR failure mix.
+
+### Test counts
+
+Backend **305 passed** (286 through Phase 15D + 19 Phase 15E/F/G/H:
+`test_reid_backend` 7, `test_camera_reliability` +3, `test_system_metrics`
+4, `test_anpr_analytics` 6 — `test_camera_stream` 10 & `test_vehicle_profile`
+4 in 15A/D). AI/ingestion **169 passed, 8 skipped** (+14 `test_anpr_quality`,
++8 `test_plate_track_state`, +4 `test_vehicle_embedder`).
+
+### Not done this phase
+
+Super-resolution model (needs opencv-contrib `dnn_superres` + weights);
+real-footage ANPR accuracy numbers (no ground-truth set — not claimed);
+WebRTC/HLS live playback exercised end-to-end (needs a media gateway + live
+RTSP); per-sighting evidence carousel in `/workspace`; journey-replay
+scrubber on `/workspace` (present on `/investigation`).

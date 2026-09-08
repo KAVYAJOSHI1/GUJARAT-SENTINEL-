@@ -1,4 +1,14 @@
-# Advanced Video Intelligence (Phase 14)
+# Advanced Video Intelligence (Phase 14) + Real Video Hardening (Phase 15)
+
+> **Phase 15** builds on this: a real camera-playback abstraction with
+> honest LIVE/DEGRADED/RECORDED/OFFLINE labelling, an ANPR quality pipeline
+> that reports *why* a plate is UNKNOWN, character-level temporal fusion, a
+> 3-panel live investigation workspace, a real Torch Re-ID backend +
+> `/ai/reid/status`, a camera **video-quality** axis, `/system/metrics/summary`
+> observability, an `/anpr-intelligence` dashboard, and a DEMO/MOCK/REAL
+> feed-source abstraction. See `REAL_VIDEO_PIPELINE.md`, `ANPR_PIPELINE.md`,
+> `LIVE_INVESTIGATION.md` and `SYSTEM_STATUS.md` §N.
+
 
 The next-generation intelligence layer over the stable Sentinel platform.
 **Additive throughout** — no change to ANPR / RTSP ingestion / worker
