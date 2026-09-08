@@ -102,11 +102,18 @@ export default function LiveInvestigationWorkspace() {
       if (e.key === "ArrowRight" || e.key === "j" || e.key === "J") { e.preventDefault(); step(1); }
       else if (e.key === "ArrowLeft" || e.key === "k" || e.key === "K") { e.preventDefault(); step(-1); }
       else if (e.key === " ") { e.preventDefault(); setPlaying((p) => !p); }
+      else if (e.key === "e" || e.key === "E") {
+        const s = sightings[selIdx];
+        if (s) window.open(evidenceUrl(s.eventId), "_blank", "noopener");
+      }
+      else if (e.key === "g" || e.key === "G") {
+        if (profile?.plate) nav(`/graph?plate=${profile.plate}`);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sightings.length]);
+  }, [sightings.length, selIdx, profile]);
 
   const step = (d) => setSelIdx((i) => Math.max(0, Math.min(sightings.length - 1, i + d)));
 
