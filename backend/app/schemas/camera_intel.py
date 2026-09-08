@@ -32,6 +32,13 @@ class CameraReliability(BaseModel):
     detection_rate_per_hour: float
     detection_rate_change_pct: Optional[float] = None
     observations: List[str] = []
+    # Phase 15F -- video quality (separate axis from reliability/uptime)
+    video_quality_score: Optional[float] = None
+    video_quality_label: str = "UNKNOWN"
+    video_quality_reasons: List[str] = []
+    anpr_success_rate: Optional[float] = None
+    mean_plate_quality: Optional[float] = None
+    mean_anpr_quality: Optional[float] = None
     transitions: Optional[List[HealthTransition]] = None
 
 
@@ -40,5 +47,6 @@ class CameraIntelligenceResponse(BaseModel):
     window_hours: int
     camera_count: int
     degraded_count: int
+    poor_video_count: int = 0
     cameras: List[CameraReliability] = []
     note: str

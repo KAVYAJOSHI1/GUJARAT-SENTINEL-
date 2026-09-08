@@ -134,3 +134,56 @@ def test_camera_intelligence_unknown_404(client, officer_user):
 
 def test_camera_intelligence_requires_auth(client):
     assert client.get("/api/v1/ai/camera-intelligence").status_code == 401
+
+
+# --------------------------------------------------------------------------- #
+#  Phase 15F -- video quality (separate axis from reliability)
+# --------------------------------------------------------------------------- #
+def test_video_quality_poor_when_anpr_fails_a_lot(db_session, make_camera, make_vehicle_event):
+    from datetime import datetime as _dt, timedelta as _td
+    cam = make_camera(code="CAM-VQ", status=CameraStatus.ONLINE)
+    _fresh(db_session, cam, fps=20.0)
+    now = _dt.utcnow()
+    for i in range(12):
+        ev = make_vehicle_event(cam, plate=("GJ01AB%04d" % i if i < 3 else "UNKNOWN"),
+                                track_id=i + 1, ts=now - _td(minutes=i))
+        if i >= 3:
+            ev.anpr_status = "UNKNOWN"
+            ev.anpr_failure_reason = "BLUR"
+        ev.anpr_quality_score = 0.35
+        ev.plate_quality = 0.4
+        db_session.add(ev)
+    db_session.commit()
+
+    a = CameraReliabilityService(db_session).assess_one("CAM-VQ")
+    assert a["video_quality_label"] == "POOR"
+    assert a["video_quality_score"] < 55
+    assert a["anpr_success_rate"] is not None and a["anpr_success_rate"] < 0.6
+    assert a["video_quality_reasons"]
+    # reliability (uptime) can still be HIGH -- distinct axes
+    assert a["reliability_score"] == "HIGH"
+
+
+def test_video_quality_unknown_without_enough_samples(db_session, make_camera, make_vehicle_event):
+    cam = make_camera(code="CAM-VQ2", status=CameraStatus.ONLINE)
+    _fresh(db_session, cam)
+    make_vehicle_event(cam, plate="GJ01AB0001")
+    a = CameraReliabilityService(db_session).assess_one("CAM-VQ2")
+    assert a["video_quality_label"] == "UNKNOWN"
+    assert a["video_quality_score"] is None
+
+
+def test_poor_video_count_in_summary(db_session, make_camera, make_vehicle_event):
+    from datetime import datetime as _dt, timedelta as _td
+    cam = make_camera(code="CAM-VQ3", status=CameraStatus.ONLINE)
+    _fresh(db_session, cam, fps=20.0)
+    for i in range(10):
+        ev = make_vehicle_event(cam, plate="UNKNOWN", track_id=i + 1,
+                                ts=_dt.utcnow() - _td(minutes=i))
+        ev.anpr_status = "UNKNOWN"
+        ev.anpr_failure_reason = "LOW_RESOLUTION"
+        ev.anpr_quality_score = 0.2
+        db_session.add(ev)
+    db_session.commit()
+    res = CameraReliabilityService(db_session).assess_all()
+    assert res["poor_video_count"] >= 1

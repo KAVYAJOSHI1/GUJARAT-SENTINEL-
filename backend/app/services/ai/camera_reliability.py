@@ -53,10 +53,13 @@ class CameraReliabilityService:
             "window_hours": hours,
             "camera_count": len(assessed),
             "degraded_count": sum(1 for a in assessed if a["degradation_indicator"]),
+            "poor_video_count": sum(1 for a in assessed if a["video_quality_label"] == "POOR"),
             "cameras": assessed,
             "note": (
                 "Camera Reliability Intelligence -- a statistical view of recent "
-                "stability from camera_health_history. NOT a failure prediction."
+                "stability from camera_health_history. NOT a failure prediction. "
+                "video_quality_* is a SEPARATE axis: a camera can be online "
+                "(reliable) but produce unusable video (poor quality)."
             ),
         }
 
@@ -127,6 +130,21 @@ class CameraReliabilityService:
             select(func.count(VehicleEvent.id)).where(
                 VehicleEvent.camera_id == cam.id, VehicleEvent.timestamp >= since)
         ).scalar() or 0)
+
+        # --- Phase 15F: VIDEO QUALITY (distinct from reliability/uptime) ---
+        vq_row = self.db.execute(
+            select(
+                func.count(VehicleEvent.id),
+                func.count(VehicleEvent.id).filter(VehicleEvent.anpr_status == "OK"),
+                func.avg(VehicleEvent.anpr_quality_score),
+                func.avg(VehicleEvent.plate_quality),
+            ).where(VehicleEvent.camera_id == cam.id, VehicleEvent.timestamp >= since)
+        ).one()
+        vq_total = int(vq_row[0] or 0)
+        vq_ok = int(vq_row[1] or 0)
+        anpr_success_rate = round(vq_ok / vq_total, 3) if vq_total else None
+        mean_anpr_q = round(float(vq_row[2]), 3) if vq_row[2] is not None else None
+        mean_plate_q = round(float(vq_row[3]), 3) if vq_row[3] is not None else None
         prev_since = since - timedelta(hours=hours)
         det_prev = int(self.db.execute(
             select(func.count(VehicleEvent.id)).where(
@@ -171,6 +189,36 @@ class CameraReliabilityService:
 
         degradation = reliability in ("LOW", "MEDIUM") and bool(observations) and not never_reported
 
+        # --- video quality score (0-100): can this camera produce USABLE
+        #     video, regardless of whether it is up? ---
+        vq_reasons: list[str] = []
+        vq_score: Optional[float] = None
+        if vq_total >= settings.CAMERA_VIDEO_QUALITY_MIN_SAMPLES:
+            s = 100.0
+            if anpr_success_rate is not None and anpr_success_rate < 0.6:
+                s -= min(45, (0.6 - anpr_success_rate) * 120)
+                vq_reasons.append(f"ANPR success {int(anpr_success_rate*100)}% "
+                                  f"({vq_ok}/{vq_total} plates readable)")
+            if mean_anpr_q is not None and mean_anpr_q < 0.55:
+                s -= min(25, (0.55 - mean_anpr_q) * 90)
+                vq_reasons.append(f"mean plate-crop quality {mean_anpr_q}")
+            if mean_plate_q is not None and mean_plate_q < 0.5:
+                s -= 10
+                vq_reasons.append(f"mean plate-locator confidence {mean_plate_q}")
+            if fps is not None and fps < settings.CAMERA_VIDEO_QUALITY_FPS_NOMINAL:
+                s -= min(20, (settings.CAMERA_VIDEO_QUALITY_FPS_NOMINAL - fps) * 2)
+                vq_reasons.append(f"stream FPS {fps} below nominal "
+                                  f"{settings.CAMERA_VIDEO_QUALITY_FPS_NOMINAL}")
+            vq_score = max(0.0, round(s, 1))
+        if vq_score is None:
+            vq_label = "UNKNOWN"
+        elif vq_score >= 80:
+            vq_label = "GOOD"
+        elif vq_score >= 55:
+            vq_label = "FAIR"
+        else:
+            vq_label = "POOR"
+
         out = {
             "camera_id": cam.id,
             "camera_code": cam.code,
@@ -190,6 +238,14 @@ class CameraReliabilityService:
             "detection_rate_per_hour": det_rate_recent,
             "detection_rate_change_pct": detection_drop,
             "observations": observations,
+            # Phase 15F: video quality -- CAN this camera produce usable video,
+            # separate from whether it stays online.
+            "video_quality_score": vq_score,
+            "video_quality_label": vq_label,
+            "video_quality_reasons": vq_reasons,
+            "anpr_success_rate": anpr_success_rate,
+            "mean_plate_quality": mean_plate_q,
+            "mean_anpr_quality": mean_anpr_q,
         }
         if include_history:
             out["transitions"] = [{
