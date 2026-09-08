@@ -7,6 +7,7 @@ import {
   Crosshair,
   FileStack,
   Paperclip,
+  Sparkles,
   StickyNote,
   Trash2,
   UserPlus,
@@ -28,6 +29,8 @@ import {
   updateIncident,
 } from "../services/opsApi.js";
 import Timeline from "../components/ops/Timeline.jsx";
+import AISummaryPanel from "../components/ops/AISummaryPanel.jsx";
+import { aiIncidentSummary } from "../services/aiApi.js";
 import SeverityBadge from "../components/SeverityBadge.jsx";
 import StatusBadge from "../components/ops/StatusBadge.jsx";
 import ErrorBanner from "../components/ui/ErrorBanner.jsx";
@@ -256,6 +259,12 @@ export default function IncidentDetailPage() {
             </span>
           </div>
         )}
+      </div>
+
+      {/* AI Summary */}
+      <div style={panel}>
+        <SectionHead icon={Sparkles} title="AI Summary" />
+        <AISummaryPanel loader={() => aiIncidentSummary(inc.id)} />
       </div>
 
       {/* Timeline */}

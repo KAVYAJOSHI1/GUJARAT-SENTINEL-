@@ -65,6 +65,13 @@ services:
       # .env for a clean deployment with no demo data.
       SEED_WATCHLIST_PLATE: ${SEED_WATCHLIST_PLATE-GJ18TC0450}
       SEED_WATCHLIST_CATEGORY: ${SEED_WATCHLIST_CATEGORY:-Stolen Vehicle (demo)}
+      # Phase 12: seed the AI demo dataset (cameras + GJ18TC0450 journey +
+      # incident/case + a stopped-vehicle anomaly) so the AI features work
+      # from `docker compose up` with no live CCTV. Set to 0 for a clean
+      # deployment. Idempotent.
+      SEED_AI_DEMO: ${SEED_AI_DEMO:-1}
+      AI_LLM_PROVIDER: ${AI_LLM_PROVIDER:-deterministic}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       # The dashboard reaches the API same-origin through the Vite dev proxy
       # (frontend service, :3000), so this only needs the dev host origin.
       # Override with a real https origin (or a comma-free JSON list) in a

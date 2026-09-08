@@ -86,6 +86,39 @@ class Settings(BaseSettings):
     # --- Watchlist / Alert engine ---
     ALERT_COOLDOWN_SECONDS: int = 300
 
+    # --- Phase 12: AI intelligence layer ---
+    # The whole AI layer works with NO external LLM. "deterministic" =
+    # rule-based intent/entity extraction + templated answers (the default,
+    # always available). "openai" = optional; requires OPENAI_API_KEY and
+    # falls back to deterministic on any error. The LLM never gets DB access
+    # or generates SQL -- it only picks from a fixed set of validated tools.
+    AI_LLM_PROVIDER: str = "deterministic"
+    OPENAI_API_KEY: Optional[str] = None
+    OPENAI_BASE_URL: str = "https://api.openai.com/v1"
+    OPENAI_MODEL: str = "gpt-4o-mini"
+    OPENAI_TIMEOUT_S: float = 20.0
+    # Hard ceiling on rows any AI tool / copilot answer will pull from the DB.
+    AI_MAX_RESULTS: int = 100
+
+    # Stopped/loitering vehicle anomaly (BehaviorAnalyticsService). Operates
+    # on stored ByteTrack vehicle_events -- never re-processes video.
+    ANOMALY_STOPPED_MIN_SECONDS: int = 120
+    ANOMALY_STOPPED_MIN_DETECTIONS: int = 6
+    ANOMALY_STOPPED_MAX_DISPLACEMENT_M: float = 25.0
+    ANOMALY_PRIORITY: str = "MEDIUM"
+    ANOMALY_LOOKBACK_HOURS: int = 24
+    # Periodic in-process scan of recent events for stopped vehicles. Off in
+    # the test suite (behaviour is exercised directly). When government feeds
+    # resume, new events flow through the existing ingest -> this scan picks
+    # them up with no code change.
+    AI_ANOMALY_SCAN_ENABLED: bool = True
+    AI_ANOMALY_SCAN_INTERVAL_S: int = 300
+
+    # Seed a deterministic AI demo dataset on first boot (idempotent) so the
+    # AI features are demonstrable from `docker compose up` with no live
+    # CCTV. Set by docker-compose; default off for plain / test runs.
+    SEED_AI_DEMO: bool = False
+
     # --- AI event ingestion ---
     # Shared secret the AI pipeline sends as the `X-Ingest-Key` header on
     # POST /api/v1/events/ai-detection. When unset, that endpoint also

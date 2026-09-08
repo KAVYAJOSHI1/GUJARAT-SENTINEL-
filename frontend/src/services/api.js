@@ -253,6 +253,10 @@ export function normalizeAlert(raw) {
       status === "ACKNOWLEDGED" ||
       status === "RESOLVED" ||
       status === "ESCALATED",
+    // Phase 12 — anomaly-sourced alert (stopped vehicle), no watchlist entry.
+    source: String(pick(raw, ["source"], "WATCHLIST")).toUpperCase(),
+    isAnomaly: String(pick(raw, ["source"], "")).toUpperCase() === "ANOMALY",
+    anomalyEventId: pick(raw, ["anomaly_event_id"], null),
     // Phase 11 escalation workflow — raw backend status + escalation context.
     rawStatus: status || "NEW",
     assignedTo: pick(raw, ["assigned_to_username"], null),
