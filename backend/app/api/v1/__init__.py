@@ -7,6 +7,7 @@ from app.api.v1 import (
     alerts,
     analytics,
     auth,
+    camera_intel,
     cameras,
     cases,
     correlation,
@@ -45,6 +46,7 @@ api_router.include_router(ai.router, prefix="/ai", tags=["ai"])
 api_router.include_router(reid.router, prefix="/ai/reid", tags=["ai", "reid"])
 api_router.include_router(correlation.router, prefix="/ai/correlation", tags=["ai", "correlation"])
 api_router.include_router(investigation.router, prefix="/ai/investigation", tags=["ai", "investigation"])
+api_router.include_router(camera_intel.router, prefix="/ai/camera-intelligence", tags=["ai", "camera-intelligence"])
 api_router.include_router(analytics.router, prefix="/analytics", tags=["analytics"])
 api_router.include_router(traffic.router, prefix="/analytics/traffic", tags=["analytics", "traffic"])
 api_router.include_router(pipeline.router, prefix="/pipeline", tags=["pipeline"])
