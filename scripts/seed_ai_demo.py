@@ -70,6 +70,7 @@ def _reset(db) -> None:
     from app.models.vehicle_event import VehicleEvent
     from app.models.vehicle_embedding import VehicleEmbedding
     from app.models.camera_transition_stat import CameraTransitionStat
+    from app.models.camera_health_history import CameraHealthHistory
 
     from app.models.case import CaseNote
     from app.models.incident import IncidentNote
@@ -117,6 +118,7 @@ def _reset(db) -> None:
             CameraTransitionStat.from_camera_id.in_(ci)
             | CameraTransitionStat.to_camera_id.in_(ci)
         ),
+        delete(CameraHealthHistory).where(CameraHealthHistory.camera_id.in_(ci)),
         delete(Camera).where(Camera.id.in_(ci)),
         delete(Notification).where(Notification.resource == "anomaly"),
         delete(AuditLog).where(AuditLog.action == _MARKER),
@@ -319,6 +321,27 @@ def main() -> int:
         res = BehaviorAnalyticsService(db).scan()
         print(f"[seed_ai_demo] anomaly scan -> {res['created']} anomaly event(s) "
               f"({', '.join(sorted({a.kind.value for a in res['anomalies']})) or 'none'})")
+
+        # --- Phase 14 §9: an unstable camera (CAM-07) for Reliability Intel ---
+        from app.models.camera_health_history import CameraHealthHistory
+        cam07 = cam_by_code["CAM-07"]
+        cam07.stream_fps = 3.4                       # below the 5 fps floor
+        cam07.reconnect_count = 6
+        cam07.health_updated_at = now - timedelta(minutes=4)  # slightly stale
+        db.add(cam07)
+        for k in range(3):
+            t = now - timedelta(hours=k * 5 + 2)
+            db.add(CameraHealthHistory(
+                camera_id=cam07.id, status=CameraStatus.OFFLINE,
+                previous_status=CameraStatus.ONLINE, detected_at=t,
+                source="staleness_watcher", stream_fps=0.0))
+            db.add(CameraHealthHistory(
+                camera_id=cam07.id, status=CameraStatus.ONLINE,
+                previous_status=CameraStatus.OFFLINE,
+                detected_at=t + timedelta(seconds=140),
+                source="health_push", stream_fps=3.4))
+        db.commit()
+        print("[seed_ai_demo] camera reliability -> CAM-07 seeded with 3 disconnects")
 
         # --- Phase 14: index appearance embeddings for every demo event so
         #     /ai/reid/search returns real candidates offline ---

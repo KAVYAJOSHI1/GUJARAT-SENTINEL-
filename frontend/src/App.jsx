@@ -19,6 +19,7 @@ import CopilotPage from "./pages/CopilotPage.jsx";
 import AnomaliesPage from "./pages/AnomaliesPage.jsx";
 import CameraManagementPage from "./pages/CameraManagementPage.jsx";
 import TrafficIntelligencePage from "./pages/TrafficIntelligencePage.jsx";
+import CameraIntelligencePage from "./pages/CameraIntelligencePage.jsx";
 import InvestigationPage from "./pages/InvestigationPage.jsx";
 import MapPage from "./pages/MapPage.jsx";
 
@@ -52,6 +53,7 @@ export function AppRoutes() {
 
         {/* Phase 14 — advanced video intelligence */}
         <Route path="traffic" element={<TrafficIntelligencePage />} />
+        <Route path="camera-intelligence" element={<CameraIntelligencePage />} />
 
         <Route path="system" element={<SystemPage />} />
         <Route path="admin" element={<AdminPage />} />

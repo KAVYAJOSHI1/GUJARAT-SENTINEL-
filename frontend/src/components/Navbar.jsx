@@ -13,6 +13,7 @@ const TABS = [
   { to: "/copilot", label: "Copilot" },
   { to: "/my-work", label: "My Work" },
   { to: "/cameras", label: "Cameras" },
+  { to: "/camera-intelligence", label: "Cam Intel" },
   { to: "/alerts", label: "Alerts" },
   { to: "/anomalies", label: "Anomalies" },
   { to: "/traffic", label: "Traffic" },

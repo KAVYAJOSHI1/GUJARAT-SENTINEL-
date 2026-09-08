@@ -186,6 +186,17 @@ class Settings(BaseSettings):
     CORRELATION_GEO_NEAR_M: float = 800.0
     CORRELATION_GEO_FAR_M: float = 8000.0
 
+    # --- Phase 14: Camera Reliability Intelligence (§9) ---
+    # Statistics over camera_health_history -- NOT failure prediction.
+    CAMERA_RELIABILITY_WINDOW_HOURS: int = 24
+    CAMERA_RELIABILITY_FPS_FLOOR: float = 5.0
+    CAMERA_RELIABILITY_RECONNECT_WARN: int = 3
+    CAMERA_RELIABILITY_DISCONNECT_PENALTY: float = 12.0
+    CAMERA_RELIABILITY_SLOW_RECOVERY_S: float = 300.0
+    CAMERA_RELIABILITY_MIN_BASELINE_DETECTIONS: int = 20
+    CAMERA_RELIABILITY_HIGH_SCORE: float = 80.0
+    CAMERA_RELIABILITY_MEDIUM_SCORE: float = 55.0
+
     # --- Phase 14: Investigation Agent (§7) + Gap Detection (§8) ---
     AI_AGENT_ENABLED: bool = True
     AI_AGENT_MAX_STEPS: int = 14            # hard ceiling on tool calls per run
