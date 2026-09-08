@@ -37,6 +37,17 @@ class VehicleEvent(TimestampMixin, table=True):
     vehicle_color: Optional[str] = Field(default=None, nullable=True)
     confidence_score: Optional[float] = Field(default=None, sa_column=Column(Float))
 
+    # Phase 15B: explicit ANPR outcome. `anpr_status` is "OK" for a
+    # recognised plate, "UNKNOWN" otherwise; `anpr_failure_reason` is one of
+    # NO_PLATE / LOW_RESOLUTION / BLUR / OCCLUDED / OCR_DISAGREEMENT /
+    # INVALID_FORMAT / LOW_CONFIDENCE when the read failed (NULL / "NONE" on
+    # success). `anpr_quality_score` (0-1) is the crop-quality composite;
+    # `plate_quality` (0-1) is the plate-locator confidence.
+    anpr_status: str = Field(default="OK", nullable=False, index=True)
+    anpr_failure_reason: Optional[str] = Field(default=None, nullable=True, index=True)
+    anpr_quality_score: Optional[float] = Field(default=None, sa_column=Column(Float))
+    plate_quality: Optional[float] = Field(default=None, sa_column=Column(Float))
+
     # Object storage reference only — never store raw binary in Postgres.
     snapshot_url: Optional[str] = Field(default=None, nullable=True)
 

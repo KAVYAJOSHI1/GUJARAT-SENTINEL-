@@ -76,8 +76,12 @@ class TestEventSchemaUnchanged(unittest.TestCase):
         expected_keys = {
             "event_id", "timestamp", "pts", "camera_id", "camera_name", "track_id",
             "latitude", "longitude", "seq_num", "vehicle", "license_plate", "evidence",
+            # Phase 15B -- explicit ANPR status + quality (additive block).
+            "anpr",
         }
-        self.assertEqual(set(e.keys()), expected_keys, "event top-level shape must be unchanged")
+        self.assertEqual(set(e.keys()), expected_keys, "event top-level shape")
+        self.assertIn("status", e["anpr"])
+        self.assertIn(e["anpr"]["status"], ("OK", "UNKNOWN"))
         self.assertEqual(e["camera_id"], "cam04")
         self.assertEqual(e["license_plate"]["plate_number"], "GJ01AB1234")
 

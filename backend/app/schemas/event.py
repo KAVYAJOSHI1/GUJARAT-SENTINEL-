@@ -43,6 +43,17 @@ class EvidenceBlock(BaseModel):
     snapshot_url: Optional[str] = None
 
 
+class AnprBlock(BaseModel):
+    """Phase 15B -- explicit ANPR outcome from the pipeline."""
+    model_config = ConfigDict(extra="ignore")
+    status: Optional[str] = None                 # OK | UNKNOWN
+    failure_reason: Optional[str] = None
+    plate_quality: Optional[float] = None
+    quality_score: Optional[float] = None
+    ocr_confidence: Optional[float] = None
+    quality: Optional[dict] = None
+
+
 class AIDetectionEventIn(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -56,6 +67,7 @@ class AIDetectionEventIn(BaseModel):
     vehicle: Optional[VehicleBlock] = None
     license_plate: Optional[LicensePlateBlock] = None
     evidence: Optional[EvidenceBlock] = None
+    anpr: Optional[AnprBlock] = None
 
     latitude: Optional[float] = None
     longitude: Optional[float] = None
@@ -69,6 +81,8 @@ class AIDetectionEventIn(BaseModel):
     vehicle_type: Optional[str] = None
     vehicle_color: Optional[str] = None
     confidence_score: Optional[float] = None
+    anpr_status: Optional[str] = None
+    anpr_failure_reason: Optional[str] = None
 
     # Phase 14: an upgraded pipeline may supply a precomputed appearance
     # embedding (e.g. a real CNN). Stored verbatim in vehicle_embeddings;
@@ -107,6 +121,33 @@ class AIDetectionEventIn(BaseModel):
         if self.vehicle and self.vehicle.confidence is not None:
             return self.vehicle.confidence
         return None
+
+    def resolved_anpr(self) -> dict:
+        """Phase 15B -- {status, failure_reason, quality_score, plate_quality}.
+        Prefers the nested `anpr` block; falls back to flat fields; infers a
+        sane default for older callers (a readable plate -> OK)."""
+        blk = self.anpr
+        status = (
+            (blk.status if blk else None)
+            or self.anpr_status
+        )
+        reason = (
+            (blk.failure_reason if blk else None)
+            or self.anpr_failure_reason
+        )
+        plate = self.resolved_plate()
+        if not status:
+            status = "OK" if plate and plate != "UNKNOWN" else "UNKNOWN"
+        if status == "OK":
+            reason = None
+        elif not reason:
+            reason = "LOW_CONFIDENCE"
+        return {
+            "status": status,
+            "failure_reason": reason if (reason and reason != "NONE") else None,
+            "quality_score": (blk.quality_score if blk else None),
+            "plate_quality": (blk.plate_quality if blk else None),
+        }
 
     def resolved_snapshot_ref(self) -> Optional[str]:
         if not self.evidence:

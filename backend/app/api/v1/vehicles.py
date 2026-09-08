@@ -235,6 +235,9 @@ def search_vehicle(
                 vehicle_type=ev.vehicle_type,
                 vehicle_color=ev.vehicle_color,
                 plate_number=ev.plate_number,
+                anpr_status=ev.anpr_status or "OK",
+                anpr_failure_reason=ev.anpr_failure_reason,
+                anpr_quality_score=ev.anpr_quality_score,
                 is_mock=_is_mock_code(camera_code or ev.camera_code),
             )
         )
@@ -318,6 +321,9 @@ def recent_vehicle_events(
                 vehicle_type=ev.vehicle_type,
                 vehicle_color=ev.vehicle_color,
                 plate_number=ev.plate_number,
+                anpr_status=ev.anpr_status or "OK",
+                anpr_failure_reason=ev.anpr_failure_reason,
+                anpr_quality_score=ev.anpr_quality_score,
                 is_mock=_is_mock_code(code or ev.camera_code),
             )
         )
