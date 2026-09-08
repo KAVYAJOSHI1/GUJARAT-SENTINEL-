@@ -203,7 +203,7 @@ function AgentReportCard({ report, navigate }) {
           {showSteps ? "Hide" : "Show"} agent steps
         </button>
         {report.plate && (
-          <button style={{ ...chip, color: C.accent }} onClick={() => navigate(`/investigation?plate=${report.plate}`)}>
+          <button style={{ ...chip, color: C.accent }} onClick={() => navigate(`/workspace?plate=${report.plate}`)}>
             <MapPin size={11} /> Open full investigation & GIS
           </button>
         )}
@@ -303,7 +303,7 @@ function AnswerCard({ res, navigate }) {
 
       {p.plate && (
         <div style={{ borderTop: `1px solid ${C.border}`, padding: "8px 12px" }}>
-          <button style={{ ...chip, color: C.accent }} onClick={() => navigate(`/investigation?plate=${p.plate}`)}>
+          <button style={{ ...chip, color: C.accent }} onClick={() => navigate(`/workspace?plate=${p.plate}`)}>
             <MapPin size={11} /> Open full investigation & GIS
           </button>
         </div>

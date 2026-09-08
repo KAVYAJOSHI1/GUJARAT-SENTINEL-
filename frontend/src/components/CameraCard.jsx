@@ -198,7 +198,7 @@ export default function CameraCard({ cam, selected, onClick, preview, detectionC
         </button>
         <button
           type="button"
-          onClick={() => trackablePlate && navigate(`/investigation?plate=${encodeURIComponent(trackablePlate)}`)}
+          onClick={() => trackablePlate && navigate(`/workspace?plate=${encodeURIComponent(trackablePlate)}`)}
           disabled={!trackablePlate}
           title={trackablePlate ? `Track ${trackablePlate}` : "No readable plate yet on this camera"}
           style={{ ...cardActionBtn, opacity: trackablePlate ? 1 : 0.4, cursor: trackablePlate ? "pointer" : "not-allowed" }}

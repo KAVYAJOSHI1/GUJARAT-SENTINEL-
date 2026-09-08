@@ -146,7 +146,7 @@ export default function AnomaliesPage() {
                   <Link to={`/alerts?focus=${a.alert_id}`} style={linkBtn}>View alert</Link>
                 )}
                 {a.plate_number_normalized && a.plate_number_normalized !== "UNKNOWN" && (
-                  <Link to={`/investigation?plate=${a.plate_number_normalized}`} style={linkBtn}>Trace vehicle</Link>
+                  <Link to={`/workspace?plate=${a.plate_number_normalized}`} style={linkBtn}>Investigate</Link>
                 )}
                 {manage && a.status === "NEW" && (
                   <>

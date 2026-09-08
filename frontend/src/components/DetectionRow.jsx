@@ -93,10 +93,10 @@ export default function DetectionRow({ det, onViewEvidence }) {
           )}
           {hasPlate && (
             <button
-              onClick={() => navigate(`/investigation?plate=${encodeURIComponent(det.plate)}`)}
+              onClick={() => navigate(`/workspace?plate=${encodeURIComponent(det.plate)}`)}
               style={miniBtn(C.accent)}
             >
-              <Crosshair size={10} /> Track vehicle
+              <Crosshair size={10} /> Investigate
             </button>
           )}
         </div>
