@@ -168,62 +168,144 @@ class AttributeEmbeddingBackend(EmbeddingBackend):
         return _l2_normalise(type_block + color_block + meta_block + texture_block)
 
 
-class TorchReIDBackend(EmbeddingBackend):  # pragma: no cover - optional path
-    """ResNet-50 penultimate features on a vehicle crop. Only usable where
-    torch + torchvision + PIL import (the AI pipeline container). The backend
-    API never constructs this; it exists so an upgraded pipeline can compute
-    real embeddings and POST them, and so the architecture is complete."""
+# torchvision backbones we support, smallest first. Licensing: all are
+# BSD-3 (torchvision) with ImageNet-pretrained weights -- no bespoke Re-ID
+# dataset / model, no from-scratch training.
+_TORCH_MODELS = {
+    "mobilenet_v3_small": ("torch-mobilenetv3s-imagenet", 576),
+    "resnet50": ("torch-resnet50-imagenet", 2048),
+}
 
-    name = "torch-resnet50-v1"
-    dim = 2048
 
-    def __init__(self) -> None:
-        import torch  # noqa: F401
+class TorchEmbeddingBackend(EmbeddingBackend):  # pragma: no cover - optional path
+    """Penultimate CNN features on a vehicle crop (a re-identification-
+    compatible embedding). Uses an ImageNet-pretrained torchvision backbone
+    -- lightweight by default (MobileNetV3-Small), ResNet-50 optional. GPU
+    when available, CPU otherwise. Only constructible where torch +
+    torchvision + PIL import; the backend API silently falls back to the
+    attribute baseline elsewhere.
+
+    Embeddings are L2-normalised. Visual similarity is still NOT identity.
+    """
+
+    def __init__(self, model_key: Optional[str] = None) -> None:
+        import torch
         import torchvision  # noqa: F401
+        from PIL import Image  # noqa: F401
 
-        from torchvision.models import ResNet50_Weights, resnet50
-
+        model_key = (model_key or settings.REID_TORCH_MODEL or "mobilenet_v3_small").strip()
+        if model_key not in _TORCH_MODELS:
+            model_key = "mobilenet_v3_small"
+        self.name, self.dim = _TORCH_MODELS[model_key]
         self._torch = torch
-        weights = ResNet50_Weights.IMAGENET1K_V2
-        model = resnet50(weights=weights)
-        model.fc = torch.nn.Identity()
-        model.eval()
-        self._model = model
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        from torchvision import models as tvm
+        if model_key == "resnet50":
+            weights = tvm.ResNet50_Weights.IMAGENET1K_V2
+            net = tvm.resnet50(weights=weights)
+            net.fc = torch.nn.Identity()
+        else:
+            weights = tvm.MobileNet_V3_Small_Weights.IMAGENET1K_V1
+            net = tvm.mobilenet_v3_small(weights=weights)
+            net.classifier = torch.nn.Identity()
+        net.eval().to(self.device)
+        self._model = net
         self._preprocess = weights.transforms()
+        self.model_key = model_key
+        logger.info("TorchEmbeddingBackend ready: %s on %s (dim %d)",
+                    self.name, self.device, self.dim)
 
     def extract(self, features: dict) -> list[float]:
         from io import BytesIO
 
+        import numpy as _np
         from PIL import Image
 
         raw = features.get("crop_bytes")
-        if not raw:
-            raise ValueError("TorchReIDBackend requires features['crop_bytes']")
-        img = Image.open(BytesIO(raw)).convert("RGB")
+        arr = features.get("crop_array")
+        if raw:
+            img = Image.open(BytesIO(raw)).convert("RGB")
+        elif arr is not None:
+            a = _np.asarray(arr)
+            if a.ndim == 3 and a.shape[2] == 3:      # assume BGR from OpenCV
+                a = a[:, :, ::-1]
+            img = Image.fromarray(a.astype("uint8")).convert("RGB")
+        else:
+            raise ValueError("TorchEmbeddingBackend needs features['crop_bytes'] or ['crop_array']")
         with self._torch.no_grad():
-            batch = self._preprocess(img).unsqueeze(0)
-            feat = self._model(batch).squeeze(0).tolist()
+            batch = self._preprocess(img).unsqueeze(0).to(self.device)
+            feat = self._model(batch).flatten().cpu().tolist()
         return _l2_normalise(feat)
+
+
+# back-compat alias (Phase 14 name)
+TorchReIDBackend = TorchEmbeddingBackend
 
 
 _BACKEND_CACHE: dict[str, EmbeddingBackend] = {}
 
 
+_BACKEND_STATUS: dict = {"requested": None, "active": None, "fell_back": False, "reason": None}
+
+
+def _requested_backend_name() -> str:
+    # REID_BACKEND is the Phase 15 name; REID_EMBEDDING_BACKEND is the
+    # Phase 14 name. REID_BACKEND wins when explicitly set to non-default.
+    b15 = (getattr(settings, "REID_BACKEND", "") or "").strip().lower()
+    if b15 and b15 != "attribute":
+        return b15
+    return (settings.REID_EMBEDDING_BACKEND or b15 or "attribute").strip().lower()
+
+
 def get_embedding_backend(name: Optional[str] = None) -> EmbeddingBackend:
-    name = (name or settings.REID_EMBEDDING_BACKEND or "attribute").strip().lower()
+    name = (name or _requested_backend_name() or "attribute").strip().lower()
+    _BACKEND_STATUS["requested"] = name
     if name in _BACKEND_CACHE:
+        _BACKEND_STATUS["active"] = _BACKEND_CACHE[name].name
         return _BACKEND_CACHE[name]
     backend: EmbeddingBackend
     if name == "torch":
         try:
-            backend = TorchReIDBackend()
+            backend = TorchEmbeddingBackend()
+            _BACKEND_STATUS.update(fell_back=False, reason=None)
         except Exception as exc:  # noqa: BLE001
             logger.warning("torch Re-ID backend unavailable (%s) -- using attribute baseline", exc)
             backend = AttributeEmbeddingBackend()
+            _BACKEND_STATUS.update(fell_back=True, reason=f"torch unavailable: {exc}")
     else:
         backend = AttributeEmbeddingBackend()
+        _BACKEND_STATUS.update(fell_back=False, reason=None)
+    _BACKEND_STATUS["active"] = backend.name
     _BACKEND_CACHE[name] = backend
     return backend
+
+
+def reid_backend_status() -> dict:
+    """For GET /ai/reid/status."""
+    be = get_embedding_backend()
+    device = getattr(be, "device", "cpu")
+    return {
+        "requested_backend": _requested_backend_name(),
+        "active_backend": "torch" if isinstance(be, TorchEmbeddingBackend) else "attribute",
+        "model": be.name,
+        "device": device,
+        "loaded": True,
+        "fell_back_to_attribute": _BACKEND_STATUS.get("fell_back", False),
+        "fallback_reason": _BACKEND_STATUS.get("reason"),
+        "embedding_dimension": be.dim,
+        "candidate_limit": settings.REID_MAX_CANDIDATES,
+        "similarity_thresholds": {
+            "strong": settings.REID_SIMILARITY_STRONG,
+            "moderate": settings.REID_SIMILARITY_MODERATE,
+            "weak": settings.REID_SIMILARITY_WEAK,
+        },
+        "note": (
+            "Visual similarity is not identity. The torch backbone is an "
+            "ImageNet-pretrained torchvision model (no bespoke Re-ID training); "
+            "it activates only where torch/torchvision/PIL import."
+        ),
+    }
 
 
 # --------------------------------------------------------------------------- #
