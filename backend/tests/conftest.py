@@ -36,6 +36,10 @@ os.environ["CAMERA_HEALTH_WATCH_ENABLED"] = "false"
 # Phase 12: the periodic AI anomaly scan is exercised directly in
 # test_ai_behavior.py; keep the background lifespan task off elsewhere.
 os.environ["AI_ANOMALY_SCAN_ENABLED"] = "false"
+# Phase 14: auto-indexing Re-ID embeddings on ingest is exercised directly
+# in test_reid.py; keep it off for the rest of the suite so the ingest
+# tests aren't coupled to embedding behaviour.
+os.environ["REID_AUTO_INDEX"] = "false"
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -46,8 +50,8 @@ from sqlmodel import SQLModel  # noqa: E402
 # before create_all() runs.
 from app.models import (  # noqa: E402,F401
     alert, anomaly_event, audit_log, camera, camera_health_history, case,
-    incident, notification, pipeline_status, saved_search, user, vehicle_event,
-    watchlist,
+    incident, notification, pipeline_status, saved_search, user, vehicle_embedding,
+    vehicle_event, watchlist,
 )
 from app.core.security import create_access_token, hash_password  # noqa: E402
 from app.database import SessionLocal, engine, get_db  # noqa: E402
@@ -59,6 +63,7 @@ from app.models.vehicle_event import VehicleEvent  # noqa: E402
 from app.services.plate_utils import normalize_plate  # noqa: E402
 
 TABLES_TO_CLEAN = (
+    "vehicle_embeddings",
     "anomaly_events",
     "camera_health_history",
     "saved_searches",

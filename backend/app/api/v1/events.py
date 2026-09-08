@@ -112,6 +112,20 @@ async def ingest_ai_detection(
     db.commit()
     db.refresh(event)
 
+    # --- Phase 14: appearance embedding (best-effort, never blocks ingest) ---
+    if settings.REID_AUTO_INDEX:
+        try:
+            from app.services.ai.reid import VehicleReIDService
+
+            VehicleReIDService(db).index_event(
+                event,
+                precomputed=payload.embedding,
+                source=payload.embedding_model if payload.embedding else None,
+            )
+        except Exception:  # noqa: BLE001 -- re-id must never fail an ingest
+            logger.warning("re-id index failed for event %s", event.id, exc_info=True)
+            db.rollback()
+
     # --- Watchlist cross-reference + cooldown-gated alert creation ---
     # UNKNOWN plates never match the watchlist (there is no "UNKNOWN" entry),
     # so uncertain reads are preserved as normal logged events, not alerts.
