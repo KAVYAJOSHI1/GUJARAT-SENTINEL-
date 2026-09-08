@@ -14,6 +14,25 @@ import { fmtDateTime } from "../utils/datetime.js";
 
 const PAGE = 25;
 const STATUSES = ["", "NEW", "REVIEWED", "DISMISSED"];
+const KIND_LABEL = {
+  STOPPED_VEHICLE: "STOPPED VEHICLE",
+  WRONG_WAY: "WRONG-WAY MOVEMENT",
+  RESTRICTED_ZONE: "RESTRICTED-ZONE ENTRY",
+};
+const KIND_COLOR = { STOPPED_VEHICLE: "#D9A441", WRONG_WAY: "#E0574C", RESTRICTED_ZONE: "#9B8CEE" };
+
+function anomalyDetail(a) {
+  if (a.kind === "WRONG_WAY") {
+    return `Heading ${Math.round(a.direction_deg)}° vs permitted ${Math.round(a.expected_direction_deg)}° `
+      + `over ${a.displacement_meters ?? "?"} m (${a.detection_count} detections)`;
+  }
+  if (a.kind === "RESTRICTED_ZONE") {
+    return `Entered "${a.zone_name || "restricted zone"}" — ${a.detection_count} sighting(s) inside`
+      + (a.duration_seconds ? `, ~${Math.round(a.duration_seconds)}s dwell` : "");
+  }
+  return `Held ${Math.round(a.duration_seconds / 60)} min (${a.detection_count} detections`
+    + `${a.displacement_meters != null ? `, ≤ ${a.displacement_meters} m movement` : ""})`;
+}
 
 // AI-assisted anomaly detection — stopped / loitering vehicles (Phase 12
 // §4). Every figure is derived from stored ByteTrack events; each anomaly
@@ -105,15 +124,19 @@ export default function AnomaliesPage() {
           items.map((a) => (
             <div key={a.id} style={{ padding: "12px 14px", borderTop: `1px solid ${C.border}` }}>
               <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                <span style={{ fontSize: 9, fontWeight: 700, color: C.amber }}>STOPPED VEHICLE</span>
+                <span style={{ fontSize: 9, fontWeight: 700, color: KIND_COLOR[a.kind] || C.amber }}>
+                  {KIND_LABEL[a.kind] || a.kind}
+                </span>
+                <span style={{ fontSize: 8, fontWeight: 700, color: C.violet, border: `1px solid ${C.violet}`, borderRadius: 3, padding: "0 4px" }}>
+                  AI-GENERATED
+                </span>
                 <span style={{ fontFamily: "monospace", color: C.accent }}>{a.camera_code || a.camera_id}</span>
                 <span style={{ fontFamily: "monospace", color: C.amber }}>{a.plate_number_normalized || "unknown"}</span>
                 <ConfidenceBadge level={a.confidence_level} score={a.confidence_score} method={a.reasoning} />
                 <span style={{ marginLeft: "auto", fontSize: 10, color: a.status === "NEW" ? C.red : C.muted }}>{a.status}</span>
               </div>
               <div style={{ color: C.muted, fontSize: 11, marginTop: 4 }}>
-                Held {Math.round(a.duration_seconds / 60)} min ({a.detection_count} detections
-                {a.displacement_meters != null ? `, ≤ ${a.displacement_meters} m movement` : ""}) ·
+                {anomalyDetail(a)} ·
                 {" "}{fmtDateTime(a.first_seen)} → {fmtDateTime(a.last_seen)}
                 {a.location_desc ? ` · ${a.location_desc}` : ""}
               </div>

@@ -107,6 +107,16 @@ class Settings(BaseSettings):
     ANOMALY_STOPPED_MAX_DISPLACEMENT_M: float = 25.0
     ANOMALY_PRIORITY: str = "MEDIUM"
     ANOMALY_LOOKBACK_HOURS: int = 24
+
+    # Phase 14 §6: wrong-way movement. A track whose net heading is >=
+    # MIN_ANGLE_DEG off the camera's permitted_direction_deg, over >=
+    # MIN_DISTANCE_M and >= MIN_DETECTIONS geolocated sightings.
+    ANOMALY_WRONGWAY_MIN_ANGLE_DEG: float = 120.0
+    ANOMALY_WRONGWAY_MIN_DISTANCE_M: float = 25.0
+    ANOMALY_WRONGWAY_MIN_DETECTIONS: int = 3
+    # Phase 14 §6: restricted-zone entry. >= MIN_INSIDE geolocated sightings
+    # of a track fall inside a camera's restricted_zones polygon.
+    ANOMALY_ZONE_MIN_INSIDE: int = 2
     # Periodic in-process scan of recent events for stopped vehicles. Off in
     # the test suite (behaviour is exercised directly). When government feeds
     # resume, new events flow through the existing ingest -> this scan picks

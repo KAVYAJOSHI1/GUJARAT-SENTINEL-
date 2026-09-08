@@ -204,6 +204,8 @@ def _anomaly_read(a: AnomalyEvent, cam: dict, usernames: dict) -> AnomalyEventRe
         detection_count=a.detection_count, displacement_meters=a.displacement_meters,
         confidence_score=a.confidence_score, confidence_level=a.confidence_level,
         reasoning=a.reasoning, evidence_event_id=a.evidence_event_id, alert_id=a.alert_id,
+        zone_name=a.zone_name, direction_deg=a.direction_deg,
+        expected_direction_deg=a.expected_direction_deg,
         status=a.status, reviewed_by_username=usernames.get(a.reviewed_by_user_id or ""),
         created_at=a.created_at,
     )
@@ -251,7 +253,8 @@ async def scan_anomalies(
 ):
     svc = BehaviorAnalyticsService(db)
     result = await run_in_threadpool(
-        svc.scan_stopped_vehicles,
+        svc.scan,
+        kinds=payload.kinds or None,
         lookback_hours=payload.lookback_hours,
         camera_code=payload.camera_code,
     )

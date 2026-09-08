@@ -21,6 +21,7 @@ from app.models.base import CameraStatus, UserRole
 from app.models.camera import Camera
 from app.schemas.camera import (
     CameraCreate,
+    CameraBehaviorConfig,
     CameraUpdate,
     CameraHealthEntry,
     CameraHealthPush,
@@ -160,6 +161,8 @@ def _to_camera_read(
         health_updated_at=camera.health_updated_at,
         is_mock=bool(camera.code and _MOCK_CODE_RE.match(camera.code)),
         last_detection_at=last_detection_at,
+        permitted_direction_deg=camera.permitted_direction_deg,
+        restricted_zones=camera.restricted_zones,
     )
 
 
@@ -417,6 +420,45 @@ def update_camera(
 
     stmt = select(ST_X(Camera.location), ST_Y(Camera.location)).where(Camera.id == camera_id)
     lon, lat = db.execute(stmt).first()
+    return _to_camera_read(camera, lon, lat)
+
+
+@router.patch("/{camera_id}/behavior-config", response_model=CameraRead)
+def update_camera_behavior_config(
+    camera_id: str,
+    payload: CameraBehaviorConfig,
+    db: Session = Depends(get_db),
+    user=Depends(require_roles(UserRole.ADMIN, UserRole.OFFICER)),
+):
+    """Phase 14 §6 -- set the wrong-way permitted direction and/or the
+    restricted-zone polygons used by BehaviorAnalyticsService. Does NOT
+    touch RTSP / credentials / status."""
+    camera = db.get(Camera, camera_id)
+    if camera is None:
+        raise NotFoundError("Camera", camera_id)
+
+    fields = payload.model_dump(exclude_unset=True)
+    if "permitted_direction_deg" in fields:
+        camera.permitted_direction_deg = fields["permitted_direction_deg"]
+    if "restricted_zones" in fields:
+        zones = fields["restricted_zones"]
+        camera.restricted_zones = (
+            [z if isinstance(z, dict) else z.model_dump() for z in payload.restricted_zones]
+            if payload.restricted_zones is not None else None
+        )
+
+    db.add(camera)
+    db.commit()
+    db.refresh(camera)
+    record_audit(
+        db, action="CAMERA_BEHAVIOR_CONFIG", user_id=user.id, resource="camera",
+        resource_id=camera.id,
+        detail={"permitted_direction_deg": camera.permitted_direction_deg,
+                "restricted_zones": len(camera.restricted_zones or [])},
+    )
+    lon, lat = db.execute(
+        select(ST_X(Camera.location), ST_Y(Camera.location)).where(Camera.id == camera_id)
+    ).first()
     return _to_camera_read(camera, lon, lat)
 
 

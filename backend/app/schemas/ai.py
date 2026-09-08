@@ -137,6 +137,10 @@ class AnomalyEventRead(BaseModel):
     confidence_score: float
     confidence_level: ConfidenceLevel
     reasoning: Optional[str] = None
+    # Phase 14 §6 -- populated for WRONG_WAY / RESTRICTED_ZONE only
+    zone_name: Optional[str] = None
+    direction_deg: Optional[float] = None
+    expected_direction_deg: Optional[float] = None
     evidence_event_id: Optional[str] = None
     alert_id: Optional[str] = None
     status: AnomalyStatus
@@ -157,6 +161,9 @@ class AnomalyPage(BaseModel):
 class AnomalyScanRequest(BaseModel):
     lookback_hours: Optional[int] = Field(default=None, ge=1, le=24 * 30)
     camera_code: Optional[str] = None
+    # Phase 14 §6: restrict the scan to specific detectors. None / [] = all.
+    # Values: STOPPED_VEHICLE | WRONG_WAY | RESTRICTED_ZONE
+    kinds: Optional[List[str]] = None
 
 
 class AnomalyScanResult(BaseModel):

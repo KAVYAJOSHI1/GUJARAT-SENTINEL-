@@ -26,6 +26,19 @@ class CameraUpdate(BaseModel):
     status: Optional[CameraStatus] = None
 
 
+class RestrictedZone(BaseModel):
+    name: str
+    # polygon ring as [[lat, lon], ...] (>= 3 points)
+    points: list[list[float]] = Field(..., min_length=3)
+
+
+class CameraBehaviorConfig(BaseModel):
+    """Phase 14 §6 -- wrong-way + restricted-zone detector configuration.
+    Send `permitted_direction_deg: null` / `restricted_zones: []` to clear."""
+    permitted_direction_deg: Optional[float] = Field(default=None, ge=0, le=360)
+    restricted_zones: Optional[list[RestrictedZone]] = None
+
+
 class CameraRead(BaseModel):
     id: str
     code: Optional[str] = None
@@ -49,6 +62,9 @@ class CameraRead(BaseModel):
     is_mock: bool = False
     # timestamp of the most recent vehicle_event on this camera (list view only).
     last_detection_at: Optional[datetime] = None
+    # Phase 14 §6: behaviour-analytics config.
+    permitted_direction_deg: Optional[float] = None
+    restricted_zones: Optional[list] = None
 
     class Config:
         from_attributes = True
