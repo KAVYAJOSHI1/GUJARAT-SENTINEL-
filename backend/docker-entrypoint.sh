@@ -21,5 +21,13 @@ fi
 echo "[entrypoint] seeding database..."
 python /scripts/seed_db.py || echo "[entrypoint] seed step skipped/failed (continuing)"
 
+# Phase 12: optional AI demo dataset so the Copilot / NL search / summaries /
+# anomaly detection are demonstrable from `docker compose up` with no live
+# CCTV. Idempotent; only runs when SEED_AI_DEMO is truthy.
+if [ "${SEED_AI_DEMO:-0}" != "0" ]; then
+  echo "[entrypoint] seeding AI demo dataset..."
+  python /scripts/seed_ai_demo.py || echo "[entrypoint] AI demo seed skipped/failed (continuing)"
+fi
+
 echo "[entrypoint] starting API on :${BACKEND_PORT:-8000}"
 exec uvicorn app.main:app --host 0.0.0.0 --port "${BACKEND_PORT:-8000}" ${UVICORN_RELOAD:+--reload}

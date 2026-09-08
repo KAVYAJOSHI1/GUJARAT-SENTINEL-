@@ -85,3 +85,31 @@ WATCHLIST_CATEGORIES = (
     "INVESTIGATION",
     "OTHER",
 )
+
+
+class AlertSource(str, enum.Enum):
+    """Phase 12: how an alert row came to exist. The watchlist engine still
+    only ever produces WATCHLIST; ANOMALY is written by
+    BehaviorAnalyticsService; MANUAL is reserved for operator-created."""
+
+    WATCHLIST = "WATCHLIST"
+    ANOMALY = "ANOMALY"
+    MANUAL = "MANUAL"
+
+
+class AnomalyStatus(str, enum.Enum):
+    NEW = "NEW"
+    REVIEWED = "REVIEWED"
+    DISMISSED = "DISMISSED"
+
+
+class AnomalyKind(str, enum.Enum):
+    # One kind only this phase (per the brief). More would be additive.
+    STOPPED_VEHICLE = "STOPPED_VEHICLE"
+
+
+class ConfidenceLevel(str, enum.Enum):
+    HIGH = "HIGH"
+    MEDIUM = "MEDIUM"
+    LOW = "LOW"
+    INSUFFICIENT = "INSUFFICIENT"

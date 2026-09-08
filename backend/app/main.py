@@ -91,6 +91,39 @@ async def _camera_staleness_watcher_loop() -> None:
         await asyncio.sleep(interval_s)
 
 
+async def _anomaly_scan_loop() -> None:
+    """Phase 12 §4/§11 -- periodically run the stopped-vehicle detector over
+    RECENTLY STORED events. Operates on `vehicle_events` only (never video).
+    When government feeds resume, new events arrive through the existing
+    ingest and this loop picks them up with no code change."""
+    from app.database import SessionLocal
+    from app.services.ai.behavior import BehaviorAnalyticsService
+    from app.services.alert_dispatcher import connection_manager
+
+    interval_s = max(30, settings.AI_ANOMALY_SCAN_INTERVAL_S)
+    await asyncio.sleep(min(45, interval_s))
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                result = BehaviorAnalyticsService(db).scan_stopped_vehicles()
+                for a in result["anomalies"]:
+                    if a.alert_id:
+                        await connection_manager.broadcast({
+                            "type": "ALERT", "alert_id": a.alert_id, "source": "ANOMALY",
+                            "plate_number": a.plate_number_normalized or "UNKNOWN",
+                            "camera_code": a.camera_code,
+                            "priority_level": settings.ANOMALY_PRIORITY,
+                        })
+                if result["created"]:
+                    logger.info("anomaly scan: %d new stopped-vehicle event(s)", result["created"])
+            finally:
+                db.close()
+        except Exception:  # noqa: BLE001 -- a failed scan must not kill the loop
+            logger.exception("anomaly scan tick failed; retrying next interval")
+        await asyncio.sleep(interval_s)
+
+
 @contextlib.asynccontextmanager
 async def lifespan(_: FastAPI):
     tasks: list[asyncio.Task] = []
@@ -106,6 +139,12 @@ async def lifespan(_: FastAPI):
         logger.info(
             "camera health watcher enabled: every %ds",
             settings.CAMERA_HEALTH_WATCH_INTERVAL_S,
+        )
+    if settings.AI_ANOMALY_SCAN_ENABLED:
+        tasks.append(asyncio.create_task(_anomaly_scan_loop()))
+        logger.info(
+            "AI anomaly scan enabled: every %ds (stopped-vehicle detector)",
+            settings.AI_ANOMALY_SCAN_INTERVAL_S,
         )
     try:
         yield

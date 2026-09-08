@@ -4,6 +4,7 @@ import {
   Activity,
   BarChart3,
   BellRing,
+  Bot,
   Briefcase,
   Car,
   ClipboardList,
@@ -43,6 +44,7 @@ export default function Dashboard() {
     detections,
     incidents = [],
     cases = [],
+    anomalies = [],
     health,
     healthLive,
     latestDetectionByCamera,
@@ -141,6 +143,7 @@ export default function Dashboard() {
 
       {/* ── Quick actions (command center) ─────────────────────────────────── */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
+        <QuickAction icon={Bot} label="AI Copilot" onClick={() => navigate("/copilot")} />
         <QuickAction icon={Search} label="Advanced Search" onClick={() => navigate("/search")} />
         <QuickAction icon={Briefcase} label="My Work" onClick={() => navigate("/my-work")} />
         <QuickAction icon={ClipboardList} label="Incidents" onClick={() => navigate("/incidents")} />
@@ -169,6 +172,17 @@ export default function Dashboard() {
             id: c.id, href: `/cases/${c.id}`, ref: c.case_number, main: c.title,
             tag: c.status, sub: `${c.incident_count} incidents · ${c.evidence_count} evidence`,
             color: SEVCOL(c.priority_level),
+          }))}
+        />
+        <OpsList
+          title="AI Anomaly Events" icon={Bot} to="/anomalies"
+          empty="No anomalies detected"
+          rows={(anomalies || []).map((a) => ({
+            id: a.id, href: "/anomalies", ref: a.camera_code || "cam",
+            main: `Stopped vehicle · ${a.plate_number_normalized || "unknown"}`,
+            tag: a.confidence_level,
+            sub: `${Math.round(a.duration_seconds / 60)} min · ${a.detection_count} detections · ${a.status}`,
+            color: a.confidence_level === "HIGH" ? C.red : C.amber,
           }))}
         />
       </div>

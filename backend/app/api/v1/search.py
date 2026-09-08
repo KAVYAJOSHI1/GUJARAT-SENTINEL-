@@ -12,7 +12,7 @@ import time
 
 from fastapi import APIRouter, Depends, Query, Request
 from geoalchemy2.functions import ST_X, ST_Y
-from sqlalchemy import cast, func, or_, select
+from sqlalchemy import cast, func, or_, select, tuple_
 from sqlalchemy.types import Time
 from sqlmodel import Session
 
@@ -60,6 +60,10 @@ def _build_conditions(q: VehicleSearchQuery):
             conds.append(VehicleEvent.plate_number_normalized.ilike(f"%{frag}%"))
     if q.vehicle_type:
         conds.append(VehicleEvent.vehicle_type == q.vehicle_type)
+    if q.vehicle_color:
+        conds.append(func.lower(VehicleEvent.vehicle_color) == q.vehicle_color.strip().lower())
+    if q.unknown_only:
+        conds.append(VehicleEvent.plate_number_normalized == "UNKNOWN")
     if q.camera_code:
         conds.append(VehicleEvent.camera_code == q.camera_code)
     if q.date_from:
@@ -95,6 +99,30 @@ def _build_conditions(q: VehicleSearchQuery):
             .exists()
         )
         conds.append(sub if q.has_case else ~sub)
+    if q.min_duration_seconds:
+        # per-(camera, track) dwell time -- bounded by the same date range
+        span_conds = [VehicleEvent.track_id.is_not(None)]
+        if q.date_from:
+            span_conds.append(VehicleEvent.timestamp >= q.date_from)
+        if q.date_to:
+            span_conds.append(VehicleEvent.timestamp <= q.date_to)
+        long_tracks = (
+            select(VehicleEvent.camera_code, VehicleEvent.track_id)
+            .where(*span_conds)
+            .group_by(VehicleEvent.camera_code, VehicleEvent.track_id)
+            .having(
+                func.extract(
+                    "epoch",
+                    func.max(VehicleEvent.timestamp) - func.min(VehicleEvent.timestamp),
+                )
+                >= q.min_duration_seconds
+            )
+        ).subquery()
+        conds.append(
+            tuple_(VehicleEvent.camera_code, VehicleEvent.track_id).in_(
+                select(long_tracks.c.camera_code, long_tracks.c.track_id)
+            )
+        )
     return conds
 
 
@@ -108,13 +136,11 @@ def _order_by(sort: str):
     return [VehicleEvent.timestamp.desc()]  # latest (default) / relevance
 
 
-@router.post("/vehicles", response_model=VehicleSearchResponse)
-def search_vehicles(
-    q: VehicleSearchQuery,
-    request: Request,
-    db: Session = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
-):
+def execute_vehicle_search(db: Session, q: VehicleSearchQuery) -> VehicleSearchResponse:
+    """Run the Advanced Search and build the enriched, relationship-linked
+    result page. Shared by `POST /search/vehicles` and the Phase 12 AI NL
+    search so there is exactly ONE search engine. Does NOT audit -- the
+    caller does (with the right action name)."""
     t0 = time.perf_counter()
     conds = _build_conditions(q)
 
@@ -208,16 +234,27 @@ def search_vehicles(
             )
         )
 
-    record_audit(
-        db, action="ADVANCED_SEARCH", user_id=user.id, resource="vehicle_events",
-        ip_address=client_ip(request),
-        detail={"total": int(total), "returned": len(items), "sort": q.sort,
-                "filters": q.model_dump(exclude_none=True, exclude_defaults=True)},
-    )
     return VehicleSearchResponse(
         items=items, total=int(total), limit=q.limit, offset=q.offset, sort=q.sort,
         took_ms=round((time.perf_counter() - t0) * 1000, 1),
     )
+
+
+@router.post("/vehicles", response_model=VehicleSearchResponse)
+def search_vehicles(
+    q: VehicleSearchQuery,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    resp = execute_vehicle_search(db, q)
+    record_audit(
+        db, action="ADVANCED_SEARCH", user_id=user.id, resource="vehicle_events",
+        ip_address=client_ip(request),
+        detail={"total": resp.total, "returned": len(resp.items), "sort": q.sort,
+                "filters": q.model_dump(exclude_none=True, exclude_defaults=True)},
+    )
+    return resp
 
 
 # --------------------------------------------------------------------------- #

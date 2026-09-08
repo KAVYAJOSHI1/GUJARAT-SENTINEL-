@@ -15,6 +15,8 @@ import SearchPage from "./pages/SearchPage.jsx";
 import WatchlistPage from "./pages/WatchlistPage.jsx";
 import MyWorkPage from "./pages/MyWorkPage.jsx";
 import ReportsPage from "./pages/ReportsPage.jsx";
+import CopilotPage from "./pages/CopilotPage.jsx";
+import AnomaliesPage from "./pages/AnomaliesPage.jsx";
 import InvestigationPage from "./pages/InvestigationPage.jsx";
 import MapPage from "./pages/MapPage.jsx";
 
@@ -40,6 +42,10 @@ export function AppRoutes() {
         <Route path="watchlists" element={<WatchlistPage />} />
         <Route path="my-work" element={<MyWorkPage />} />
         <Route path="reports" element={<ReportsPage />} />
+
+        {/* Phase 12 — AI intelligence layer */}
+        <Route path="copilot" element={<CopilotPage />} />
+        <Route path="anomalies" element={<AnomaliesPage />} />
 
         <Route path="system" element={<SystemPage />} />
         <Route path="admin" element={<AdminPage />} />

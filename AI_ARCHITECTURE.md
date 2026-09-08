@@ -1,5 +1,14 @@
 # SENTINEL — AI Analytics & ANPR/OCR Pipeline Architecture
 
+> **Phase 12 (AI intelligence layer — Copilot / NL search / AI summaries /
+> stopped-vehicle anomaly)** is documented separately in
+> [`docs/AI_ARCHITECTURE.md`](docs/AI_ARCHITECTURE.md),
+> [`docs/AI_INVESTIGATION_COPILOT.md`](docs/AI_INVESTIGATION_COPILOT.md),
+> [`docs/AI_SEARCH.md`](docs/AI_SEARCH.md),
+> [`docs/AI_BEHAVIOR_ANALYTICS.md`](docs/AI_BEHAVIOR_ANALYTICS.md) and
+> [`docs/AI_DEMO_RUNBOOK.md`](docs/AI_DEMO_RUNBOOK.md). This file covers the
+> detection / ANPR / OCR / tracking pipeline it reads from.
+
 ---
 
 ## 1. Overview

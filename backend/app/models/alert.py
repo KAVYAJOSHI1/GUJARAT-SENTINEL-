@@ -9,7 +9,13 @@ from typing import Optional
 from sqlalchemy import Index
 from sqlmodel import Field
 
-from app.models.base import TimestampMixin, AlertStatus, PriorityLevel, gen_uuid
+from app.models.base import (
+    AlertSource,
+    AlertStatus,
+    PriorityLevel,
+    TimestampMixin,
+    gen_uuid,
+)
 
 
 class Alert(TimestampMixin, table=True):
@@ -24,7 +30,15 @@ class Alert(TimestampMixin, table=True):
     vehicle_event_id: str = Field(
         foreign_key="vehicle_events.id", nullable=False, index=True
     )
-    watchlist_id: str = Field(foreign_key="watchlist.id", nullable=False, index=True)
+    # Phase 12: nullable. A WATCHLIST alert always has one (the engine sets
+    # it); an ANOMALY alert has none. The watchlist->alert path is unchanged.
+    watchlist_id: Optional[str] = Field(
+        default=None, foreign_key="watchlist.id", nullable=True, index=True
+    )
+    source: AlertSource = Field(default=AlertSource.WATCHLIST, nullable=False, index=True)
+    anomaly_event_id: Optional[str] = Field(
+        default=None, foreign_key="anomaly_events.id", nullable=True, index=True
+    )
 
     priority_level: PriorityLevel = Field(default=PriorityLevel.MEDIUM, nullable=False)
     status: AlertStatus = Field(default=AlertStatus.NEW, nullable=False, index=True)

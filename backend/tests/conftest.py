@@ -33,6 +33,9 @@ os.environ["RETENTION_SWEEP_ENABLED"] = "false"
 # test_camera_health_history.py; keep the background lifespan task off for
 # the rest of the suite.
 os.environ["CAMERA_HEALTH_WATCH_ENABLED"] = "false"
+# Phase 12: the periodic AI anomaly scan is exercised directly in
+# test_ai_behavior.py; keep the background lifespan task off elsewhere.
+os.environ["AI_ANOMALY_SCAN_ENABLED"] = "false"
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -42,8 +45,9 @@ from sqlmodel import SQLModel  # noqa: E402
 # Import every table module so SQLModel.metadata knows about all of them
 # before create_all() runs.
 from app.models import (  # noqa: E402,F401
-    alert, audit_log, camera, camera_health_history, case, incident,
-    notification, pipeline_status, saved_search, user, vehicle_event, watchlist,
+    alert, anomaly_event, audit_log, camera, camera_health_history, case,
+    incident, notification, pipeline_status, saved_search, user, vehicle_event,
+    watchlist,
 )
 from app.core.security import create_access_token, hash_password  # noqa: E402
 from app.database import SessionLocal, engine, get_db  # noqa: E402
@@ -55,6 +59,7 @@ from app.models.vehicle_event import VehicleEvent  # noqa: E402
 from app.services.plate_utils import normalize_plate  # noqa: E402
 
 TABLES_TO_CLEAN = (
+    "anomaly_events",
     "camera_health_history",
     "saved_searches",
     "notifications",

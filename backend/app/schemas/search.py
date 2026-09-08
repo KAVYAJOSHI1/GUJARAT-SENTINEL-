@@ -51,12 +51,17 @@ class VehicleSearchQuery(BaseModel):
     plate: Optional[str] = None                 # exact (normalised)
     plate_contains: Optional[str] = None        # partial (trigram)
     vehicle_type: Optional[str] = None
+    vehicle_color: Optional[str] = None
     camera_code: Optional[str] = None
     location_contains: Optional[str] = None     # matches camera name / location_desc
     date_from: Optional[datetime] = None
     date_to: Optional[datetime] = None
     time_from: Optional[str] = None             # "HH:MM" -- wall-clock band, applied per row
     time_to: Optional[str] = None
+    # Phase 12: only events whose (camera, track) dwell time reaches this
+    # many seconds -- backs the "detected for more than 5 minutes" query.
+    min_duration_seconds: Optional[int] = Field(default=None, ge=1)
+    unknown_only: bool = False
     watchlist_only: bool = False
     has_alert: Optional[bool] = None
     has_incident: Optional[bool] = None

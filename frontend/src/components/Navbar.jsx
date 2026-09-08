@@ -10,9 +10,11 @@ import { useToast } from "../context/ToastContext.jsx";
 
 const TABS = [
   { to: "/", label: "Overview", end: true },
+  { to: "/copilot", label: "Copilot" },
   { to: "/my-work", label: "My Work" },
   { to: "/cameras", label: "Cameras" },
   { to: "/alerts", label: "Alerts" },
+  { to: "/anomalies", label: "Anomalies" },
   { to: "/incidents", label: "Incidents" },
   { to: "/cases", label: "Cases" },
   { to: "/search", label: "Search" },

@@ -10,6 +10,7 @@ import {
 import { createAlertSocket } from "../services/websocket.js";
 import { fetchSystemHealth } from "../services/observabilityApi.js";
 import { fetchUnreadCount, listCases, listIncidents } from "../services/opsApi.js";
+import { listAnomalies } from "../services/aiApi.js";
 import { useToast } from "../context/ToastContext.jsx";
 
 // Central data layer for the command center. One instance lives in <App/> and
@@ -34,6 +35,7 @@ export function useSentinelData() {
   // for the command center — full lists live on their own pages.
   const [incidents, setIncidents] = useState([]);
   const [cases, setCases] = useState([]);
+  const [anomalies, setAnomalies] = useState([]);
   const [notifUnread, setNotifUnread] = useState(0);
 
   const [loading, setLoading] = useState(true);
@@ -48,13 +50,15 @@ export function useSentinelData() {
 
   const refreshOps = useCallback(async () => {
     // Never blocks the core dashboard: each call degrades to [] / 0 on error.
-    const [inc, cas, unread] = await Promise.all([
+    const [inc, cas, anom, unread] = await Promise.all([
       listIncidents({ active_only: true, limit: 6 }).catch(() => null),
       listCases({ limit: 6 }).catch(() => null),
+      listAnomalies({ limit: 6 }).catch(() => null),
       fetchUnreadCount(),
     ]);
     if (inc?.items) setIncidents(inc.items);
     if (cas?.items) setCases(cas.items);
+    if (anom?.items) setAnomalies(anom.items);
     setNotifUnread(unread || 0);
   }, []);
 
@@ -190,6 +194,7 @@ export function useSentinelData() {
     detections,
     incidents,
     cases,
+    anomalies,
     notifUnread,
     refreshNotifications: refreshOps,
     health,

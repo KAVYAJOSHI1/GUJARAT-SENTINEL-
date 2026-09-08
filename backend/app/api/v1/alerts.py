@@ -55,6 +55,8 @@ def _to_alert_read(a: Alert, *, cam=None, usernames=None, incident=None) -> Aler
         longitude=cam.get("lon"),
         vehicle_event_id=a.vehicle_event_id,
         watchlist_id=a.watchlist_id,
+        source=a.source.value if hasattr(a.source, "value") else str(a.source),
+        anomaly_event_id=a.anomaly_event_id,
         priority_level=a.priority_level,
         status=a.status,
         snapshot_url=a.snapshot_url,

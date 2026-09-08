@@ -104,7 +104,17 @@ export default function AlertRow({ alert, onAck, onViewEvidence }) {
               SIMULATED
             </span>
           )}
-          <span style={{ color: C.muted, fontSize: 10, fontFamily: "monospace" }}>{alert.type}</span>
+          {alert.isAnomaly && (
+            <span
+              title="AI-assisted anomaly detection — stopped / loitering vehicle. Not a watchlist match."
+              style={{ color: C.violet, border: `1px solid ${C.violet}`, borderRadius: 3, padding: "0 5px", fontSize: 8, fontWeight: 700, letterSpacing: 0.5 }}
+            >
+              AI ANOMALY
+            </span>
+          )}
+          <span style={{ color: C.muted, fontSize: 10, fontFamily: "monospace" }}>
+            {alert.isAnomaly ? "STOPPED VEHICLE" : alert.type}
+          </span>
           <span style={{ color: C.accent, fontSize: 10, fontFamily: "monospace" }}>{alert.cam}</span>
         </div>
         <div style={{ color: C.text, fontSize: 12 }}>{alert.msg}</div>

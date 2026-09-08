@@ -3,6 +3,7 @@ from fastapi import APIRouter
 
 from app.api.v1 import (
     admin,
+    ai,
     alerts,
     analytics,
     auth,
@@ -36,6 +37,7 @@ api_router.include_router(search.router, prefix="/search", tags=["search"])
 api_router.include_router(saved_searches.router, prefix="/saved-searches", tags=["saved-searches"])
 api_router.include_router(work_queue.router, prefix="/work-queue", tags=["work-queue"])
 api_router.include_router(reports.router, prefix="/reports", tags=["reports"])
+api_router.include_router(ai.router, prefix="/ai", tags=["ai"])
 api_router.include_router(analytics.router, prefix="/analytics", tags=["analytics"])
 api_router.include_router(pipeline.router, prefix="/pipeline", tags=["pipeline"])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])

@@ -21,10 +21,12 @@ class AlertRead(BaseModel):
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     vehicle_event_id: str
-    watchlist_id: str
+    watchlist_id: Optional[str] = None       # None for source=ANOMALY (Phase 12)
+    source: str = "WATCHLIST"
+    anomaly_event_id: Optional[str] = None
     priority_level: PriorityLevel
     status: AlertStatus
-    snapshot_url: Optional[str]
+    snapshot_url: Optional[str] = None
     created_at: datetime
 
     # Phase 11 escalation workflow (all None on a fresh NEW alert)

@@ -2,8 +2,10 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft, Camera as CameraIcon, Clock, Crosshair, FileDown,
-  Link2, Paperclip, StickyNote, Trash2, UserPlus,
+  Link2, Paperclip, Sparkles, StickyNote, Trash2, UserPlus,
 } from "lucide-react";
+import AISummaryPanel from "../components/ops/AISummaryPanel.jsx";
+import { aiCaseSummary } from "../services/aiApi.js";
 import { C } from "../theme.js";
 import { canManageOps, evidenceUrl } from "../services/api.js";
 import { useToast } from "../context/ToastContext.jsx";
@@ -215,6 +217,12 @@ export default function CaseDetailPage() {
             </button>
           </div>
         )}
+      </div>
+
+      {/* AI Summary */}
+      <div style={panel}>
+        <SectionHead icon={Sparkles} title="AI Summary" />
+        <AISummaryPanel loader={() => aiCaseSummary(c.id)} />
       </div>
 
       {/* Timeline (Phase 11 — filterable, derived from audit + linked rows) */}

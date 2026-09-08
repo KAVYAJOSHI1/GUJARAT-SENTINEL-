@@ -15,6 +15,7 @@ from app.models.case import Case, CaseNote, CaseIncident, CaseEvidence
 from app.models.notification import Notification
 from app.models.saved_search import SavedSearch
 from app.models.camera_health_history import CameraHealthHistory
+from app.models.anomaly_event import AnomalyEvent
 
 __all__ = [
     "Camera", "VehicleEvent", "Watchlist", "Alert", "User", "AuditLog",
@@ -23,4 +24,5 @@ __all__ = [
     "Case", "CaseNote", "CaseIncident", "CaseEvidence",
     "Notification",
     "SavedSearch", "CameraHealthHistory",
+    "AnomalyEvent",
 ]

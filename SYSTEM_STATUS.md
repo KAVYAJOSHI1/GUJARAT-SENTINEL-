@@ -10,6 +10,17 @@
 > Migration `0006` (8 new tables, additive only). Backend + demo-flow tests
 > added and passing. See §A rows tagged *(2026-09-08)* and §I.
 >
+> **2026-09-08 — Phase 12: AI intelligence layer.** Added an
+> **Investigation Copilot** (natural-language questions → deterministic
+> parse → validated tools → grounded answer), **natural-language CCTV
+> search** (extends the existing Advanced Search), **AI incident/case
+> summaries**, and **stopped-vehicle anomaly detection** (feeds the
+> existing alert workflow). Deterministic-first — **no external LLM
+> required**; an optional OpenAI provider only re-words answers. Migration
+> `0008` (`anomaly_events` table + `alerts.source`/nullable `watchlist_id`).
+> An **offline demo seed** makes it all demonstrable from `docker compose
+> up`. See §A rows tagged *(Phase 12)*, §K, and `docs/AI_*.md`.
+>
 > **2026-09-08 — Phase 11: advanced operational features.** Added
 > **Unified Advanced Search** + **Global Quick Search**, **Saved
 > Investigations**, an **Advanced Watchlist Management** console (CSV
@@ -41,10 +52,10 @@ Everything in this section was exercised on 2026-09-05 (commands and results in 
 
 | Area | Status | Notes |
 | :--- | :--- | :--- |
-| **Docker / deployment** | Verified | `docker compose down -v && docker compose up --build -d` brings up postgis + minio + backend + frontend from zero volumes. Backend entrypoint runs `alembic upgrade head` (`0001→0007`) then the idempotent seed. Re-verified from an empty volume this pass. |
-| **Database** | Verified | PostgreSQL 15 + PostGIS 3.3. Migrations `0001`–`0007` apply cleanly on a fresh volume (and full downgrade→upgrade round-trips). `0004` = analytics covering indexes; `0005` = `pipeline_status`; `0006` = operational layer (8 tables); `0007` = Phase 11 — `saved_searches` + `camera_health_history` tables, `watchlist`/`alerts` additive columns, `AlertStatus.ESCALATED` enum value, `pg_trgm` + GIN partial-plate indexes. Additive only; no existing table redesigned. |
+| **Docker / deployment** | Verified | `docker compose down -v && docker compose up --build -d` brings up postgis + minio + backend + frontend from zero volumes. Backend entrypoint runs `alembic upgrade head` (`0001→0008`), the admin seed, then (compose default `SEED_AI_DEMO=1`) the idempotent AI demo seed. Re-verified from an empty volume this pass. |
+| **Database** | Verified | PostgreSQL 15 + PostGIS 3.3. Migrations `0001`–`0008` apply cleanly on a fresh volume (and full downgrade→upgrade round-trips). `0006` = operational layer (8 tables); `0007` = Phase 11 (2 tables + additive cols + `pg_trgm`); `0008` = Phase 12 — `anomaly_events` table, `alerts.source` enum col + `alerts.anomaly_event_id`, `alerts.watchlist_id` made nullable (an ANOMALY alert has no watchlist entry). Additive only; no existing table redesigned. |
 | **Authentication / security** | Verified | JWT (HS256) login; RBAC (ADMIN/OFFICER/OPERATOR); login rate-limit (5 fails / 300s → 429); explicit CORS allow-list; short-lived scoped tickets for WebSocket handshake (`purpose="ws"`, ~60s) and media `<img>`/`<video>` (`purpose="media"`, ~120s) so the session JWT never rides the WS wire or a URL. |
-| **Backend APIs** | Verified | `/health`, `/api/v1/auth/*`, `/api/v1/cameras` (+ `/sync`, `/geojson`, `/health`, `/{id}/mock-video`), `/api/v1/vehicles/search` (+ `/evidence/{event_id}`, `/events/recent`), `/api/v1/watchlist`, `/api/v1/alerts`, `/api/v1/incidents/*`, `/api/v1/cases/*`, `/api/v1/notifications/*`, `/api/v1/dashboard/stats` (+ `active_incidents` / `open_cases`) + `/dashboard/health`, `/api/v1/pipeline/status`, `/api/v1/analytics/*`, `/api/v1/admin/*` (+ `/admin/audit`, `/admin/users`). |
+| **Backend APIs** | Verified | Core: `/health`, `/api/v1/auth/*`, `/cameras/*` (+ `/{id}/health/history`), `/vehicles/search` + `/evidence`, `/watchlist/*` (CRUD + CSV), `/alerts/*` (+ `/assign`/`/escalate`/`/resolve`), `/incidents/*` (+ `/timeline`), `/cases/*` (+ `/timeline`, `/report`), `/notifications/*`, `/dashboard/{stats,health}`, `/pipeline/status`, `/analytics/*`, `/admin/*` (`/audit`, `/users`). Phase 11: `/search/{vehicles,global}`, `/saved-searches/*`, `/work-queue`, `/reports/*`. **Phase 12: `/api/v1/ai/{investigate,search,status,suggestions}`, `/ai/incidents/{id}/summary`, `/ai/cases/{id}/summary`, `/ai/anomalies` (+ `/scan`, `/{id}/review`).** |
 | **Camera onboarding** | Verified | `POST /api/v1/cameras/sync` upserts a catalogue keyed by external `code`; the pipeline auto-syncs its registry on start (`-> 200 (3 cameras)` for the demo registry). 30 real cameras registered in `data/camera_registry.json`. |
 | **AI: YOLO detection + tracking** | Verified | YOLOv8n (`ultralytics`) + ByteTrack, one worker. On the demo clips: ~9.5 processed FPS, YOLO p50 ≈ 55 ms. On real `cam04`: vehicles detected and tracked (4 in a 90 s window). |
 | **ANPR / OCR (curated clips)** | Verified | Heuristic plate locator → EasyOCR → multi-frame consensus → Gujarat-format normalisation. Reads `GJ18TC0450` reliably off all three demo clips, in Docker and bare-metal. OCR p50 ≈ 187 ms/plate (CPU). |
@@ -72,7 +83,12 @@ Everything in this section was exercised on 2026-09-05 (commands and results in 
 | **Officer Work Queue** *(Phase 11)* | Verified | `GET /api/v1/work-queue` — role-aware: ADMIN sees all open work, OFFICER sees work assigned to them + unassigned NEW/ESCALATED alerts; counts + priority/newest/oldest sort. Tests in `test_phase11_workflow.py`. |
 | **Reports Center** *(Phase 11)* | Verified | `GET /api/v1/reports` + `GET /api/v1/reports/{key}.csv` — 9 reports (vehicle-detections, watchlist-matches, alerts, incidents, cases, camera-activity, camera-health, vehicle-journey, daily-summary), each a bounded PostgreSQL aggregate; date-range / camera / department / plate / severity filters; CSV export; audited (`REPORT_EXPORT`). Tests: `test_phase11_reports_and_camera_health.py`. |
 | **Camera Health History** *(Phase 11)* | Verified | `camera_health_history` table — one row per real effective-status transition, written by the health-push endpoint and by a lightweight 30 s in-process staleness watcher (`CAMERA_HEALTH_WATCH_*`). `CAMERA_OFFLINE` / `CAMERA_RECOVERED` notifications on the operationally-significant edges, deduped against the last row. `GET /cameras/{id}/health/history`. Tests: `test_phase11_reports_and_camera_health.py`. |
-| **Test suites** | Verified | Backend **157 passed** (138 prior + 19 Phase 11); AI/ingestion 143 passed, 8 skipped. Counts in §F. |
+| **AI Investigation Copilot** *(Phase 12)* | Verified | `POST /api/v1/ai/investigate` — NL question → deterministic intent/entity parse (`nlq.py`) → one of 9 validated `InvestigationTools` → bounded existing-DB query → answer + timeline + map points + related alert/incident/case links + FACT/INFERENCE confidence. Grounded: every result row is a real DB row (test-asserted); empty → "not available in recorded evidence"; no-plate journey questions refused. Audited `AI_INVESTIGATION`. Tests: `test_ai_copilot.py` (7), `test_ai_nlq.py` (8). |
+| **Natural-language CCTV search** *(Phase 12)* | Verified | `POST /api/v1/ai/search` — NL → `VehicleSearchQuery` → the **same** `execute_vehicle_search()` the Advanced Search uses. Returns the generated `filters` verbatim (explainability) + the enriched results. Added filters: `vehicle_color`, `unknown_only`, `min_duration_seconds` (per-track dwell). Audited `AI_SEARCH`. Tests: `test_ai_search_and_summary.py`. |
+| **AI incident / case summary** *(Phase 12)* | Verified | `POST /api/v1/ai/{incidents\|cases}/{id}/summary` — deterministic structured summary from existing rows (incident/case, linked alert, notes, evidence, the vehicle's sightings) + investigation gaps. Labelled "AI-GENERATED SUMMARY"; missing data → "Not available in recorded evidence." Audited. |
+| **Stopped-vehicle anomaly detection** *(Phase 12)* | Verified | `BehaviorAnalyticsService.scan_stopped_vehicles` — one grouped aggregate over stored ByteTrack `vehicle_events` (never video). Threshold-configurable. Each hit → `anomaly_events` row **+ an `Alert(source=ANOMALY)`** that flows through the existing acknowledge/assign/escalate/promote workflow, **+ notification**, **+ WS frame**. Idempotent (unique `(camera,track,first_seen)`). Periodic in-process scan + `POST /ai/anomalies/scan` (ADMIN/OFFICER). Tests: `test_ai_behavior.py` (4). |
+| **AI offline demo** *(Phase 12)* | Verified | `scripts/seed_ai_demo.py` (compose `SEED_AI_DEMO=1`) seeds 8 cameras + a GJ18TC0450 journey + watchlist alert + `INC-<yr>-9001` + `CASE-<yr>-9001` + a stopped-vehicle track, then runs the real detector — all via production code paths. The full AI layer works with government CCTV disconnected and no LLM key (deterministic provider). Verified end-to-end on a fresh `docker compose up`. |
+| **Test suites** | Verified | Backend **187 passed** (157 prior + 30 Phase 12); AI/ingestion 143 passed, 8 skipped. Counts in §F. |
 
 ---
 
@@ -102,6 +118,14 @@ No other component was observed failing this pass.
 ---
 
 ## D. NOT YET IMPLEMENTED
+
+**Phase 12 (AI) — deliberately out of scope / deferred:**
+
+- **Visual Re-ID, face recognition, VLM/LLM reasoning, new ANPR models, AI agents** — explicitly excluded by the phase brief; a later AI phase.
+- **Multi-model behaviour analytics** — only the ONE detector (stopped/loitering vehicle) was built, per the brief. Wrong-way / speeding / red-light / crowd anomalies are not.
+- **`vehicle_events.vehicle_color` population** — the column, the NL parser ("white car") and the search/Copilot filter all exist; the live detector does not yet emit colour, so colour filters only match rows that carry it (the demo seed does). Additive when a colour classifier is added — no schema change.
+- **LLM tool-calling loop** — the OpenAI provider can pick ONE tool and re-word the answer; a multi-step agentic loop is not built (and not needed — the deterministic intent→tool mapping covers the supported questions).
+- **AI-pipeline-degradation / storage-warning notifications** — camera offline/recovered + anomaly notifications exist; pipeline/storage-threshold types do not.
 
 **Phase 11 follow-ups** (deliberately scoped to P0 + selected P1; not
 started unless noted):
@@ -151,12 +175,13 @@ Explicitly **not built** — target design only (see `SCALABILITY.md`, which is 
 
 | Suite | Command | Result |
 | :--- | :--- | :--- |
-| Backend | `cd backend && DATABASE_URL=…/sentinel_test pytest -q` | **157 passed** (~93 s) — 138 prior + 19 Phase 11 (`test_advanced_search` 3, `test_watchlist_management` 7, `test_phase11_workflow` 6, `test_phase11_reports_and_camera_health` 3) |
-| Migration round-trip | `alembic upgrade head` on empty DB, then `downgrade 0005` → `upgrade head` | **OK** — `0001…0007` up/down/up clean; `alembic check` shows no NEW drift on Phase 11 objects (only the pre-existing SQLModel `index=True`-vs-migration naming noise + the deliberately-raw `pg_trgm` functional index) |
-| Fresh Docker + Phase 11 smoke | `docker compose down -v && up -d --build`; migrate `sentinel` to `0007`; drive the API | **PASS** — advanced/global search, saved searches, watchlist CRUD + CSV import/export, alert assign/escalate/resolve, incident + case timelines, work queue, all 9 report CSVs, camera health history, RBAC, and the full GJ18TC0450 demo acceptance flow. GJ18TC0450 demo watchlist entry preserved through a CSV import. |
-| AI / ingestion | `.venv/bin/python -m pytest tests/ -q` | **143 passed, 8 skipped** (~39 s) — unchanged. |
-| Real cam04 / cam06 smoke | `run_pipeline_service.py --cameras cam04,cam06 --no-backend --duration 80` | RTSP auth OK (reconnect 19–27 s), both reach ONLINE, 554 frames decoded, YOLO+ByteTrack run, 6 AI events. 5/6 plates `UNKNOWN`; 1 event carried a spurious 7-char OCR string (`0620516`, not a valid GJ plate) — unchanged pre-existing OCR behaviour on low-quality wide-area feeds, **not** a Phase 11 regression (no `ai/` / ingestion file touched) and **not** a successful recognition. |
-| Frontend build | `cd frontend && npm run build` | **OK** — 2113 modules, `dist/` built (~5 s). Dev-server transforms all new modules with 0 errors; all new routes serve. Not a rendered browser click-test (Chrome extension unavailable). |
+| Backend | `cd backend && DATABASE_URL=…/sentinel_test pytest -q` | **187 passed** (~119 s) — 157 prior + 30 Phase 12 (`test_ai_nlq` 8, `test_ai_copilot` 7, `test_ai_behavior` 4, `test_ai_search_and_summary` 6, `test_ai_api` 5) |
+| Migration round-trip | `alembic upgrade head` on empty DB, then `downgrade 0006` → `upgrade head` | **OK** — `0001…0008` up/down/up clean. `alembic check` warns about the intentional mutual `alerts ↔ anomaly_events` FK cycle (SQLAlchemy sort limitation; runtime-safe — the migration creates `anomaly_events` first). Only pre-existing SQLModel-vs-migration index-naming noise otherwise. |
+| Fresh Docker + Phase 12 acceptance | `docker compose down -v && SEED_AI_DEMO=1 up -d --build`; drive the API | **PASS (22/22)** — AI status = deterministic/offline; Copilot "where was GJ18TC0450 seen" → 5 grounded results + timeline + map + related alert + `AI MATCH: HIGH`; no-hallucination (result ids ⊆ real ids); journey; last-6-hours window; empty → "not available in recorded evidence"; NL search → filters + results; incident + case AI summary; seeded stopped-vehicle anomaly + its ANOMALY alert in the feed; re-scan idempotent; RBAC 401; `AI_*` audit rows. |
+| Fresh Docker + Phase 10/11 regression | same stack | **PASS** — the full GJ18TC0450 demo acceptance flow (detect→alert→ack→incident→assign→trace→evidence→case→report→resolve→close→audit) + all Phase 11 smokes still green. |
+| AI / ingestion | `.venv/bin/python -m pytest tests/ -q` | **143 passed, 8 skipped** (~50 s) — unchanged (no `ai/` or ingestion file touched). |
+| Real cam04 / cam06 smoke | (Phase 11 run — not re-run) | RTSP auth OK, both ONLINE, YOLO+ByteTrack, plates `UNKNOWN`. Phase 12 changes nothing in ingestion/RTSP/ANPR. |
+| Frontend build | `cd frontend && npm run build` | **OK** — 2118 modules, `dist/` built. Dockerised dev-server transforms all new AI modules (0 errors); `/copilot`, `/anomalies` and every existing route serve; `/api/v1/ai/*` proxy works. **Not** a rendered browser click-test (Chrome extension unavailable). |
 
 ### Fresh-volume Docker
 
@@ -355,3 +380,85 @@ All new calls degrade to explicit error/empty states — no mock fallback.
 See §D "Phase 11 follow-ups" — Camera Management console, GIS layer
 filters, Journey Replay polish, operational-analytics charts page, Activity
 Feed widget, retention/export admin panel, PDF report output.
+
+---
+
+## K. PHASE 12 — AI INTELLIGENCE LAYER (2026-09-08)
+
+Full detail in `docs/AI_ARCHITECTURE.md`, `docs/AI_INVESTIGATION_COPILOT.md`,
+`docs/AI_SEARCH.md`, `docs/AI_BEHAVIOR_ANALYTICS.md`, `docs/AI_DEMO_RUNBOOK.md`.
+
+### Core principle
+
+The AI layer is **read-only over the existing entities**. It adds no
+ingestion path. When government CCTV resumes, new `vehicle_events` flow
+through the unchanged pipeline and every AI feature picks them up with no
+code change.
+
+### Data model (migration `0008`, additive only)
+
+| Change | Purpose |
+| :--- | :--- |
+| `anomaly_events` (table) | one row per stopped-vehicle detection; every figure derived from stored ByteTrack `vehicle_events` |
+| `alerts.source` (`alertsource` enum, default `WATCHLIST`) | the watchlist engine still only writes `WATCHLIST`; `BehaviorAnalyticsService` writes `ANOMALY` |
+| `alerts.watchlist_id` → **nullable** | an `ANOMALY` alert has no watchlist entry |
+| `alerts.anomaly_event_id` (nullable FK) | links an anomaly alert to its `anomaly_events` row |
+| enums `anomalystatus`, `anomalykind`, `confidencelevel` | |
+
+`AlertRead` gains `source` / `anomaly_event_id` and `watchlist_id` is now
+`Optional` (regression-tested — the ANOMALY alert lists cleanly in
+`GET /api/v1/alerts`).
+
+### Components (`app/services/ai/`)
+
+`nlq.py` (deterministic parser) · `tools.py` (`InvestigationTools` — 9
+validated bounded read functions) · `llm.py` (`LLMProvider` /
+`DeterministicProvider` / `OpenAIProvider`) · `copilot.py` · `summary.py` ·
+`behavior.py` · `confidence.py`.
+
+### API (`/api/v1/ai/*`)
+
+`POST /investigate` · `POST /search` · `POST /incidents/{id}/summary` ·
+`POST /cases/{id}/summary` · `GET /anomalies` · `POST /anomalies/scan`
+(ADMIN/OFFICER) · `POST /anomalies/{id}/review` (ADMIN/OFFICER) ·
+`GET /suggestions` · `GET /status`. All JWT-authenticated. Audited:
+`AI_INVESTIGATION`, `AI_SEARCH`, `AI_INCIDENT_SUMMARY`, `AI_CASE_SUMMARY`,
+`AI_ANOMALY_SCAN`, `AI_ANOMALY_REVIEW`.
+
+### LLM safety
+
+No external LLM required (`AI_LLM_PROVIDER=deterministic` default). The LLM
+never gets DB access, never writes SQL — it only re-words a fact-checked
+answer (given only the structured facts) and can pick one of the fixed
+tools by name; the backend validates params and runs the query. Any LLM
+error → transparent deterministic fallback. `OPENAI_API_KEY` is env-only,
+never returned by any endpoint.
+
+### Background task
+
+`_anomaly_scan_loop` in `app/main.py` — every `AI_ANOMALY_SCAN_INTERVAL_S`
+(300 s) runs the stopped-vehicle detector over recent events. Off in the
+test suite. Idempotent.
+
+### Offline demo
+
+`scripts/seed_ai_demo.py` (compose `SEED_AI_DEMO=1`, idempotent) seeds 8
+cameras + a GJ18TC0450 journey + watchlist alert + `INC-<yr>-9001` +
+`CASE-<yr>-9001` + a stopped-vehicle track, then runs the real detector.
+All production code paths. A judge runs `docker compose up` and
+demonstrates the full AI layer with no live CCTV and no LLM key.
+
+### Frontend
+
+`/copilot` (chat + suggestions + interpreted filters + confidence chip +
+timeline + GIS mini-map + related links) · `/anomalies` (list + scan +
+review) · NL search box on `/search` · "Generate AI Summary" on incident &
+case detail · "Ask AI about this vehicle" on the Investigation console ·
+"AI Anomaly Events" panel + "AI Copilot" quick action on the command
+centre · `AI ANOMALY` tag on anomaly alert cards · Navbar `Copilot` /
+`Anomalies` tabs. Every AI call degrades to an explicit error/empty state —
+no mock fallback.
+
+### Not done this phase
+
+See §D "Phase 12 (AI) — deliberately out of scope / deferred".

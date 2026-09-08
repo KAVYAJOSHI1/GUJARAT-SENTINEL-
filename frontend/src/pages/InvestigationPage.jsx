@@ -342,6 +342,15 @@ export default function InvestigationPage() {
               <button onClick={() => exportVehicleReportCSV(result)} style={csvBtn}>
                 <FileSpreadsheet size={13} /> Export CSV
               </button>
+              <button
+                onClick={() => navigate(
+                  `/copilot?plate=${encodeURIComponent(result.plate)}` +
+                  `&q=${encodeURIComponent(`Show the journey of ${result.plate}`)}`
+                )}
+                style={csvBtn}
+              >
+                <Search size={13} /> Ask AI about this vehicle
+              </button>
             </div>
           </div>
 

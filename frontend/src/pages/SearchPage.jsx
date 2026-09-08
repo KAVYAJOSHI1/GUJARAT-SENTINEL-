@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Bookmark, RotateCcw, Search, Trash2 } from "lucide-react";
+import { Bookmark, RotateCcw, Search, Sparkles, Trash2 } from "lucide-react";
 import { C } from "../theme.js";
 import { canManageOps } from "../services/api.js";
+import { aiSearch } from "../services/aiApi.js";
 import { useToast } from "../context/ToastContext.jsx";
 import {
   createSavedSearch, deleteSavedSearch, listSavedSearches, searchVehicles,
@@ -34,6 +35,42 @@ export default function SearchPage() {
   const [offset, setOffset] = useState(0);
   const [saved, setSaved] = useState([]);
   const [ran, setRan] = useState(false);
+  const [nl, setNl] = useState("");
+  const [nlBusy, setNlBusy] = useState(false);
+  const [nlParsed, setNlParsed] = useState(null);
+
+  const runNL = async (e) => {
+    e?.preventDefault();
+    if (!nl.trim()) return;
+    setNlBusy(true);
+    try {
+      const r = await aiSearch(nl.trim(), { limit: PAGE, offset: 0 });
+      const flt = r.filters || {};
+      setNlParsed(flt);
+      // hydrate the structured form so the officer sees + can tweak it
+      setF({
+        ...EMPTY,
+        plate: flt.plate || "",
+        vehicle_type: flt.vehicle_type || "",
+        vehicle_color: flt.vehicle_color || "",
+        camera_code: flt.camera_code || "",
+        date_from: flt.date_from ? String(flt.date_from).slice(0, 16) : "",
+        date_to: flt.date_to ? String(flt.date_to).slice(0, 16) : "",
+        time_from: flt.time_from || "",
+        time_to: flt.time_to || "",
+        watchlist_only: !!flt.watchlist_only,
+        sort: "latest",
+      });
+      setRes(r.search);
+      setRan(true);
+      setOffset(0);
+      if (r.limitations?.length) push({ title: "AI search note", msg: r.limitations[0], severity: "medium" });
+    } catch (err) {
+      push({ title: "AI search failed", msg: err?.response?.data?.error?.message || "", severity: "high" });
+    } finally {
+      setNlBusy(false);
+    }
+  };
 
   const loadSaved = useCallback(() => {
     listSavedSearches().then((d) => setSaved(d.items || [])).catch(() => {});
@@ -112,6 +149,27 @@ export default function SearchPage() {
       </div>
 
       {error && <ErrorBanner message="Search failed." onRetry={run} />}
+
+      {/* Phase 12 — natural-language search: translates into the structured
+          filters below and runs the same engine. */}
+      <form onSubmit={runNL} style={{ ...panel, padding: 10, marginBottom: 10, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <Sparkles size={13} color={C.accent} />
+        <input
+          value={nl}
+          onChange={(e) => setNl(e.target.value)}
+          placeholder='Ask in plain English — e.g. "white cars near CAM-04 after 9 PM"'
+          style={{ flex: "1 1 260px", background: C.panel, border: `1px solid ${C.border}`, color: C.text, borderRadius: 5, padding: "7px 10px", fontSize: 12 }}
+        />
+        <button type="submit" disabled={nlBusy || !nl.trim()} style={primaryBtn}>
+          {nlBusy ? "Interpreting…" : "AI search"}
+        </button>
+        {nlParsed && (
+          <span style={{ fontSize: 10, color: C.muted }}>
+            interpreted → {Object.entries(nlParsed).filter(([, v]) => v !== undefined && v !== false)
+              .map(([k, v]) => `${k}:${v}`).join("  ") || "no filters"}
+          </span>
+        )}
+      </form>
 
       <form onSubmit={submit} style={{ ...panel, padding: 12, marginBottom: 12 }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 8 }}>
