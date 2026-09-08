@@ -11,6 +11,7 @@ import { useToast } from "../context/ToastContext.jsx";
 const TABS = [
   { to: "/", label: "Overview", end: true },
   { to: "/copilot", label: "Copilot" },
+  { to: "/workspace", label: "Workspace" },
   { to: "/my-work", label: "My Work" },
   { to: "/cameras", label: "Cameras" },
   { to: "/camera-intelligence", label: "Cam Intel" },

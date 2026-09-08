@@ -9,7 +9,7 @@ import re
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import FileResponse, RedirectResponse
 from geoalchemy2.functions import ST_X, ST_Y
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlmodel import Session
 
 from app.api.deps import get_current_user, verify_bearer_header_or_query
@@ -20,9 +20,12 @@ from app.models.vehicle_event import VehicleEvent
 from app.models.watchlist import Watchlist
 from app.schemas.auth import CurrentUser
 from app.schemas.vehicle import (
+    CameraSeen,
     JourneyTransition,
+    RelatedRecord,
     VehicleHistoryResponse,
     VehicleJourneySummary,
+    VehicleProfile,
     VehicleSighting,
 )
 from app.services.audit import record_audit
@@ -277,6 +280,141 @@ def search_vehicle(
         is_watchlisted=is_watchlisted,
         sightings=sightings,
         journey=journey,
+    )
+
+
+@router.get("/profile", response_model=VehicleProfile)
+def vehicle_profile(
+    plate: str = Query(..., min_length=3),
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Phase 15D -- the consolidated investigation view opened from a search
+    result: first/last seen, cameras, journey, ANPR quality breakdown,
+    watchlist status, and linked alerts / incidents / cases / visual
+    matches. Everything derived live from persisted rows."""
+    from collections import Counter
+
+    from app.models.alert import Alert
+    from app.models.anomaly_event import AnomalyEvent
+    from app.models.case import Case
+    from app.models.incident import Incident
+    from app.models.vehicle_embedding import VehicleEmbedding
+
+    norm = normalize_plate(plate)
+    rows = db.execute(
+        select(VehicleEvent, Camera.name, Camera.code, Camera.location_desc,
+               ST_Y(Camera.location), ST_X(Camera.location))
+        .join(Camera, Camera.id == VehicleEvent.camera_id, isouter=True)
+        .where(VehicleEvent.plate_number_normalized == norm)
+        .order_by(VehicleEvent.timestamp.asc())
+        .limit(500)
+    ).all()
+
+    sightings: list[VehicleSighting] = []
+    per_cam: dict[str, dict] = {}
+    reasons: Counter = Counter()
+    readable = unknown = 0
+    types: Counter = Counter()
+    colors: Counter = Counter()
+    for ev, cname, ccode, cloc, clat, clon in rows:
+        lat = ev.latitude if ev.latitude is not None else clat
+        lon = ev.longitude if ev.longitude is not None else clon
+        sightings.append(VehicleSighting(
+            event_id=ev.id, camera_id=ev.camera_id, camera_code=ccode, camera_name=cname,
+            location_desc=cloc, timestamp=ev.timestamp, latitude=lat, longitude=lon,
+            has_location=lat is not None and lon is not None, snapshot_url=ev.snapshot_url,
+            confidence_score=ev.confidence_score, track_id=ev.track_id,
+            vehicle_type=ev.vehicle_type, vehicle_color=ev.vehicle_color,
+            plate_number=ev.plate_number, anpr_status=ev.anpr_status or "OK",
+            anpr_failure_reason=ev.anpr_failure_reason, anpr_quality_score=ev.anpr_quality_score,
+            is_mock=_is_mock_code(ccode or ev.camera_code),
+        ))
+        if (ev.anpr_status or "OK") == "OK":
+            readable += 1
+        else:
+            unknown += 1
+            if ev.anpr_failure_reason:
+                reasons[ev.anpr_failure_reason] += 1
+        if ev.vehicle_type:
+            types[ev.vehicle_type] += 1
+        if ev.vehicle_color:
+            colors[ev.vehicle_color] += 1
+        c = per_cam.setdefault(ev.camera_id, {
+            "camera_id": ev.camera_id, "camera_code": ccode, "camera_name": cname,
+            "location_desc": cloc, "latitude": lat, "longitude": lon,
+            "sightings": 0, "first_seen": ev.timestamp, "last_seen": ev.timestamp,
+        })
+        c["sightings"] += 1
+        c["first_seen"] = min(c["first_seen"], ev.timestamp)
+        c["last_seen"] = max(c["last_seen"], ev.timestamp)
+
+    journey = _build_journey_summary(sightings, db)
+
+    wl = db.execute(
+        select(Watchlist).where(Watchlist.plate_number_normalized == norm)
+        .where(active_watchlist_clause()).limit(1)
+    ).scalar_one_or_none()
+
+    alerts = db.execute(
+        select(Alert).where(Alert.plate_number_normalized == norm)
+        .order_by(Alert.created_at.desc()).limit(25)
+    ).scalars().all()
+    incidents = db.execute(
+        select(Incident).where(Incident.plate_number_normalized == norm)
+        .order_by(Incident.created_at.desc()).limit(25)
+    ).scalars().all()
+    cases = db.execute(
+        select(Case).where(Case.primary_plate_normalized == norm)
+        .order_by(Case.created_at.desc()).limit(25)
+    ).scalars().all()
+    anomalies = db.execute(
+        select(func.count(AnomalyEvent.id)).where(AnomalyEvent.plate_number_normalized == norm)
+    ).scalar() or 0
+    evidence = sum(1 for s in sightings if s.snapshot_url)
+    vmatch = db.execute(
+        select(func.count(VehicleEmbedding.id))
+        .where(VehicleEmbedding.plate_number_normalized == norm)
+    ).scalar() or 0
+
+    related: list[RelatedRecord] = []
+    for a in alerts[:15]:
+        related.append(RelatedRecord(kind="ALERT", id=a.id,
+                                     label=f"{a.source.value} · {a.priority_level.value}",
+                                     status=a.status.value, href=f"/alerts?focus={a.id}"))
+    for i in incidents[:15]:
+        related.append(RelatedRecord(kind="INCIDENT", id=i.id, label=i.incident_number,
+                                     status=i.status.value, href=f"/incidents/{i.id}"))
+    for c in cases[:15]:
+        related.append(RelatedRecord(kind="CASE", id=c.id, label=c.case_number,
+                                     status=c.status.value, href=f"/cases/{c.id}"))
+
+    record_audit(db, action="VEHICLE_SEARCH", user_id=user.id, resource="vehicle",
+                 resource_id=norm, detail={"profile": True, "sightings": len(sightings)})
+
+    return VehicleProfile(
+        plate=norm,
+        total_sightings=len(sightings),
+        first_seen=sightings[0].timestamp if sightings else None,
+        last_seen=sightings[-1].timestamp if sightings else None,
+        distinct_cameras=journey.distinct_cameras,
+        geolocated_sightings=journey.geolocated_sightings,
+        vehicle_types=[t for t, _ in types.most_common()],
+        vehicle_colors=[c for c, _ in colors.most_common()],
+        is_watchlisted=wl is not None,
+        watchlist_category=wl.offense_category if wl else None,
+        cameras=[CameraSeen(**c) for c in sorted(
+            per_cam.values(), key=lambda x: x["first_seen"])],
+        journey=journey,
+        anpr_readable=readable,
+        anpr_unknown=unknown,
+        anpr_failure_reasons=dict(reasons),
+        counts={
+            "alerts": len(alerts), "incidents": len(incidents), "cases": len(cases),
+            "anomalies": int(anomalies), "evidence": evidence,
+        },
+        related=related,
+        visual_match_count=int(vmatch),
     )
 
 
