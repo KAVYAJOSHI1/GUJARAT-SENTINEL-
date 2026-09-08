@@ -8,10 +8,11 @@ import { C } from "../theme.js";
 import { canManageOps, evidenceUrl } from "../services/api.js";
 import { useToast } from "../context/ToastContext.jsx";
 import {
-  addCaseNote, assignCase, attachCaseEvidence, attachCaseIncident,
+  addCaseNote, assignCase, attachCaseEvidence, attachCaseIncident, caseTimeline,
   detachCaseEvidence, detachCaseIncident, downloadCaseReportCSV, getCase,
   listAssignableUsers, listIncidents, updateCase,
 } from "../services/opsApi.js";
+import Timeline from "../components/ops/Timeline.jsx";
 import SeverityBadge from "../components/SeverityBadge.jsx";
 import StatusBadge from "../components/ops/StatusBadge.jsx";
 import ErrorBanner from "../components/ui/ErrorBanner.jsx";
@@ -49,6 +50,8 @@ export default function CaseDetailPage() {
       setLoading(false);
     }
   }, [id]);
+
+  const timelineLoader = useCallback((category) => caseTimeline(id, category), [id]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
@@ -214,17 +217,11 @@ export default function CaseDetailPage() {
         )}
       </div>
 
-      {/* Timeline */}
+      {/* Timeline (Phase 11 — filterable, derived from audit + linked rows) */}
       <div style={panel}>
-        <SectionHead icon={Clock} title={`Timeline (${timeline.length})`} />
-        <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 4 }}>
-          {timeline.map((t, idx) => (
-            <div key={idx} style={{ display: "flex", gap: 10, fontSize: 11, alignItems: "baseline" }}>
-              <span style={{ color: C.dim, fontFamily: "monospace", minWidth: 128 }}>{fmtDateTime(t.timestamp)} {fmtTime(t.timestamp)}</span>
-              <span style={{ color: TIMELINE_COLOR[t.kind] || C.muted, fontWeight: 700, minWidth: 74, fontSize: 9.5, textTransform: "uppercase" }}>{t.kind}</span>
-              <span style={{ color: C.text }}>{t.label}</span>
-            </div>
-          ))}
+        <SectionHead icon={Clock} title="Case Timeline & Activity" />
+        <div style={{ padding: 12 }}>
+          <Timeline loader={timelineLoader} refreshKey={c.updated_at} />
         </div>
       </div>
 

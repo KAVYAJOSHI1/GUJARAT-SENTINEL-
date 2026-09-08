@@ -251,7 +251,15 @@ export function normalizeAlert(raw) {
         : new Date().toLocaleTimeString("en-IN", { hour12: false }),
     ack: Boolean(pick(raw, ["ack", "acknowledged", "is_acknowledged"], false)) ||
       status === "ACKNOWLEDGED" ||
-      status === "RESOLVED",
+      status === "RESOLVED" ||
+      status === "ESCALATED",
+    // Phase 11 escalation workflow — raw backend status + escalation context.
+    rawStatus: status || "NEW",
+    assignedTo: pick(raw, ["assigned_to_username"], null),
+    escalationReason: pick(raw, ["escalation_reason"], null),
+    escalatedBy: pick(raw, ["escalated_by_username"], null),
+    incidentId: pick(raw, ["incident_id"], null),
+    incidentNumber: pick(raw, ["incident_number"], null),
     snapshotUrl: pick(raw, ["snapshot_url", "evidence_snapshot_url"], null),
     // True only for the local WS-fallback simulator (lib/mockData.js
     // makeSimulatedAlert) -- every real alert from the backend is left

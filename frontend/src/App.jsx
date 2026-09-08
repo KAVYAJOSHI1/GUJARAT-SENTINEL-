@@ -11,6 +11,10 @@ import CasesPage from "./pages/CasesPage.jsx";
 import CaseDetailPage from "./pages/CaseDetailPage.jsx";
 import SystemPage from "./pages/SystemPage.jsx";
 import AdminPage from "./pages/AdminPage.jsx";
+import SearchPage from "./pages/SearchPage.jsx";
+import WatchlistPage from "./pages/WatchlistPage.jsx";
+import MyWorkPage from "./pages/MyWorkPage.jsx";
+import ReportsPage from "./pages/ReportsPage.jsx";
 import InvestigationPage from "./pages/InvestigationPage.jsx";
 import MapPage from "./pages/MapPage.jsx";
 
@@ -30,6 +34,12 @@ export function AppRoutes() {
         <Route path="incidents/:id" element={<IncidentDetailPage />} />
         <Route path="cases" element={<CasesPage />} />
         <Route path="cases/:id" element={<CaseDetailPage />} />
+
+        {/* Phase 11 — advanced operational features */}
+        <Route path="search" element={<SearchPage />} />
+        <Route path="watchlists" element={<WatchlistPage />} />
+        <Route path="my-work" element={<MyWorkPage />} />
+        <Route path="reports" element={<ReportsPage />} />
 
         <Route path="system" element={<SystemPage />} />
         <Route path="admin" element={<AdminPage />} />

@@ -64,6 +64,15 @@ class Settings(BaseSettings):
     RETENTION_SWEEP_INTERVAL_HOURS: int = 24
     RETENTION_SWEEP_ENABLED: bool = True
 
+    # --- Camera health transition watcher (Phase 11) ---
+    # The in-process background task that turns "a camera went silent" into a
+    # real camera_health_history row + a CAMERA_OFFLINE/RECOVERED
+    # notification. Off during the test suite (health transitions are
+    # exercised directly). Safe to run in every replica -- the dedup check
+    # against the last history row is idempotent.
+    CAMERA_HEALTH_WATCH_ENABLED: bool = True
+    CAMERA_HEALTH_WATCH_INTERVAL_S: int = 30
+
     # --- MinIO ---
     MINIO_ENDPOINT: str = "localhost:9000"
     MINIO_ACCESS_KEY: str = "minioadmin"

@@ -28,6 +28,10 @@ class UserRole(str, enum.Enum):
 class AlertStatus(str, enum.Enum):
     NEW = "NEW"
     ACKNOWLEDGED = "ACKNOWLEDGED"
+    # Phase 11: raised to a supervisor / higher priority. Sits between
+    # ACKNOWLEDGED and RESOLVED in the workflow; never auto-set by the
+    # watchlist engine (which only ever creates NEW alerts).
+    ESCALATED = "ESCALATED"
     RESOLVED = "RESOLVED"
 
 
@@ -68,3 +72,16 @@ class NotificationSeverity(str, enum.Enum):
     INFO = "INFO"
     WARNING = "WARNING"
     CRITICAL = "CRITICAL"
+
+
+# Phase 11 -- watchlist categories. Kept as a plain string column (not a DB
+# enum) so a control room can extend the taxonomy without a migration; this
+# is the canonical set the UI offers and CSV import validates against.
+WATCHLIST_CATEGORIES = (
+    "STOLEN",
+    "WANTED",
+    "SUSPICIOUS",
+    "MISSING",
+    "INVESTIGATION",
+    "OTHER",
+)

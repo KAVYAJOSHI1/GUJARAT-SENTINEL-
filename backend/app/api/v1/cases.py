@@ -45,9 +45,11 @@ from app.schemas.case import (
     CaseTimelineEntry,
     CaseUpdate,
 )
+from app.schemas.timeline import Timeline
 from app.services.audit import client_ip, record_audit
 from app.services.notifications import push_notification
 from app.services.plate_utils import normalize_plate
+from app.services.timeline_builder import build_case_timeline
 
 router = APIRouter()
 
@@ -308,6 +310,26 @@ def create_case(
 @router.get("/{case_id}", response_model=CaseDetail)
 def get_case(case_id: str, db: Session = Depends(get_db), _: CurrentUser = Depends(get_current_user)):
     return _reload(db, case_id)
+
+
+@router.get("/{case_id}/timeline", response_model=Timeline)
+def get_case_timeline(
+    case_id: str,
+    category: str | None = Query(
+        default=None,
+        description="comma-separated filter: CASE,INCIDENT,EVIDENCE,NOTE,VEHICLE,STATUS,ACTIVITY",
+    ),
+    db: Session = Depends(get_db),
+    _: CurrentUser = Depends(get_current_user),
+):
+    """Unified case timeline (FEATURE 8) -- case creation, incident/evidence
+    links, notes, vehicle sightings, assignments, status changes and report
+    exports, all derived from existing rows."""
+    c = db.get(Case, case_id)
+    if c is None:
+        raise NotFoundError("Case", case_id)
+    cats = {x.strip().upper() for x in category.split(",")} if category else None
+    return build_case_timeline(db, c, cats)
 
 
 @router.patch("/{case_id}", response_model=CaseDetail)

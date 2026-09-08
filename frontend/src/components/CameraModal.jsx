@@ -1,13 +1,16 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Camera, MapPinned, Radio, Send, X } from "lucide-react";
+import { Activity, Camera, MapPinned, Radio, Send, X } from "lucide-react";
 import { C } from "../theme.js";
+import { cameraHealthHistory } from "../services/opsApi.js";
+import { fmtDateTime } from "../utils/datetime.js";
 
 // Camera details modal (README §4.6) — stream resolution, FPS, protocol
 // (RTSP / WebRTC) and location. Also the hand-off point into Vishakha's GIS
 // map (README §13 — "camera links route directly into your GIS Map view").
 export default function CameraModal({ cam, onClose }) {
   const navigate = useNavigate();
+  const [history, setHistory] = useState(null);
 
   useEffect(() => {
     if (!cam) return;
@@ -15,6 +18,13 @@ export default function CameraModal({ cam, onClose }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [cam, onClose]);
+
+  useEffect(() => {
+    setHistory(null);
+    if (cam?.uuid) {
+      cameraHealthHistory(cam.uuid).then(setHistory).catch(() => setHistory({ transitions: [] }));
+    }
+  }, [cam?.uuid]);
 
   if (!cam) return null;
 
@@ -101,6 +111,27 @@ export default function CameraModal({ cam, onClose }) {
             </div>
           ))}
         </div>
+
+        {history && history.transitions && (
+          <div style={{ marginTop: 12, background: C.panel, borderRadius: 4, padding: "8px 10px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, color: C.muted, fontSize: 9, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>
+              <Activity size={11} /> Health history {history.total ? `(${history.total})` : ""}
+            </div>
+            {history.transitions.length === 0 ? (
+              <div style={{ color: C.dim, fontSize: 10 }}>No status transitions recorded.</div>
+            ) : (
+              history.transitions.slice(0, 8).map((t) => (
+                <div key={t.id} style={{ display: "flex", gap: 8, fontSize: 10, alignItems: "baseline" }}>
+                  <span style={{ color: C.dim, fontFamily: "monospace", minWidth: 128 }}>{fmtDateTime(t.detected_at)}</span>
+                  <span style={{ color: C.muted }}>{t.previous_status || "—"}</span>
+                  <span style={{ color: C.dim }}>→</span>
+                  <span style={{ color: t.status === "ONLINE" ? C.green : t.status === "OFFLINE" ? C.red : C.amber, fontWeight: 700 }}>{t.status}</span>
+                  <span style={{ color: C.dim, marginLeft: "auto" }}>{t.source}</span>
+                </div>
+              ))
+            )}
+          </div>
+        )}
 
         <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
           <button style={actionBtn}>

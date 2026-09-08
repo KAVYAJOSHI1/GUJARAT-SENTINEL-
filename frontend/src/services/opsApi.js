@@ -175,3 +175,129 @@ export async function listAssignableUsers() {
     return [];
   }
 }
+
+// ── Phase 11 — Advanced / Global search ────────────────────────────────────
+export async function searchVehicles(query) {
+  const { data } = await http.post("/search/vehicles", query);
+  return data; // { items, total, limit, offset, sort, took_ms }
+}
+
+export async function globalSearch(q) {
+  const { data } = await http.get("/search/global", { params: { q } });
+  return data; // { query, groups, total }
+}
+
+// ── Saved investigations ──────────────────────────────────────────────────
+export async function listSavedSearches() {
+  const { data } = await http.get("/saved-searches");
+  return data;
+}
+export async function createSavedSearch(payload) {
+  const { data } = await http.post("/saved-searches", payload);
+  return data;
+}
+export async function updateSavedSearch(id, payload) {
+  const { data } = await http.patch(`/saved-searches/${encodeURIComponent(id)}`, payload);
+  return data;
+}
+export async function deleteSavedSearch(id) {
+  await http.delete(`/saved-searches/${encodeURIComponent(id)}`);
+}
+
+// ── Watchlist management ──────────────────────────────────────────────────
+export async function listWatchlist(params = {}) {
+  const { data } = await http.get("/watchlist", { params });
+  return data;
+}
+export async function watchlistCategories() {
+  const { data } = await http.get("/watchlist/categories");
+  return data;
+}
+export async function createWatchlistEntry(payload) {
+  const { data } = await http.post("/watchlist", payload);
+  return data;
+}
+export async function updateWatchlistEntry(id, payload) {
+  const { data } = await http.patch(`/watchlist/${encodeURIComponent(id)}`, payload);
+  return data;
+}
+export async function activateWatchlistEntry(id) {
+  const { data } = await http.post(`/watchlist/${encodeURIComponent(id)}/activate`);
+  return data;
+}
+export async function deactivateWatchlistEntry(id) {
+  await http.delete(`/watchlist/${encodeURIComponent(id)}`);
+}
+export async function importWatchlistCSV(file, dryRun = false) {
+  const form = new FormData();
+  form.append("file", file);
+  const { data } = await http.post(`/watchlist/import.csv?dry_run=${dryRun}`, form, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return data;
+}
+export async function downloadWatchlistCSV() {
+  const res = await http.get("/watchlist/export.csv", { responseType: "blob" });
+  triggerDownload(res.data, "watchlist_export.csv", "text/csv");
+}
+
+// ── Alert escalation workflow ─────────────────────────────────────────────
+export async function assignAlert(id, userId) {
+  const { data } = await http.post(`/alerts/${encodeURIComponent(id)}/assign`, { user_id: userId || null });
+  return data;
+}
+export async function escalateAlert(id, reason) {
+  const { data } = await http.post(`/alerts/${encodeURIComponent(id)}/escalate`, { reason });
+  return data;
+}
+export async function resolveAlert(id, note) {
+  const { data } = await http.post(`/alerts/${encodeURIComponent(id)}/resolve`, { note: note || null });
+  return data;
+}
+
+// ── Timelines ─────────────────────────────────────────────────────────────
+export async function incidentTimeline(id, category) {
+  const { data } = await http.get(`/incidents/${encodeURIComponent(id)}/timeline`,
+    { params: category ? { category } : {} });
+  return data;
+}
+export async function caseTimeline(id, category) {
+  const { data } = await http.get(`/cases/${encodeURIComponent(id)}/timeline`,
+    { params: category ? { category } : {} });
+  return data;
+}
+
+// ── Officer work queue ───────────────────────────────────────────────────
+export async function fetchWorkQueue(sort = "priority") {
+  const { data } = await http.get("/work-queue", { params: { sort } });
+  return data;
+}
+
+// ── Reports ──────────────────────────────────────────────────────────────
+export async function listReports() {
+  const { data } = await http.get("/reports");
+  return data;
+}
+export async function downloadReport(key, params = {}) {
+  const res = await http.get(`/reports/${encodeURIComponent(key)}.csv`, {
+    params, responseType: "blob",
+  });
+  triggerDownload(res.data, `${key}.csv`, "text/csv");
+}
+
+// ── Camera health history ────────────────────────────────────────────────
+export async function cameraHealthHistory(cameraId) {
+  const { data } = await http.get(`/cameras/${encodeURIComponent(cameraId)}/health/history`);
+  return data;
+}
+
+function triggerDownload(blobData, filename, type) {
+  const url = URL.createObjectURL(new Blob([blobData], { type }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}

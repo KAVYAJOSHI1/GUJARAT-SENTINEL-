@@ -30,12 +30,17 @@ from app.services.cooldown import is_within_cooldown
 
 def active_watchlist_clause(now: datetime | None = None):
     """SQLAlchemy WHERE clause matching only *currently valid* watchlist
-    entries: active, and either no expiry or an expiry still in the future.
-    An inactive or expired entry never matches, regardless of how it was
-    deactivated (manual PATCH/DELETE or simply its `expires_at` elapsing)."""
+    entries: active, within the effective window (Phase 11), and not expired.
+    An inactive, not-yet-effective, or expired entry never matches,
+    regardless of how it got that way (manual PATCH/DELETE, an `expires_at`
+    elapsing, or an `effective_from` still in the future).
+
+    Phase 11 note: `effective_from IS NULL` -> effective immediately, so
+    every pre-Phase-11 entry (and the GJ18TC0450 demo entry) is unaffected."""
     now = now or datetime.utcnow()
     return and_(
         Watchlist.active.is_(True),
+        or_(Watchlist.effective_from.is_(None), Watchlist.effective_from <= now),
         or_(Watchlist.expires_at.is_(None), Watchlist.expires_at > now),
     )
 
