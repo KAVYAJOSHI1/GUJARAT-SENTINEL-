@@ -1,6 +1,14 @@
 # SENTINEL — System Status (single source of truth)
 
-**Branch:** `penultimate` · **Last verified:** 2026-09-05 · **Verification host:** 8-core shared Linux desktop, CPU-only, Docker Compose stack.
+**Branch:** `penultimate` · **Last verified:** 2026-09-08 · **Verification host:** 8-core shared Linux desktop, CPU-only, Docker Compose stack.
+
+> **2026-09-08 — Operational platform enhancement.** Added an operational
+> layer on top of the existing CCTV/ANPR/watchlist/alert pipeline (which is
+> unchanged): **Incident Management**, **Case Management**, **Evidence
+> linking**, a read-only **Audit / Activity center**, and an operational
+> **Notification center**, plus command-center wiring for all of it.
+> Migration `0006` (8 new tables, additive only). Backend + demo-flow tests
+> added and passing. See §A rows tagged *(2026-09-08)* and §I.
 
 This document is the authoritative statement of what is implemented, what is
 verified, what is partial, and what is future. It is deliberately conservative:
@@ -23,9 +31,9 @@ Everything in this section was exercised on 2026-09-05 (commands and results in 
 | Area | Status | Notes |
 | :--- | :--- | :--- |
 | **Docker / deployment** | Verified | `docker compose down -v && docker compose up --build -d` brings up postgis + minio + backend + frontend from zero volumes. Backend entrypoint runs Alembic `0001→0005` then the idempotent seed. |
-| **Database** | Verified | PostgreSQL 15 + PostGIS 3.3. Migrations `0001`–`0005` apply cleanly on a fresh volume. `0004` = analytics covering indexes; `0005` = `pipeline_status` table. |
+| **Database** | Verified | PostgreSQL 15 + PostGIS 3.3. Migrations `0001`–`0006` apply cleanly on a fresh volume (and downgrade/upgrade round-trips). `0004` = analytics covering indexes; `0005` = `pipeline_status`; `0006` = operational layer (`incidents`, `incident_notes`, `incident_evidence`, `cases`, `case_notes`, `case_incidents`, `case_evidence`, `notifications`) — additive only, FKs + query-shaped indexes, no change to existing tables. |
 | **Authentication / security** | Verified | JWT (HS256) login; RBAC (ADMIN/OFFICER/OPERATOR); login rate-limit (5 fails / 300s → 429); explicit CORS allow-list; short-lived scoped tickets for WebSocket handshake (`purpose="ws"`, ~60s) and media `<img>`/`<video>` (`purpose="media"`, ~120s) so the session JWT never rides the WS wire or a URL. |
-| **Backend APIs** | Verified | `/health`, `/api/v1/auth/*`, `/api/v1/cameras` (+ `/sync`, `/geojson`, `/health`, `/{id}/mock-video`), `/api/v1/vehicles/search` (+ `/evidence/{event_id}`, `/events/recent`), `/api/v1/watchlist`, `/api/v1/alerts`, `/api/v1/dashboard/stats` + `/dashboard/health`, `/api/v1/pipeline/status`, `/api/v1/analytics/*`, `/api/v1/admin/*`. |
+| **Backend APIs** | Verified | `/health`, `/api/v1/auth/*`, `/api/v1/cameras` (+ `/sync`, `/geojson`, `/health`, `/{id}/mock-video`), `/api/v1/vehicles/search` (+ `/evidence/{event_id}`, `/events/recent`), `/api/v1/watchlist`, `/api/v1/alerts`, `/api/v1/incidents/*`, `/api/v1/cases/*`, `/api/v1/notifications/*`, `/api/v1/dashboard/stats` (+ `active_incidents` / `open_cases`) + `/dashboard/health`, `/api/v1/pipeline/status`, `/api/v1/analytics/*`, `/api/v1/admin/*` (+ `/admin/audit`, `/admin/users`). |
 | **Camera onboarding** | Verified | `POST /api/v1/cameras/sync` upserts a catalogue keyed by external `code`; the pipeline auto-syncs its registry on start (`-> 200 (3 cameras)` for the demo registry). 30 real cameras registered in `data/camera_registry.json`. |
 | **AI: YOLO detection + tracking** | Verified | YOLOv8n (`ultralytics`) + ByteTrack, one worker. On the demo clips: ~9.5 processed FPS, YOLO p50 ≈ 55 ms. On real `cam04`: vehicles detected and tracked (4 in a 90 s window). |
 | **ANPR / OCR (curated clips)** | Verified | Heuristic plate locator → EasyOCR → multi-frame consensus → Gujarat-format normalisation. Reads `GJ18TC0450` reliably off all three demo clips, in Docker and bare-metal. OCR p50 ≈ 187 ms/plate (CPU). |
@@ -38,7 +46,13 @@ Everything in this section was exercised on 2026-09-05 (commands and results in 
 | **Mock video in browser** | Verified | `GET /api/v1/cameras/{id}/mock-video` streams the committed clip as `video/mp4`; the file is standard H.264/MP4 and decodes cleanly (playable in any modern browser `<video>`). |
 | **Observability** | Verified | `GET /api/v1/dashboard/health` — DB probe (latency), camera effective-status counts, AI-pipeline freshness (`online`/`stale`/`unknown` from the `pipeline_status` push), event-flow freshness, alert counts. Every field a live measurement or `NULL`. Pipeline stale threshold now `PIPELINE_STALE_AFTER_S` (default 30 s = 3× the 10 s push interval). |
 | **Frontend build** | Verified | `npm run build` succeeds; `dist/` produced. (Large-bundle warning only.) |
-| **Test suites** | Verified | Backend 112 passed; AI/ingestion 143 passed, 8 skipped. Counts in §F. |
+| **Incident management** *(2026-09-08)* | Verified | `POST /api/v1/incidents` promotes an alert (or a manual observation) into an `incidents` row that links back to the alert / vehicle_event / camera by FK — no denormalised copies. Assign, status lifecycle (`NEW→ACKNOWLEDGED→INVESTIGATING→RESOLVED→CLOSED`) with `acknowledged_by/at` + `resolved_by/at` stamps, officer remarks, evidence links. Backend-filtered + paginated list. Every mutation audited. RBAC: view = any authenticated, mutate = ADMIN/OFFICER. Tests: `backend/tests/test_incidents.py` (9). |
+| **Case management** *(2026-09-08)* | Verified | `cases` + `case_incidents` + `case_evidence` + `case_notes`. Unified detail view re-resolves every linked incident / evidence row live and derives a chronological timeline + the primary vehicle's live camera-sighting count on read. CSV case-report export (`GET /api/v1/cases/{id}/report?format=csv`). Tests: `backend/tests/test_cases.py` (8). |
+| **Evidence linking** *(2026-09-08)* | Verified | `incident_evidence` / `case_evidence` are pointer rows to existing `vehicle_events` — the snapshot file is never duplicated; the frontend serves it through the existing evidence proxy + media ticket. Attach / detach audited. |
+| **Audit / Activity center** *(2026-09-08)* | Verified | `GET /api/v1/admin/audit` (ADMIN only) — read-only projection over the **existing** `audit_logs` table (no second audit system), filter by action / user / resource / date / detail substring, paginated, actor username resolved. Tests: `backend/tests/test_audit_center.py` (3). |
+| **Notification center** *(2026-09-08)* | Verified | `notifications` table, single writer `app/services/notifications.py` (best-effort, never blocks the caller). Rows produced **only** by real backend events — a watchlist match creating an alert, an incident/case created or assigned. Broadcast vs directed (`target_user_id`) visibility; read / read-all / unread-count. Tests: `backend/tests/test_notifications.py` (5). |
+| **Demo acceptance flow** *(2026-09-08)* | Verified | Full chain — detect → watchlist match → alert → acknowledge → create incident → assign → trace vehicle (journey) → attach evidence → add remark → create case → attach incident + evidence + note → CSV case report → resolve incident → close case — is one passing end-to-end test (`backend/tests/test_demo_acceptance_flow.py`), all real persisted state. |
+| **Test suites** | Verified | Backend 138 passed (112 baseline + 26 operational-layer); AI/ingestion 143 passed, 8 skipped. Counts in §F. |
 
 ---
 
@@ -68,6 +82,21 @@ No other component was observed failing this pass.
 ---
 
 ## D. NOT YET IMPLEMENTED
+
+Operational-layer follow-ups (the 2026-09-08 phase deliberately scoped to a
+coherent core — incidents / cases / evidence links / audit view /
+notifications — and left these for a later pass; nothing below is started):
+
+- **Unified advanced search** screen (one interface across plate / camera / department / date / severity / watchlist category / incident / case / confidence / real-mock with sortable, paginated results). Today: the existing per-domain searches (vehicle search, incident list filters, case list filters, audit filters) each work but are separate.
+- **Watchlist management** upgrade — effective/expiry dates in the UI, bulk CSV import/export, expired-entry indication, category taxonomy. Backend watchlist model already has `expires_at` + `active` and the engine enforces them; the management UI is still add/list/deactivate only.
+- **User / role / department administration** screens. `GET /api/v1/admin/users` (read-only, for assignment dropdowns) was added; full CRUD + department/region association is not.
+- **Camera management** UI upgrade (edit metadata, maintenance mode, per-camera recent incidents/detections panels).
+- **Alert workflow** escalation state + configurable per-rule cooldown (current alert model is `NEW/ACKNOWLEDGED/RESOLVED`; incidents carry the richer lifecycle).
+- **Reports section** (8 named report types with date/camera/department/severity filters, PDF+CSV). Today: vehicle-journey PDF/CSV (existing) + case-report CSV (new).
+- **GIS operations** layer toggles for incidents / case locations and camera-status/severity/date filters on the map.
+- **System notification** types for camera-offline / camera-recovered / AI-pipeline-offline / storage-warning (would need a background state-diff watcher). Current notifications are event-driven only (watchlist match, incident/case created + assigned).
+
+Pre-existing gaps:
 
 - Visual vehicle **re-identification** (matching the same vehicle across cameras with no readable plate). Cross-camera correlation is plate-string only.
 - Trained / fine-tuned **plate-region detector** and **Indian-plate OCR head** (current locator is classical CV; OCR is stock EasyOCR).
@@ -102,9 +131,11 @@ Explicitly **not built** — target design only (see `SCALABILITY.md`, which is 
 
 | Suite | Command | Result |
 | :--- | :--- | :--- |
-| Backend | `cd backend && DATABASE_URL=…/sentinel_test pytest -q` | **112 passed** (~62 s) |
-| AI / ingestion | `.venv/bin/python -m pytest tests/ -q` | **143 passed, 8 skipped** (~43 s) |
-| Frontend build | `cd frontend && npm run build` | **OK** — `dist/` built (~8 s) |
+| Backend | `cd backend && DATABASE_URL=…/sentinel_test pytest -q` | **138 passed** (~59 s) — 112 baseline + 26 operational-layer (`test_incidents` 9, `test_cases` 8, `test_notifications` 5, `test_audit_center` 3, `test_demo_acceptance_flow` 1) |
+| Backend on **migrated** schema | `DATABASE_URL=…/sentinel_migtest` (alembic `upgrade head`) `pytest test_incidents test_cases test_notifications test_audit_center test_demo_acceptance_flow` | **26 passed** — app runs identically on a migration-built DB, not just `create_all` |
+| Migration round-trip | `alembic upgrade head` on empty DB, then `downgrade 0005` → `upgrade head` | **OK** — `0001…0006`, 8 new tables, `alembic check` shows no drift on the new tables |
+| AI / ingestion | `.venv/bin/python -m pytest tests/ -q` | **143 passed, 8 skipped** (~52 s) — unchanged (events ingest only gained a best-effort notification write) |
+| Frontend build | `cd frontend && npm run build` | **OK** — `dist/` built (~5 s) |
 
 ### Fresh-volume Docker
 
@@ -112,7 +143,7 @@ Explicitly **not built** — target design only (see `SCALABILITY.md`, which is 
 docker compose --profile ai down -v
 docker compose up -d --build
 ```
-- Alembic: `0001 → 0002 → 0003 → 0004 → 0005` applied on empty volume.
+- Alembic: `0001 → … → 0006` applied on empty volume (entrypoint runs `alembic upgrade head`).
 - Seed: `created user 'admin' (ADMIN)` · `created watchlist entry 'GJ18TC0450'`.
 - `GET /health` → `{"status":"ok"}`.
 
@@ -186,3 +217,55 @@ No hallucinated plates. This is the documented, honest real-feed behaviour.
 | Encryption at rest / RS256 / immutable audit | **NOT IMPLEMENTED** | HS256, standard storage, normal audit table. |
 
 Do not claim compliance beyond the "VERIFIED" rows.
+
+---
+
+## I. OPERATIONAL LAYER (2026-09-08)
+
+### Data model (migration `0006`, additive only)
+
+| Table | Purpose | Key FKs |
+| :--- | :--- | :--- |
+| `incidents` | alert (or manual obs.) promoted to tracked work | `alert_id → alerts`, `vehicle_event_id → vehicle_events`, `camera_id → cameras`, `*_user_id → users` |
+| `incident_notes` | officer remarks (append-only in UI) | `incident_id`, `author_user_id` |
+| `incident_evidence` | pointer: a `vehicle_events` row attached as evidence | `incident_id`, `vehicle_event_id` (unique pair) |
+| `cases` | investigation folder | `*_user_id → users` |
+| `case_notes` | officer notes | `case_id`, `author_user_id` |
+| `case_incidents` | link: incident ↔ case | `case_id`, `incident_id` (unique pair) |
+| `case_evidence` | pointer: `vehicle_events` row attached to a case | `case_id`, `vehicle_event_id` (unique pair) |
+| `notifications` | operational events for the control room | `target_user_id → users` (NULL = broadcast) |
+
+Enums: `incidentstatus`, `casestatus`, `notificationseverity` (new); `prioritylevel` reused.
+`incident_number` / `case_number` are `PREFIX-YYYY-NNNN`, generated from a per-year count, UNIQUE.
+
+### Synchronisation rule (enforced)
+
+Operational rows never copy mutable alert / vehicle / camera state — they
+store foreign keys and (for the vehicle of interest) the normalised plate
+string. Detail views re-resolve live rows and derive counts / journeys /
+timelines on read. So: changing an alert or acknowledging it does not
+desync its incident; a case's linked incident relationship is a persisted
+row; evidence stays a pointer to the one `vehicle_events` row and is served
+through the existing MinIO/proxy path — no file duplication.
+
+### Security / RBAC
+
+- New endpoints all require a valid JWT (`get_current_user`).
+- Mutations on incidents & cases require `ADMIN` or `OFFICER` (`require_roles`); `OPERATOR` is read-only. Frontend also hides mutation controls via `canManageOps()` (cosmetic; backend is the enforcement).
+- `GET /api/v1/admin/audit` is `ADMIN`-only. `GET /api/v1/admin/users` is `ADMIN`/`OFFICER` (assignment dropdowns) and never returns password hashes.
+- Every privileged mutation writes an `audit_logs` row (`INCIDENT_CREATE/UPDATE/STATUS/ASSIGN/NOTE_ADD/EVIDENCE_ADD/EVIDENCE_REMOVE`, `CASE_CREATE/UPDATE/ASSIGN/NOTE_ADD/INCIDENT_ADD/INCIDENT_REMOVE/EVIDENCE_ADD/EVIDENCE_REMOVE/REPORT_EXPORT`).
+- No secrets added to source. No existing security control weakened.
+
+### Frontend
+
+New routes under the existing dark command-center shell: `/incidents`,
+`/incidents/:id`, `/cases`, `/cases/:id`, `/system` (notification center +
+system health), `/admin` (audit log, ADMIN only). Navbar gains those tabs +
+a bell with unread count. "Create incident" appears on real (non-simulated)
+alert cards. Dashboard gains *Active Incidents* / *Open Cases* stat cards,
+quick actions, and *Live Incidents* / *Recent Cases* panels. All new API
+calls degrade to an explicit error/empty state — no mock fallback rows.
+
+### Not done this phase
+
+See §D "Operational-layer follow-ups".

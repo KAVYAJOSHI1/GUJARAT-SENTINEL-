@@ -9,6 +9,7 @@ import {
 } from "../services/api.js";
 import { createAlertSocket } from "../services/websocket.js";
 import { fetchSystemHealth } from "../services/observabilityApi.js";
+import { fetchUnreadCount, listCases, listIncidents } from "../services/opsApi.js";
 import { useToast } from "../context/ToastContext.jsx";
 
 // Central data layer for the command center. One instance lives in <App/> and
@@ -29,6 +30,11 @@ export function useSentinelData() {
   // numbers.
   const [health, setHealth] = useState(null);
   const [healthLive, setHealthLive] = useState(false);
+  // Operational layer (incidents / cases / notifications). Small live slices
+  // for the command center — full lists live on their own pages.
+  const [incidents, setIncidents] = useState([]);
+  const [cases, setCases] = useState([]);
+  const [notifUnread, setNotifUnread] = useState(0);
 
   const [loading, setLoading] = useState(true);
   const [backendLive, setBackendLive] = useState(true);
@@ -39,6 +45,18 @@ export function useSentinelData() {
   const seenIds = useRef(new Set());
   const alertsRef = useRef([]);
   alertsRef.current = alerts;
+
+  const refreshOps = useCallback(async () => {
+    // Never blocks the core dashboard: each call degrades to [] / 0 on error.
+    const [inc, cas, unread] = await Promise.all([
+      listIncidents({ active_only: true, limit: 6 }).catch(() => null),
+      listCases({ limit: 6 }).catch(() => null),
+      fetchUnreadCount(),
+    ]);
+    if (inc?.items) setIncidents(inc.items);
+    if (cas?.items) setCases(cas.items);
+    setNotifUnread(unread || 0);
+  }, []);
 
   const load = useCallback(async () => {
     setRetrying(true);
@@ -60,7 +78,8 @@ export function useSentinelData() {
     setLoading(false);
     setRetrying(false);
     setLastRefresh(new Date());
-  }, []);
+    refreshOps();
+  }, [refreshOps]);
 
   useEffect(() => {
     load();
@@ -85,9 +104,10 @@ export function useSentinelData() {
       setHealthLive(h.live);
       setBackendLive((prev) => s.live || c.live || prev);
       setLastRefresh(new Date());
+      refreshOps();
     }, 10000);
     return () => clearInterval(id);
-  }, []);
+  }, [refreshOps]);
 
   // ── Live alert stream ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -168,6 +188,10 @@ export function useSentinelData() {
     cameras: camerasWithIncidentStatus,
     alerts,
     detections,
+    incidents,
+    cases,
+    notifUnread,
+    refreshNotifications: refreshOps,
     health,
     healthLive,
     latestDetectionByCamera,

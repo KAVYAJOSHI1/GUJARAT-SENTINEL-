@@ -42,3 +42,29 @@ class CameraStatus(str, enum.Enum):
     ONLINE = "ONLINE"
     OFFLINE = "OFFLINE"
     DEGRADED = "DEGRADED"
+
+
+class IncidentStatus(str, enum.Enum):
+    """Operational lifecycle of an incident opened from an alert (or standalone)."""
+
+    NEW = "NEW"
+    ACKNOWLEDGED = "ACKNOWLEDGED"
+    INVESTIGATING = "INVESTIGATING"
+    RESOLVED = "RESOLVED"
+    CLOSED = "CLOSED"
+
+
+class CaseStatus(str, enum.Enum):
+    """Lifecycle of a lightweight investigation case grouping incidents/evidence."""
+
+    OPEN = "OPEN"
+    INVESTIGATING = "INVESTIGATING"
+    ON_HOLD = "ON_HOLD"
+    RESOLVED = "RESOLVED"
+    CLOSED = "CLOSED"
+
+
+class NotificationSeverity(str, enum.Enum):
+    INFO = "INFO"
+    WARNING = "WARNING"
+    CRITICAL = "CRITICAL"

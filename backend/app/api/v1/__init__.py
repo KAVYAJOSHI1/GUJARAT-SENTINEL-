@@ -7,8 +7,11 @@ from app.api.v1 import (
     analytics,
     auth,
     cameras,
+    cases,
     dashboard,
     events,
+    incidents,
+    notifications,
     pipeline,
     vehicles,
     watchlist,
@@ -22,6 +25,9 @@ api_router.include_router(events.router, prefix="/events", tags=["events"])
 api_router.include_router(vehicles.router, prefix="/vehicles", tags=["vehicles"])
 api_router.include_router(watchlist.router, prefix="/watchlist", tags=["watchlist"])
 api_router.include_router(alerts.router, prefix="/alerts", tags=["alerts"])
+api_router.include_router(incidents.router, prefix="/incidents", tags=["incidents"])
+api_router.include_router(cases.router, prefix="/cases", tags=["cases"])
+api_router.include_router(notifications.router, prefix="/notifications", tags=["notifications"])
 api_router.include_router(analytics.router, prefix="/analytics", tags=["analytics"])
 api_router.include_router(pipeline.router, prefix="/pipeline", tags=["pipeline"])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])

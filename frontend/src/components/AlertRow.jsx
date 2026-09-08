@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Car, Crosshair, ImageOff, MapPin } from "lucide-react";
+import { Car, Crosshair, FolderPlus, ImageOff, MapPin } from "lucide-react";
 import { C, SEVERITY_COLOR } from "../theme.js";
-import { evidenceUrl } from "../services/api.js";
+import { canManageOps, evidenceUrl } from "../services/api.js";
+import { createIncident } from "../services/opsApi.js";
+import { useToast } from "../context/ToastContext.jsx";
 import SeverityBadge from "./SeverityBadge.jsx";
 
 // One incident card (README task §2 — Live Incident / Alert Center).
@@ -11,10 +13,35 @@ import SeverityBadge from "./SeverityBadge.jsx";
 // the join the backend now does, evidence via the existing proxy.
 export default function AlertRow({ alert, onAck, onViewEvidence }) {
   const navigate = useNavigate();
+  const { push } = useToast();
   const [imgFailed, setImgFailed] = useState(false);
+  const [creating, setCreating] = useState(false);
   const borderCol = SEVERITY_COLOR[alert.severity] || C.muted;
   const thumb = alert.eventId ? evidenceUrl(alert.eventId) : null;
   const trackable = alert.vehicle && alert.vehicle !== "UNKNOWN";
+  // A real backend alert id is a UUID; the WS-fallback simulator uses
+  // "alert-<ts>". Only real, persisted alerts can be promoted to incidents.
+  const canPromote =
+    canManageOps() && !alert.simulated && /^[0-9a-f-]{20,}$/i.test(String(alert.id || ""));
+
+  const openIncident = async () => {
+    setCreating(true);
+    try {
+      const inc = await createIncident({ alert_id: alert.id });
+      push({ title: `Incident ${inc.incident_number} opened`, severity: "medium" });
+      navigate(`/incidents/${inc.id}`);
+    } catch (e) {
+      const details = e?.response?.data?.error?.details;
+      if (e?.response?.status === 409 && details?.incident_id) {
+        push({ title: `Alert already has ${details.incident_number}`, severity: "medium" });
+        navigate(`/incidents/${details.incident_id}`);
+      } else {
+        push({ title: "Could not open incident", msg: e?.response?.data?.error?.message || "", severity: "high" });
+      }
+    } finally {
+      setCreating(false);
+    }
+  };
 
   return (
     <div
@@ -106,6 +133,11 @@ export default function AlertRow({ alert, onAck, onViewEvidence }) {
           {thumb && (
             <button onClick={() => onViewEvidence?.(alert)} style={miniBtn(C.muted)}>
               View evidence
+            </button>
+          )}
+          {canPromote && (
+            <button onClick={openIncident} disabled={creating} style={miniBtn(C.amber)}>
+              <FolderPlus size={10} /> {creating ? "Opening…" : "Create incident"}
             </button>
           )}
         </div>

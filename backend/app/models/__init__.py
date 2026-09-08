@@ -10,8 +10,14 @@ from app.models.alert import Alert
 from app.models.user import User
 from app.models.audit_log import AuditLog
 from app.models.pipeline_status import PipelineStatus
+from app.models.incident import Incident, IncidentNote, IncidentEvidence
+from app.models.case import Case, CaseNote, CaseIncident, CaseEvidence
+from app.models.notification import Notification
 
 __all__ = [
     "Camera", "VehicleEvent", "Watchlist", "Alert", "User", "AuditLog",
     "PipelineStatus",
+    "Incident", "IncidentNote", "IncidentEvidence",
+    "Case", "CaseNote", "CaseIncident", "CaseEvidence",
+    "Notification",
 ]

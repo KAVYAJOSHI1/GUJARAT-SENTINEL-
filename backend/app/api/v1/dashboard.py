@@ -19,8 +19,16 @@ from app.api.deps import get_current_user
 from app.api.v1.cameras import HEALTH_STALE_AFTER, _effective_status
 from app.database import get_db
 from app.models.alert import Alert
-from app.models.base import AlertStatus, CameraStatus, PriorityLevel
+from app.models.base import (
+    AlertStatus,
+    CameraStatus,
+    CaseStatus,
+    IncidentStatus,
+    PriorityLevel,
+)
 from app.models.camera import Camera
+from app.models.case import Case
+from app.models.incident import Incident
 from app.models.pipeline_status import PipelineStatus
 from app.models.vehicle_event import VehicleEvent
 from app.schemas.health import (
@@ -103,6 +111,24 @@ def dashboard_stats(db: Session = Depends(get_db), _=Depends(get_current_user)):
         or 0
     )
 
+    # --- operational: incidents / cases (phase brief FEATURE 13) ---
+    active_incidents = (
+        db.execute(
+            select(func.count(Incident.id)).where(
+                Incident.status.notin_([IncidentStatus.RESOLVED, IncidentStatus.CLOSED])
+            )
+        ).scalar()
+        or 0
+    )
+    open_cases = (
+        db.execute(
+            select(func.count(Case.id)).where(
+                Case.status.notin_([CaseStatus.RESOLVED, CaseStatus.CLOSED])
+            )
+        ).scalar()
+        or 0
+    )
+
     return {
         "total_cameras": total_cameras,
         "online_feeds": online_feeds,
@@ -113,6 +139,8 @@ def dashboard_stats(db: Session = Depends(get_db), _=Depends(get_current_user)):
         "todays_detections": todays_detections,
         "anpr_reads_per_hour": reads_last_hour,
         "zones_online": zones_online,
+        "active_incidents": active_incidents,
+        "open_cases": open_cases,
     }
 
 

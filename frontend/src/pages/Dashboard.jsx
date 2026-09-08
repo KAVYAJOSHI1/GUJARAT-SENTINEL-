@@ -1,19 +1,23 @@
 import { useMemo, useState } from "react";
-import { useOutletContext } from "react-router-dom";
+import { Link, useNavigate, useOutletContext } from "react-router-dom";
 import {
   Activity,
   BarChart3,
   BellRing,
   Car,
+  ClipboardList,
   Clock,
+  FolderOpen,
   PanelRightOpen,
   ScanLine,
+  Search,
   ShieldAlert,
   Video,
   VideoOff,
 } from "lucide-react";
 import { C } from "../theme.js";
 import { isMockCamera } from "../services/api.js";
+import { SEVERITY_COLOR } from "../theme.js";
 import StatCard from "../components/StatCard.jsx";
 import SystemHealthPanel from "../components/observability/SystemHealthPanel.jsx";
 import AiPipelinePanel from "../components/observability/AiPipelinePanel.jsx";
@@ -35,6 +39,8 @@ export default function Dashboard() {
     cameras,
     alerts,
     detections,
+    incidents = [],
+    cases = [],
     health,
     healthLive,
     latestDetectionByCamera,
@@ -49,6 +55,7 @@ export default function Dashboard() {
     ackAll,
   } = useOutletContext();
 
+  const navigate = useNavigate();
   const [selectedCam, setSelectedCam] = useState(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [sourceFilter, setSourceFilter] = useState("ALL");
@@ -126,6 +133,39 @@ export default function Dashboard() {
         <StatCard label="ANPR Reads" value={stats?.anprReadsPerHour ?? 0} sub="Readable plates / hr" icon={Car} color={C.violet} loading={loading} />
         <StatCard label="Watchlist Matches" value={stats?.watchlistMatches ?? 0} sub="All-time confirmed" icon={ShieldAlert} color={C.red} loading={loading} />
         <StatCard label="Active Alerts" value={activeAlerts} sub="Requires attention" icon={BellRing} color={activeAlerts > 0 ? C.red : C.green} pulse={activeAlerts > 0} loading={loading} />
+        <StatCard label="Active Incidents" value={stats?.activeIncidents ?? 0} sub="Open / investigating" icon={ClipboardList} color={(stats?.activeIncidents ?? 0) > 0 ? C.amber : C.green} loading={loading} />
+        <StatCard label="Open Cases" value={stats?.openCases ?? 0} sub="Under investigation" icon={FolderOpen} color={C.violet} loading={loading} />
+      </div>
+
+      {/* ── Quick actions (command center) ─────────────────────────────────── */}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
+        <QuickAction icon={Search} label="Search vehicle" onClick={() => navigate("/investigation")} />
+        <QuickAction icon={ClipboardList} label="Incidents" onClick={() => navigate("/incidents")} />
+        <QuickAction icon={FolderOpen} label="Cases" onClick={() => navigate("/cases")} />
+        <QuickAction icon={Video} label="Cameras" onClick={() => navigate("/cameras")} />
+        <QuickAction icon={ShieldAlert} label="Alerts" onClick={() => navigate("/alerts")} />
+      </div>
+
+      {/* ── Operations: live incidents + recent cases ─────────────────────── */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(320px,1fr))", gap: 12, marginBottom: 14 }}>
+        <OpsList
+          title="Live Incidents" icon={ClipboardList} to="/incidents"
+          empty="No active incidents"
+          rows={incidents.map((i) => ({
+            id: i.id, href: `/incidents/${i.id}`, ref: i.incident_number, main: i.title,
+            tag: i.status, sub: `${i.plate_number_normalized || "—"} · ${i.assigned_to_username || "unassigned"}`,
+            color: SEVCOL(i.priority_level),
+          }))}
+        />
+        <OpsList
+          title="Recent Cases" icon={FolderOpen} to="/cases"
+          empty="No cases opened"
+          rows={cases.map((c) => ({
+            id: c.id, href: `/cases/${c.id}`, ref: c.case_number, main: c.title,
+            tag: c.status, sub: `${c.incident_count} incidents · ${c.evidence_count} evidence`,
+            color: SEVCOL(c.priority_level),
+          }))}
+        />
       </div>
 
       {/* ── System health + compact live analytics ─────────────────────────── */}
@@ -278,6 +318,59 @@ export default function Dashboard() {
         onAck={ackAlert}
         onAckAll={ackAll}
       />
+    </div>
+  );
+}
+
+const SEVCOL = (p) => SEVERITY_COLOR[String(p || "").toLowerCase()] || C.muted;
+
+function QuickAction({ icon: Icon, label, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        display: "flex", alignItems: "center", gap: 6, background: C.surface,
+        border: `1px solid ${C.border}`, color: C.text, borderRadius: 6,
+        padding: "7px 12px", fontSize: 11.5, fontWeight: 600, cursor: "pointer",
+      }}
+    >
+      <Icon size={13} color={C.accent} /> {label}
+    </button>
+  );
+}
+
+function OpsList({ title, icon: Icon, to, rows, empty }) {
+  return (
+    <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+      <div style={{ padding: "10px 14px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span style={{ fontWeight: 600, fontSize: 12, display: "flex", alignItems: "center", gap: 6 }}>
+          <Icon size={13} color={C.accent} /> {title}
+        </span>
+        <Link to={to} style={{ color: C.muted, fontSize: 10, textDecoration: "none" }}>View all →</Link>
+      </div>
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", maxHeight: 260 }}>
+        {rows.length === 0 ? (
+          <div style={{ color: C.dim, fontSize: 11, padding: "16px 14px" }}>{empty}</div>
+        ) : (
+          rows.map((r) => (
+            <Link
+              key={r.id}
+              to={r.href}
+              style={{
+                display: "block", padding: "9px 14px", borderTop: `1px solid ${C.border}`,
+                textDecoration: "none", borderLeft: `3px solid ${r.color}`,
+              }}
+            >
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <span style={{ fontFamily: "monospace", color: C.accent, fontSize: 11 }}>{r.ref}</span>
+                <span style={{ color: C.text, fontSize: 11.5, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.main}</span>
+                <span style={{ color: C.muted, fontSize: 9, textTransform: "uppercase", letterSpacing: 0.5 }}>{String(r.tag).replace(/_/g, " ")}</span>
+              </div>
+              <div style={{ color: C.muted, fontSize: 10, marginTop: 2 }}>{r.sub}</div>
+            </Link>
+          ))
+        )}
+      </div>
     </div>
   );
 }
