@@ -80,6 +80,33 @@ code change.*
 
 ---
 
+## 4a. Phase 14 — Advanced Video Intelligence (add-on clicks)
+
+| # | Click / do | What the judge sees |
+| :-- | :--- | :--- |
+| A | **Investigation** → search `GJ18TC0450` | **Visual Matches** panel — appearance-similar sightings ranked; look-alike white cars labelled `VISUAL MATCH` with similarity % + `MODERATE`/capped confidence ("visual similarity is not identity"). |
+| B | Same page → **Investigation graph** | `/graph` — deterministic node graph: Vehicle → Detections → Cameras → Location, Alert → Incident → Evidence → Case, visual-match + watchlist edges. Click any node → its Sentinel page. |
+| C | **Copilot** → tick **DEEP** → "Investigate GJ18TC0450" | Multi-step agent: 10 tool steps, 8 sections, **INVESTIGATION GAPS** (MISSING_COVERAGE — the corridor cameras it skipped), `READ-ONLY` chip, collapsible step trace. |
+| D | **Traffic** tab | Vehicles / peak hour / trend / congestion KPIs, type + top-camera bars, hourly trend, **density heatmap** (switch Vehicles / Alerts / Anomalies / Incidents), per-camera table. |
+| E | **Anomalies** tab | Now three kinds: `STOPPED VEHICLE` (CAM-04), `WRONG-WAY MOVEMENT` (CAM-02, heading 222° vs permitted 45°), `RESTRICTED-ZONE ENTRY` (CAM-06 plaza) — each `AI-GENERATED`, each with a real `ANOMALY` alert. |
+| F | **Cam Intel** tab | Cameras ranked worst-first — **CAM-07** `LOW` (health score ~3, "4 disconnects, avg recovery 140s", FPS 3.4); others `UNKNOWN` (no live telemetry offline). Click CAM-07 → transition log. |
+| G | Copilot → "Show camera transition intelligence for CAM-01" *(or)* API `GET /ai/correlation/transitions` | Historical `CAM-01 → CAM-02` travel band (3 seeded passes) + PLAUSIBLE/SLOW/IMPOSSIBLE classification on the journey transitions. |
+
+**API-only (Phase 14):**
+```bash
+curl -s -X POST localhost:8000/api/v1/ai/reid/search -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"plate":"GJ18TC0450"}' | jq '.candidates[0]'
+curl -s -X POST localhost:8000/api/v1/ai/correlation/analyze -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"plate":"GJ18TC0450"}' | jq '.confirmed, .hops[0].scores'
+curl -s "localhost:8000/api/v1/analytics/traffic/heatmap?kind=anomaly_density" -H "Authorization: Bearer $TOKEN" | jq '.contributing_cameras'
+curl -s -X POST localhost:8000/api/v1/ai/investigation/run -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"query":"Investigate GJ18TC0450"}' | jq '.summary, .gaps'
+curl -s "localhost:8000/api/v1/ai/camera-intelligence" -H "Authorization: Bearer $TOKEN" | jq '.cameras[0]'
+curl -s "localhost:8000/api/v1/ai/graph?plate=GJ18TC0450" -H "Authorization: Bearer $TOKEN" | jq '.counts_by_type'
+```
+
+---
+
 ## 5. API-only demo (no browser)
 
 ```bash

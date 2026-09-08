@@ -145,7 +145,10 @@ class Settings(BaseSettings):
     REID_BACKFILL_BATCH: int = 500
     # Cosine-similarity band thresholds. STRONG never means "confirmed" --
     # only a deterministic plate match does (correlation layer, Phase 14 §2).
-    REID_SIMILARITY_STRONG: float = 0.92
+    # STRONG is set high on purpose: with the attribute baseline, only
+    # (near-)plate-identical vectors reach it. Same type+colour, different
+    # vehicle lands at MODERATE ("a plausible lead"), never STRONG.
+    REID_SIMILARITY_STRONG: float = 0.96
     REID_SIMILARITY_MODERATE: float = 0.80
     REID_SIMILARITY_WEAK: float = 0.65
 
@@ -185,6 +188,13 @@ class Settings(BaseSettings):
     CORRELATION_CONF_LOW: float = 0.5
     CORRELATION_GEO_NEAR_M: float = 800.0
     CORRELATION_GEO_FAR_M: float = 8000.0
+
+    # --- Phase 14: Investigation Graph (§12) ---
+    GRAPH_MAX_NODES: int = 250
+    GRAPH_MAX_EDGES: int = 500
+    GRAPH_MAX_DETECTIONS: int = 60
+    GRAPH_MAX_VISUAL_MATCHES: int = 6
+    GRAPH_MAX_BRANCH: int = 25
 
     # --- Phase 14: Camera Reliability Intelligence (§9) ---
     # Statistics over camera_health_history -- NOT failure prediction.

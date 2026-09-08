@@ -107,7 +107,8 @@ Everything in this section was exercised on 2026-09-05 (commands and results in 
 | **AI incident / case summary** *(Phase 12)* | Verified | `POST /api/v1/ai/{incidents\|cases}/{id}/summary` — deterministic structured summary from existing rows (incident/case, linked alert, notes, evidence, the vehicle's sightings) + investigation gaps. Labelled "AI-GENERATED SUMMARY"; missing data → "Not available in recorded evidence." Audited. |
 | **Stopped-vehicle anomaly detection** *(Phase 12)* | Verified | `BehaviorAnalyticsService.scan_stopped_vehicles` — one grouped aggregate over stored ByteTrack `vehicle_events` (never video). Threshold-configurable. Each hit → `anomaly_events` row **+ an `Alert(source=ANOMALY)`** that flows through the existing acknowledge/assign/escalate/promote workflow, **+ notification**, **+ WS frame**. Idempotent (unique `(camera,track,first_seen)`). Periodic in-process scan + `POST /ai/anomalies/scan` (ADMIN/OFFICER). Tests: `test_ai_behavior.py` (4). |
 | **AI offline demo** *(Phase 12)* | Verified | `scripts/seed_ai_demo.py` (compose `SEED_AI_DEMO=1`) seeds 8 cameras + a GJ18TC0450 journey + watchlist alert + `INC-<yr>-9001` + `CASE-<yr>-9001` + a stopped-vehicle track, then runs the real detector — all via production code paths. The full AI layer works with government CCTV disconnected and no LLM key (deterministic provider). Verified end-to-end on a fresh `docker compose up`. |
-| **Test suites** | Verified | Backend **191 passed** (187 prior + 4 Phase 13 `test_phase13_polish.py`); AI/ingestion 143 passed, 8 skipped. Counts in §F. |
+| **Test suites** | Verified | Backend **269 passed** (191 through Phase 13 + 77 Phase 14: `test_reid` 13, `test_correlation` 14, `test_traffic` 10, `test_behavior_expanded` 12, `test_investigation_agent` 13, `test_camera_reliability` 9, `test_investigation_graph` 6); AI/ingestion 143 passed, 8 skipped. Counts in §F. |
+| **Advanced Video Intelligence** *(Phase 14)* | Verified | Vehicle Visual Re-ID, cross-camera correlation + transition intelligence, traffic analytics + GIS heatmap, wrong-way + restricted-zone detectors, multi-step investigation agent + gap detection, camera reliability intelligence, investigation graph. Migrations `0009`–`0011` (additive). See §M and `docs/ADVANCED_VIDEO_INTELLIGENCE.md`. |
 | **Journey Intelligence** *(Phase 13)* | Verified | `/api/v1/vehicles/search` journey now returns `transitions[]` — one INFERRED move per consecutive pair of sightings at different cameras, with `time_diff_seconds`, and `distance_meters` + `estimated_speed_kmh` **only** when both cameras are geolocated. Speed dropped when < 50 m apart, ≤ 0 s, or > 200 km/h (note explains why). `confidence_level` HIGH/MEDIUM/LOW by time gap + geolocation. Sightings carry `kind="CONFIRMED"`, `vehicle_color`, `is_mock`. Derived on read; no schema change. `haversine_m` shared via `app/services/geo.py`. Tests: `test_phase13_polish.py` (4). |
 | **Camera Management console** *(Phase 13)* | Verified | `/cameras/manage` — table over the existing `/cameras` payload: search, REAL/MOCK + status filters, effective health, last heartbeat, `last_detection_at` (one bulk group-by, no N+1), coords, FPS; row → the existing camera modal. Read-only; no RTSP/credential surface. `CameraRead` gained `is_mock` + `last_detection_at`. |
 | **Demo reset / polish** *(Phase 13)* | Verified | `./scripts/reset_demo.sh` (in-place, demo rows only) / `--full` (teardown+rebuild). `seed_ai_demo.py --reset` deletes only demo rows in FK-safe order — verified idempotent. NL-search filter chips, Reports PDF (client-side jsPDF; CSV primary/unchanged), AI-Anomalies KPI, per-route tab titles. |
@@ -197,7 +198,8 @@ Explicitly **not built** — target design only (see `SCALABILITY.md`, which is 
 
 | Suite | Command | Result |
 | :--- | :--- | :--- |
-| Backend | `cd backend && DATABASE_URL=…/sentinel_test pytest -q` | **191 passed** (~103 s) — 187 prior + 4 Phase 13 (`test_phase13_polish` 4: confirmed-vs-inferred transitions, implausible-speed suppression, camera `is_mock`/`last_detection_at`, single-sighting → no transitions) |
+| Backend | `cd backend && DATABASE_URL=…/sentinel_test pytest -q` | **269 passed** (~210 s) — 191 through Phase 13 + 77 Phase 14 (`test_reid` 13, `test_correlation` 14, `test_traffic` 10, `test_behavior_expanded` 12, `test_investigation_agent` 13, `test_camera_reliability` 9, `test_investigation_graph` 6) |
+| Migration round-trip (Phase 14) | `alembic upgrade head` then `downgrade 0008` → `upgrade head` | **OK** — `0001…0011` up/down/up clean. `0011` uses `ALTER TYPE anomalykind ADD VALUE IF NOT EXISTS` (PG12+, re-run safe); enum values are left on downgrade (PG cannot drop them). |
 | Migration round-trip | `alembic upgrade head` on empty DB, then `downgrade 0006` → `upgrade head` | **OK** — `0001…0008` up/down/up clean. `alembic check` warns about the intentional mutual `alerts ↔ anomaly_events` FK cycle (SQLAlchemy sort limitation; runtime-safe — the migration creates `anomaly_events` first). Only pre-existing SQLModel-vs-migration index-naming noise otherwise. |
 | Fresh Docker + Phase 12 acceptance | `docker compose down -v && SEED_AI_DEMO=1 up -d --build`; drive the API | **PASS (22/22)** — AI status = deterministic/offline; Copilot "where was GJ18TC0450 seen" → 5 grounded results + timeline + map + related alert + `AI MATCH: HIGH`; no-hallucination (result ids ⊆ real ids); journey; last-6-hours window; empty → "not available in recorded evidence"; NL search → filters + results; incident + case AI summary; seeded stopped-vehicle anomaly + its ANOMALY alert in the feed; re-scan idempotent; RBAC 401; `AI_*` audit rows. |
 | Fresh Docker + Phase 10/11 regression | same stack | **PASS** — the full GJ18TC0450 demo acceptance flow (detect→alert→ack→incident→assign→trace→evidence→case→report→resolve→close→audit) + all Phase 11 smokes still green. |
@@ -555,3 +557,63 @@ automatically from the live pipeline's existing payload fields.
 
 GIS layer-toggle panel, journey-replay scrubber, analytics charts page
 (aggregates already available as CSV/endpoints) — deferred, listed in §D.
+
+---
+
+## M. PHASE 14 — ADVANCED VIDEO INTELLIGENCE (2026-09-08)
+
+Next-generation intelligence layer. **Additive throughout** — no change to
+ANPR / RTSP ingestion / worker strategy / watchlist→alert / security. Seven
+logical commits, tests + fresh-Docker smoke after each. Full detail in
+`docs/ADVANCED_VIDEO_INTELLIGENCE.md` (+ the seven companion `docs/*.md`).
+
+### Data model (migrations `0009`–`0011`, additive only)
+
+| Migration | Object |
+| :--- | :--- |
+| `0009` | `vehicle_embeddings` — one appearance embedding per `vehicle_event` (JSON vector, unique per event). No pgvector on `postgis:15-3.3` → bounded brute-force cosine. |
+| `0010` | `camera_transition_stats` — travel-time distribution per ordered camera pair, from consecutive same-plate hops. |
+| `0011` | `anomalykind` += `WRONG_WAY`, `RESTRICTED_ZONE`; `anomaly_events` += `zone_name` / `direction_deg` / `expected_direction_deg`; dedup unique index now keyed on `kind`; `cameras` += `permitted_direction_deg` + `restricted_zones` (JSON, NULL default → new detectors inert until configured). |
+
+Round-trip `0001↔…↔0011` verified up/down/up clean.
+
+### Components (`app/services/ai/`)
+
+| Module | What |
+| :--- | :--- |
+| `reid.py` | `VehicleReIDService` — pluggable embedding backend (deterministic `attr-baseline-v1` default; optional torch ResNet-50; pipeline-supplied vector). `extract_embedding` / `index_event` / `backfill` / `compare` / `find_similar` / `rank_candidates`. Similarity bands capped at MEDIUM — visual similarity ≠ identity; only a plate match is "same vehicle". |
+| `camera_transitions.py` | `CameraTransitionService` — `recompute()` (bounded, idempotent, background 1 h), `expected_travel()` (historical → distance-model → unknown), `classify()` (PLAUSIBLE / FAST / SLOW / IMPOSSIBLE / UNKNOWN), likely next/previous cameras. |
+| `correlation.py` | `VehicleCorrelationService` — 6 explained sub-scores (plate / appearance / type / colour / temporal / geographic) → weighted `overall_score` → verdict `CONFIRMED` (exact plate + feasible time) vs `INFERRED`. |
+| `traffic.py` | `TrafficAnalyticsService` — `overview` / `by_camera` / `trends` / `heatmap` — SQL aggregates only, never re-processes video; heatmap uses geolocated cameras only (no fabricated coordinates). |
+| `behavior.py` | +`scan_wrong_way` (net heading vs `permitted_direction_deg`) +`scan_restricted_zone` (point-in-polygon) + `scan()` dispatcher. Both feed the existing `anomaly_events` → alert → notification → incident workflow, idempotent. |
+| `agent.py` | `InvestigationAgentService` + `ToolRegistry` (13 bounded read-only tools). Multi-step tool-planned investigation (deterministic-first; LLM only picks tool names). READ-ONLY — test asserts alert/incident/anomaly counts unchanged. |
+| `gaps.py` | `InvestigationGapService` — SINGLE_SIGHTING / LOW_CONFIDENCE_ANPR / LONG_TIME_GAP / MISSING_COVERAGE / CAMERA_OFFLINE_WINDOW / INCONSISTENT_TRAVEL. "Not an accusation." |
+| `camera_reliability.py` | `CameraReliabilityService` — `health_score` 0–100 + `reliability_score` HIGH/MEDIUM/LOW/UNKNOWN + `degradation_indicator` from `camera_health_history`. **Not** failure prediction. |
+| `graph.py` | `InvestigationGraphService` — deterministic node/edge graph from persisted rows (no Neo4j). Every node has an `href`. Bounded. |
+
+### API (`/api/v1/…`, JWT-authenticated, bounded, audited where noted)
+
+`/ai/reid/{search,compare,embedding/{id},backfill}` ·
+`/ai/correlation/{analyze,transitions,transitions/{code}/neighbours,transitions/recompute}` ·
+`/analytics/traffic/{overview,cameras,trends,heatmap}` ·
+`/ai/anomalies/scan` (now `kinds=[...]`) · `PATCH /cameras/{id}/behavior-config` ·
+`/ai/investigation/{run,gaps}` · `/ai/camera-intelligence[/{code}]` · `/ai/graph`.
+
+### Frontend
+
+New pages: `/traffic` (Traffic Intelligence — KPIs, bar lists, trend bars,
+Leaflet density heatmap, per-camera table), `/camera-intelligence` (Camera
+Reliability — worst-first table + detail modal), `/graph` (Investigation
+Graph — BFS-layered clickable SVG). Enhanced: `/copilot` (**DEEP** toggle →
+multi-step agent report with gaps + step trace), `/investigation` (**Visual
+Matches** panel + Investigation-graph button), `/anomalies` (per-kind
+labels + `AI-GENERATED` chip), Command Center (Traffic / Camera-Reliability
+quick actions). Nav tabs: `Traffic`, `Cam Intel`.
+
+### Not done this phase
+
+Torch Re-ID in the backend tier (architected, needs crop storage +
+`torch` in the image); pgvector (repository abstraction in place);
+per-camera calibrated congestion / reliability thresholds; road-graph path
+model for gap detection (straight-line corridor used); LLM tool-planner
+(`plan_tools` hook present, deterministic planner is the default).

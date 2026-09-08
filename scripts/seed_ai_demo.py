@@ -207,6 +207,37 @@ def main() -> int:
         for ev in journey_events:
             db.refresh(ev)
 
+        # --- OTHER corridor traffic along the SAME route (earlier today) so
+        #     camera_transition_stats has >= 2 samples per hop. Distinct
+        #     plates -> GJ18TC0450's own journey stays exactly 5 sightings. ---
+        for pass_no, (dplate, dcolour, back_h) in enumerate([
+            ("GJ03KK4501", "grey", 6), ("GJ21MM8802", "black", 4),
+            ("GJ07PP1203", "white", 3),
+        ], start=1):
+            p_start = now - timedelta(hours=back_h, minutes=42)
+            for i, code in enumerate(route):
+                _, _, lat, lon = next(x for x in _CAMERAS if x[0] == code)
+                db.add(VehicleEvent(
+                    plate_number=dplate, plate_number_normalized=normalize_plate(dplate),
+                    camera_id=cam_by_code[code].id, camera_code=code,
+                    track_id=400 + pass_no * 10 + i,
+                    timestamp=p_start + timedelta(minutes=9 * i + i),
+                    vehicle_type="car", vehicle_color=dcolour, confidence_score=0.9,
+                    latitude=lat, longitude=lon, location=_pt(lat, lon)))
+
+        # --- decoy white cars near the corridor (visual-match candidates) ---
+        for i, (plate, code) in enumerate([
+            ("GJ01DC1001", "CAM-02"), ("GJ05DC2002", "CAM-04"), ("GJ12DC3003", "CAM-06"),
+        ]):
+            _, _, lat, lon = next(x for x in _CAMERAS if x[0] == code)
+            db.add(VehicleEvent(
+                plate_number=plate, plate_number_normalized=normalize_plate(plate),
+                camera_id=cam_by_code[code].id, camera_code=code, track_id=500 + i,
+                timestamp=now - timedelta(minutes=30 - i * 5),
+                vehicle_type="car", vehicle_color="white", confidence_score=0.84,
+                latitude=lat, longitude=lon, location=_pt(lat, lon)))
+        db.commit()
+
         first = journey_events[0]
         alert = Alert(
             plate_number=_PLATE, plate_number_normalized=_PLATE,
