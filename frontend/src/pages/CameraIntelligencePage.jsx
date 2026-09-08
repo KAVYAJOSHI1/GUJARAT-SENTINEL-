@@ -11,6 +11,7 @@ import { cameraIntelligence, cameraReliability } from "../services/cameraIntelAp
 
 const WINDOWS = [{ h: 24, l: "24h" }, { h: 72, l: "3d" }, { h: 168, l: "7d" }];
 const REL_COLOR = { HIGH: C.green, MEDIUM: C.amber, LOW: C.red, UNKNOWN: C.muted };
+const VQ_COLOR = { GOOD: C.green, FAIR: C.amber, POOR: C.red, UNKNOWN: C.muted };
 
 // Phase 14 §9 — Camera Reliability Intelligence. A statistical view of
 // recent camera stability from camera_health_history. NOT failure
@@ -73,6 +74,9 @@ export default function CameraIntelligencePage() {
             <StatCard label="Showing degradation" value={data?.degraded_count ?? 0}
               sub="recent instability observed" icon={ShieldAlert}
               color={(data?.degraded_count ?? 0) > 0 ? C.amber : C.green} />
+            <StatCard label="Poor video quality" value={data?.poor_video_count ?? 0}
+              sub="online but unusable video" icon={ShieldAlert}
+              color={(data?.poor_video_count ?? 0) > 0 ? C.red : C.green} />
           </div>
 
           <div style={panel}>
@@ -81,8 +85,9 @@ export default function CameraIntelligencePage() {
                 <thead>
                   <tr style={{ color: C.muted, textAlign: "left", fontSize: 10, textTransform: "uppercase" }}>
                     <th style={th}>Camera</th><th style={th}>Status</th><th style={th}>Health</th>
-                    <th style={th}>Reliability</th><th style={th}>Disconnects</th><th style={th}>FPS</th>
-                    <th style={th}>Detections/h</th><th style={th}>Observations</th><th style={th} />
+                    <th style={th}>Reliability</th><th style={th}>Video quality</th><th style={th}>ANPR OK</th>
+                    <th style={th}>Disconnects</th><th style={th}>FPS</th>
+                    <th style={th}>Observations</th><th style={th} />
                   </tr>
                 </thead>
                 <tbody>
@@ -112,6 +117,17 @@ export default function CameraIntelligencePage() {
                             DEGRADING
                           </span>
                         )}
+                      </td>
+                      <td style={td}>
+                        <span style={{ color: VQ_COLOR[c.video_quality_label] || C.muted, fontWeight: 700, fontSize: 11 }}>
+                          {c.video_quality_label}
+                        </span>
+                        {c.video_quality_score != null && (
+                          <span style={{ color: C.dim, fontFamily: "monospace", marginLeft: 4 }}>{c.video_quality_score}</span>
+                        )}
+                      </td>
+                      <td style={{ ...td, fontFamily: "monospace", color: c.anpr_success_rate != null && c.anpr_success_rate < 0.6 ? C.red : C.muted }}>
+                        {c.anpr_success_rate != null ? `${Math.round(c.anpr_success_rate * 100)}%` : "—"}
                       </td>
                       <td style={{ ...td, fontFamily: "monospace", color: c.disconnect_count ? C.amber : C.muted }}>
                         {c.disconnect_count}
@@ -158,7 +174,15 @@ export default function CameraIntelligencePage() {
                 <Metric label="Disconnects" value={detail.disconnect_count} />
                 <Metric label="Avg recovery" value={detail.mean_recovery_seconds ? `${Math.round(detail.mean_recovery_seconds)}s` : "—"} />
                 <Metric label="Reconnects" value={detail.reconnect_count} />
+                <Metric label="Video quality" value={detail.video_quality_label}
+                  color={VQ_COLOR[detail.video_quality_label]} />
+                <Metric label="ANPR OK" value={detail.anpr_success_rate != null ? `${Math.round(detail.anpr_success_rate * 100)}%` : "—"} />
               </div>
+              {(detail.video_quality_reasons || []).length > 0 && (
+                <div style={{ fontSize: 10.5, color: C.amber, marginBottom: 8 }}>
+                  Video quality: {detail.video_quality_reasons.join(" · ")}
+                </div>
+              )}
               <div style={{ fontSize: 9, fontWeight: 700, color: C.muted, letterSpacing: 0.6, marginBottom: 4 }}>OBSERVATIONS</div>
               {detail.observations.length ? detail.observations.map((o, i) => (
                 <div key={i} style={{ fontSize: 11, color: C.text, padding: "2px 0" }}>• {o}</div>

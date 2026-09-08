@@ -214,6 +214,10 @@ class Settings(BaseSettings):
     CAMERA_RELIABILITY_MIN_BASELINE_DETECTIONS: int = 20
     CAMERA_RELIABILITY_HIGH_SCORE: float = 80.0
     CAMERA_RELIABILITY_MEDIUM_SCORE: float = 55.0
+    # Phase 15F: VIDEO QUALITY score (can the camera produce usable video) --
+    # a separate axis from reliability/uptime.
+    CAMERA_VIDEO_QUALITY_MIN_SAMPLES: int = 5
+    CAMERA_VIDEO_QUALITY_FPS_NOMINAL: float = 15.0
 
     # --- Phase 14: Investigation Agent (§7) + Gap Detection (§8) ---
     AI_AGENT_ENABLED: bool = True
