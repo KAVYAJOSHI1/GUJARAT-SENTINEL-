@@ -257,7 +257,7 @@ export default function SearchPage() {
                   <tr key={r.event_id} style={{ borderTop: `1px solid ${C.border}` }}>
                     <td style={{ ...td, color: C.muted, whiteSpace: "nowrap" }}>{fmtDateTime(r.timestamp)}</td>
                     <td style={td}>
-                      <Link to={`/investigation?plate=${r.plate_number_normalized}`}
+                      <Link to={`/workspace?plate=${r.plate_number_normalized}`}
                             style={{ color: C.amber, fontFamily: "monospace", textDecoration: "none" }}>
                         {r.plate_number_normalized}
                       </Link>
