@@ -24,10 +24,36 @@ class VehicleSighting(BaseModel):
     confidence_score: Optional[float]
     track_id: Optional[int] = None
     vehicle_type: Optional[str] = None
+    vehicle_color: Optional[str] = None
     plate_number: Optional[str] = None
+    # Phase 13: REAL government camera vs a local MOCK/demo feed. Derived
+    # from the camera code prefix (never labels a real feed as mock).
+    is_mock: bool = False
+    # A directly OBSERVED sighting is always a CONFIRMED fact.
+    kind: str = "CONFIRMED"
 
     class Config:
         from_attributes = True
+
+
+class JourneyTransition(BaseModel):
+    """An INFERRED camera-to-camera movement between two consecutive
+    sightings. The sightings are facts; the movement between them was not
+    observed -- so `kind` is always INFERRED and distance/speed are only
+    populated when both cameras are geolocated."""
+    from_camera_id: str
+    from_camera_code: Optional[str] = None
+    to_camera_id: str
+    to_camera_code: Optional[str] = None
+    from_timestamp: datetime
+    to_timestamp: datetime
+    time_diff_seconds: int
+    distance_meters: Optional[float] = None
+    estimated_speed_kmh: Optional[float] = None
+    kind: str = "INFERRED"
+    confidence_level: str = "MEDIUM"     # HIGH | MEDIUM | LOW
+    match_method: str = "consecutive exact-plate sightings; movement inferred, not observed"
+    notes: List[str] = []
 
 
 class VehicleJourneySummary(BaseModel):
@@ -42,6 +68,10 @@ class VehicleJourneySummary(BaseModel):
     vehicle_types: List[str] = []
     is_single_sighting: bool = False
     has_journey: bool = False  # >= 2 distinct geolocated sightings -> a plottable trail
+    # Phase 13: derived camera-to-camera transitions (see JourneyTransition).
+    transitions: List[JourneyTransition] = []
+    confirmed_sightings: int = 0
+    inferred_transitions: int = 0
 
 
 class VehicleHistoryResponse(BaseModel):

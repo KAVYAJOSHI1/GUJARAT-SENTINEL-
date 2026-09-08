@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { FileBarChart, FileDown } from "lucide-react";
 import { C } from "../theme.js";
 import { useToast } from "../context/ToastContext.jsx";
-import { downloadReport, listReports } from "../services/opsApi.js";
+import { downloadReport, downloadReportPDF, listReports } from "../services/opsApi.js";
 import EmptyState from "../components/ui/EmptyState.jsx";
 import { SkeletonRows } from "../components/ui/Skeleton.jsx";
 
@@ -20,8 +20,8 @@ export default function ReportsPage() {
     listReports().then(setReports).catch(() => setReports([])).finally(() => setLoading(false));
   }, []);
 
-  const run = async (r) => {
-    setBusy(r.key);
+  const run = async (r, fmt = "csv") => {
+    setBusy(`${r.key}:${fmt}`);
     try {
       const params = {};
       for (const [k, v] of Object.entries(f)) if (v) params[k] = v;
@@ -29,8 +29,9 @@ export default function ReportsPage() {
         push({ title: "This report needs a plate", severity: "high" });
         return;
       }
-      await downloadReport(r.key, params);
-      push({ title: `${r.name} exported`, severity: "medium" });
+      if (fmt === "pdf") await downloadReportPDF(r.key, r.name, params);
+      else await downloadReport(r.key, params);
+      push({ title: `${r.name} exported (${fmt.toUpperCase()})`, severity: "medium" });
     } catch (e) {
       push({ title: "Export failed", msg: e?.response?.data?.error?.message || "", severity: "high" });
     } finally {
@@ -67,9 +68,15 @@ export default function ReportsPage() {
             <div key={r.key} style={{ ...panel, padding: 14, display: "flex", flexDirection: "column", gap: 8 }}>
               <div style={{ fontWeight: 600, fontSize: 13 }}>{r.name}</div>
               {r.needs_plate && <div style={{ color: C.amber, fontSize: 10 }}>requires a plate filter</div>}
-              <button style={btn} disabled={busy === r.key} onClick={() => run(r)}>
-                <FileDown size={12} /> {busy === r.key ? "Generating…" : "Export CSV"}
-              </button>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button style={btn} disabled={busy.startsWith(r.key)} onClick={() => run(r, "csv")}>
+                  <FileDown size={12} /> {busy === `${r.key}:csv` ? "…" : "CSV"}
+                </button>
+                <button style={{ ...btn, background: "transparent", border: `1px solid ${C.border}`, color: C.text }}
+                        disabled={busy.startsWith(r.key)} onClick={() => run(r, "pdf")}>
+                  <FileDown size={12} /> {busy === `${r.key}:pdf` ? "…" : "PDF"}
+                </button>
+              </div>
             </div>
           ))}
         </div>

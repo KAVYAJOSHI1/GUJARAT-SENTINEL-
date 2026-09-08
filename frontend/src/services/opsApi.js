@@ -285,6 +285,13 @@ export async function downloadReport(key, params = {}) {
   triggerDownload(res.data, `${key}.csv`, "text/csv");
 }
 
+// Phase 13: same report, rendered client-side as a PDF (CSV stays primary).
+export async function downloadReportPDF(key, name, params = {}) {
+  const { exportCsvTextToPDF } = await import("../utils/reportExporter.js");
+  const res = await http.get(`/reports/${encodeURIComponent(key)}.csv`, { params, responseType: "text" });
+  exportCsvTextToPDF(name || key, typeof res.data === "string" ? res.data : String(res.data));
+}
+
 // ── Camera health history ────────────────────────────────────────────────
 export async function cameraHealthHistory(cameraId) {
   const { data } = await http.get(`/cameras/${encodeURIComponent(cameraId)}/health/history`);

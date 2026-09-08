@@ -24,6 +24,7 @@ import EvidenceModal from "../components/gis/EvidenceModal.jsx";
 import SearchBar from "../components/investigation/SearchBar.jsx";
 import VehicleProfileCard from "../components/investigation/VehicleProfileCard.jsx";
 import SightingTimeline from "../components/investigation/SightingTimeline.jsx";
+import JourneyIntelligence from "../components/investigation/JourneyIntelligence.jsx";
 import { fetchCamerasGeoJSON, searchVehicle } from "../services/investigationApi.js";
 import { exportVehicleReportCSV, exportVehicleReportPDF } from "../utils/reportExporter.js";
 import { CITY_ZOOM, FOCUS_ZOOM, GUJARAT_CENTER, GUJARAT_ZOOM } from "../lib/mockGisData.js";
@@ -378,6 +379,8 @@ export default function InvestigationPage() {
               </button>
             </div>
           </div>
+
+          <JourneyIntelligence result={result} onSelectCamera={handleSelectSighting} />
 
           <div className="investigation-grid">
             {/* LEFT — chronological timeline */}

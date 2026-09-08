@@ -4,6 +4,7 @@ Returns chronologically ordered sightings using the composite B-Tree index
 on (plate_number_normalized, timestamp). Target: <50ms for 100k+ rows.
 """
 import os
+import re
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import FileResponse, RedirectResponse
@@ -19,15 +20,23 @@ from app.models.vehicle_event import VehicleEvent
 from app.models.watchlist import Watchlist
 from app.schemas.auth import CurrentUser
 from app.schemas.vehicle import (
+    JourneyTransition,
     VehicleHistoryResponse,
     VehicleJourneySummary,
     VehicleSighting,
 )
 from app.services.audit import record_audit
+from app.services.geo import haversine_m
 from app.services.plate_utils import normalize_plate
 from app.services.watchlist_engine import active_watchlist_clause
 
 router = APIRouter()
+
+_MOCK_RE = re.compile(r"^mock[_-]?cam", re.IGNORECASE)
+
+
+def _is_mock_code(code: str | None) -> bool:
+    return bool(code and _MOCK_RE.match(code))
 
 # Where THIS process can see the AI pipeline's local evidence tree
 # (evidence/live/, evidence/mock/, ...). The DB stores whatever absolute
@@ -56,6 +65,7 @@ def _build_journey_summary(sightings: list[VehicleSighting]) -> VehicleJourneySu
     types = sorted({s.vehicle_type for s in sightings if s.vehicle_type})
     distinct_geo_cameras = len({s.camera_id for s in sightings if s.has_location})
 
+    transitions = _build_transitions(sightings)
     return VehicleJourneySummary(
         first_seen=first,
         last_seen=last,
@@ -65,7 +75,61 @@ def _build_journey_summary(sightings: list[VehicleSighting]) -> VehicleJourneySu
         vehicle_types=types,
         is_single_sighting=len(sightings) == 1,
         has_journey=distinct_geo_cameras >= 2,
+        transitions=transitions,
+        confirmed_sightings=len(sightings),
+        inferred_transitions=len(transitions),
     )
+
+
+def _build_transitions(sightings: list[VehicleSighting]) -> list[JourneyTransition]:
+    """One INFERRED transition per consecutive pair of sightings at DIFFERENT
+    cameras. Distance / speed only when both cameras are geolocated; never
+    fabricated. Confidence drops as the time gap grows (more chance the
+    vehicle went elsewhere in between)."""
+    out: list[JourneyTransition] = []
+    for a, b in zip(sightings, sightings[1:]):
+        if a.camera_id == b.camera_id:
+            continue  # same camera -> not a movement
+        dt = int((b.timestamp - a.timestamp).total_seconds())
+        notes: list[str] = []
+        dist = speed = None
+        if a.has_location and b.has_location:
+            dist = round(haversine_m(a.latitude, a.longitude, b.latitude, b.longitude), 1)
+            if dt > 0 and dist >= 50:
+                kmh = round((dist / dt) * 3.6, 1)
+                if 0 < kmh <= 200:
+                    speed = kmh
+                elif kmh > 200:
+                    notes.append(
+                        f"implied speed {kmh} km/h is implausible — likely a plate "
+                        f"misread or clock skew; speed not reported"
+                    )
+            elif dist < 50:
+                notes.append("cameras < 50 m apart — speed not meaningful")
+        else:
+            notes.append("one or both camera coordinates unavailable — distance/speed not computed")
+
+        # confidence in the transition being a real single-vehicle move
+        if dt <= 0:
+            level = "LOW"
+            notes.append("non-increasing timestamps between sightings")
+        elif dt <= 20 * 60:
+            level = "HIGH" if (speed is not None or dist is not None) else "MEDIUM"
+        elif dt <= 60 * 60:
+            level = "MEDIUM"
+        else:
+            level = "LOW"
+            notes.append(f"{dt // 60} min gap — the vehicle may have been elsewhere in between")
+
+        out.append(JourneyTransition(
+            from_camera_id=a.camera_id, from_camera_code=a.camera_code,
+            to_camera_id=b.camera_id, to_camera_code=b.camera_code,
+            from_timestamp=a.timestamp, to_timestamp=b.timestamp,
+            time_diff_seconds=max(0, dt),
+            distance_meters=dist, estimated_speed_kmh=speed,
+            confidence_level=level, notes=notes,
+        ))
+    return out
 
 
 def _resolve_local_evidence_path(stored_path: str):
@@ -128,7 +192,9 @@ def search_vehicle(
                 confidence_score=ev.confidence_score,
                 track_id=ev.track_id,
                 vehicle_type=ev.vehicle_type,
+                vehicle_color=ev.vehicle_color,
                 plate_number=ev.plate_number,
+                is_mock=_is_mock_code(camera_code or ev.camera_code),
             )
         )
 
@@ -209,7 +275,9 @@ def recent_vehicle_events(
                 confidence_score=ev.confidence_score,
                 track_id=ev.track_id,
                 vehicle_type=ev.vehicle_type,
+                vehicle_color=ev.vehicle_color,
                 plate_number=ev.plate_number,
+                is_mock=_is_mock_code(code or ev.camera_code),
             )
         )
     return out

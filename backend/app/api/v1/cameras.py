@@ -4,6 +4,7 @@ CRUD endpoints plus a PostGIS-backed GeoJSON FeatureCollection endpoint
 for map rendering (consumed by Isha/Vishakha's frontend).
 """
 import os
+import re
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, status
@@ -137,7 +138,13 @@ def _effective_status(camera: Camera) -> CameraStatus:
     return camera.status
 
 
-def _to_camera_read(camera: Camera, lon: float | None, lat: float | None) -> CameraRead:
+_MOCK_CODE_RE = re.compile(r"^mock[_-]?cam", re.IGNORECASE)
+
+
+def _to_camera_read(
+    camera: Camera, lon: float | None, lat: float | None,
+    last_detection_at=None,
+) -> CameraRead:
     return CameraRead(
         id=camera.id,
         code=camera.code,
@@ -151,6 +158,8 @@ def _to_camera_read(camera: Camera, lon: float | None, lat: float | None) -> Cam
         frame_drop_count=camera.frame_drop_count,
         reconnect_count=camera.reconnect_count,
         health_updated_at=camera.health_updated_at,
+        is_mock=bool(camera.code and _MOCK_CODE_RE.match(camera.code)),
+        last_detection_at=last_detection_at,
     )
 
 
@@ -162,9 +171,22 @@ def _camera_xy(db: Session, camera_id: str):
 
 @router.get("", response_model=list[CameraRead])
 def list_cameras(db: Session = Depends(get_db), _=Depends(get_current_user)):
-    stmt = select(Camera, ST_X(Camera.location), ST_Y(Camera.location))
-    rows = db.execute(stmt).all()
-    return [_to_camera_read(cam, lon, lat) for cam, lon, lat in rows]
+    from app.models.vehicle_event import VehicleEvent
+
+    rows = db.execute(
+        select(Camera, ST_X(Camera.location), ST_Y(Camera.location))
+    ).all()
+    # one bulk group-by for last-detection time (no N+1)
+    last_by_cam = dict(
+        db.execute(
+            select(VehicleEvent.camera_id, func.max(VehicleEvent.timestamp))
+            .group_by(VehicleEvent.camera_id)
+        ).all()
+    )
+    return [
+        _to_camera_read(cam, lon, lat, last_by_cam.get(cam.id))
+        for cam, lon, lat in rows
+    ]
 
 
 @router.get("/geojson", response_model=GeoJSONFeatureCollection)

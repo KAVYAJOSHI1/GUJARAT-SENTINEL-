@@ -105,6 +105,29 @@ export function normalizeSighting(raw) {
       pick(raw, ["confidence_score", "ocr_confidence", "confidence", "ocrConfidence"], NaN)
     ),
     vehicleType: pick(raw, ["vehicle_type", "vehicleType", "type"], null),
+    vehicleColor: pick(raw, ["vehicle_color", "vehicleColor"], null),
+    isMock: Boolean(pick(raw, ["is_mock", "isMock"], false)),
+    trackId: pick(raw, ["track_id", "trackId"], null),
+    kind: pick(raw, ["kind"], "CONFIRMED"),
+  };
+}
+
+// Phase 13 — INFERRED camera-to-camera transitions from the backend journey.
+export function normalizeTransition(raw) {
+  return {
+    fromCameraId: pick(raw, ["from_camera_id"], null),
+    fromCameraCode: pick(raw, ["from_camera_code"], null),
+    toCameraId: pick(raw, ["to_camera_id"], null),
+    toCameraCode: pick(raw, ["to_camera_code"], null),
+    fromTimestamp: pick(raw, ["from_timestamp"], null),
+    toTimestamp: pick(raw, ["to_timestamp"], null),
+    timeDiffSeconds: pick(raw, ["time_diff_seconds"], null),
+    distanceMeters: pick(raw, ["distance_meters"], null),
+    estimatedSpeedKmh: pick(raw, ["estimated_speed_kmh"], null),
+    kind: pick(raw, ["kind"], "INFERRED"),
+    confidenceLevel: pick(raw, ["confidence_level"], "MEDIUM"),
+    matchMethod: pick(raw, ["match_method"], null),
+    notes: pick(raw, ["notes"], []),
   };
 }
 
@@ -152,6 +175,10 @@ export function normalizeVehicleSearch(raw, fallbackPlate = "") {
     // a plottable trail needs >= 2 distinct geolocated cameras
     hasJourney: pick(journey, ["has_journey"], distinctGeoCameras >= 2),
     isSingleSighting: pick(journey, ["is_single_sighting"], sightings.length === 1),
+    // Phase 13: derived INFERRED transitions between consecutive cameras.
+    transitions: (Array.isArray(journey?.transitions) ? journey.transitions : []).map(normalizeTransition),
+    confirmedSightings: pick(journey, ["confirmed_sightings"], sightings.length),
+    inferredTransitions: pick(journey, ["inferred_transitions"], 0),
     // Backend puts the flag at the top level of the response.
     watchlistHit: Boolean(
       pick(raw, ["is_watchlisted"], false) ||

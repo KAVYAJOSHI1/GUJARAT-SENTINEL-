@@ -17,6 +17,7 @@ import MyWorkPage from "./pages/MyWorkPage.jsx";
 import ReportsPage from "./pages/ReportsPage.jsx";
 import CopilotPage from "./pages/CopilotPage.jsx";
 import AnomaliesPage from "./pages/AnomaliesPage.jsx";
+import CameraManagementPage from "./pages/CameraManagementPage.jsx";
 import InvestigationPage from "./pages/InvestigationPage.jsx";
 import MapPage from "./pages/MapPage.jsx";
 
@@ -28,6 +29,7 @@ export function AppRoutes() {
       <Route element={<AppLayout />}>
         <Route index element={<Dashboard />} />
         <Route path="cameras" element={<CamerasPage />} />
+        <Route path="cameras/manage" element={<CameraManagementPage />} />
         <Route path="alerts" element={<AlertsPage />} />
 
         {/* Operational layer — Incident Center + Investigation Cases
