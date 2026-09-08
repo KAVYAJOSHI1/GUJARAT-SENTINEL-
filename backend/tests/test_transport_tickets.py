@@ -62,8 +62,8 @@ def test_evidence_accepts_media_ticket_as_query_token(client, officer_user, make
     ev = make_vehicle_event(cam, plate="GJ01AB2222")  # no snapshot_url -> 404, but auth passes first
     ticket = media_ticket(client, token)
     r = client.get(f"/api/v1/vehicles/evidence/{ev.id}?token={ticket}")
-    # auth OK -> falls through to "no snapshot for this event" (404), not 401
-    assert r.status_code == 404
+    # auth OK -> falls through to the "no snapshot" placeholder (200), not 401
+    assert r.status_code == 200
 
 
 def test_evidence_still_accepts_bearer_header(client, officer_user, make_camera, make_vehicle_event):
@@ -71,7 +71,7 @@ def test_evidence_still_accepts_bearer_header(client, officer_user, make_camera,
     cam = make_camera(code="cam-ev-3")
     ev = make_vehicle_event(cam, plate="GJ01AB3333")
     r = client.get(f"/api/v1/vehicles/evidence/{ev.id}", headers=bearer(token))
-    assert r.status_code == 404  # auth passed; no snapshot
+    assert r.status_code == 200  # auth passed; no snapshot -> placeholder
 
 
 def test_ws_ticket_not_usable_for_media(client, officer_user, make_camera, make_vehicle_event):

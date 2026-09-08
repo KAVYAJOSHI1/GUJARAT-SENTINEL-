@@ -4,6 +4,8 @@ import { C } from "./theme.js";
 import Navbar from "./components/Navbar.jsx";
 import Footer from "./components/Footer.jsx";
 import ToastContainer from "./components/toast/ToastContainer.jsx";
+import CommandPalette from "./components/CommandPalette.jsx";
+import ShortcutHelp from "./components/ShortcutHelp.jsx";
 import { useSentinelData } from "./hooks/useSentinelData.js";
 
 // Route → browser tab title (Phase 13 UI consistency). Keeps the tab
@@ -68,6 +70,8 @@ export default function AppLayout() {
 
       <Footer backendLive={data.backendLive} />
       <ToastContainer />
+      <CommandPalette />
+      <ShortcutHelp />
     </div>
   );
 }

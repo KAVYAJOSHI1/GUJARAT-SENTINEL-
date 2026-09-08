@@ -52,7 +52,7 @@ class CameraStreamService:
 
     def _latest_detection(self, cam: Camera):
         return self.db.execute(
-            select(VehicleEvent.timestamp, VehicleEvent.snapshot_url)
+            select(VehicleEvent.id, VehicleEvent.timestamp, VehicleEvent.snapshot_url)
             .where(VehicleEvent.camera_id == cam.id)
             .order_by(desc(VehicleEvent.timestamp))
             .limit(1)
@@ -72,8 +72,9 @@ class CameraStreamService:
         low_fps = fps is not None and fps < settings.STREAM_LOW_FPS
 
         det = self._latest_detection(cam)
-        last_detection_at = det[0] if det else None
-        last_snapshot_url = det[1] if det and det[1] else None
+        last_event_id = det[0] if det else None
+        last_detection_at = det[1] if det else None
+        last_snapshot_url = det[2] if det and det[2] else None
 
         sources: list[dict] = []
         if cam.webrtc_url:
@@ -90,16 +91,16 @@ class CameraStreamService:
                 "realtime": False,
                 "label": "Recorded / simulated clip",
             })
-        if last_snapshot_url:
+        if last_event_id:
             fresh = (
                 last_detection_at is not None
                 and datetime.utcnow() - last_detection_at <= _SNAPSHOT_FRESH
             )
             sources.append({
                 "kind": "snapshot",
-                "url": f"{settings.API_V1_PREFIX}/vehicles/evidence?event_snapshot=1&camera_id={cam.id}",
+                "url": f"{settings.API_V1_PREFIX}/vehicles/evidence/{last_event_id}",
                 "realtime": False,
-                "label": "Latest evidence snapshot" + ("" if fresh else " (stale)"),
+                "label": "Latest detection frame" + ("" if fresh else " (stale)"),
             })
 
         has_realtime = any(s["realtime"] for s in sources)

@@ -18,8 +18,14 @@ class ConnectionManager:
         self._connections: set[WebSocket] = set()
         self._lock = asyncio.Lock()
 
-    async def connect(self, websocket: WebSocket) -> None:
-        await websocket.accept()
+    async def connect(self, websocket: WebSocket, *, subprotocol: str | None = None) -> None:
+        # Chromium fails the handshake when the client offered a subprotocol
+        # (`new WebSocket(url, [ticket])`) but the 101 response omits
+        # Sec-WebSocket-Protocol -- so echo back the exact value the client
+        # offered. The ticket was already consumed for auth and the client
+        # already holds it; echoing it in the response header leaks nothing
+        # new (it is a ~60s, purpose-scoped, single-use ticket).
+        await websocket.accept(subprotocol=subprotocol)
         async with self._lock:
             self._connections.add(websocket)
         logger.info("WS client connected; total=%d", len(self._connections))

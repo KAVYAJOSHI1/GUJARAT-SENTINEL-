@@ -94,11 +94,13 @@ async def websocket_alerts(websocket: WebSocket):
         await websocket.close(code=WS_POLICY_VIOLATION)
         return
 
-    # Deliberately accept with no negotiated subprotocol: the client's
-    # token was already consumed above for auth, and per RFC 6455 §4.2.2 a
-    # server may omit Sec-WebSocket-Protocol entirely, so the token is never
-    # echoed back in a response header either.
-    await connection_manager.connect(websocket)
+    # Echo back the exact subprotocol the client offered (the ticket).
+    # RFC 6455 §4.2.2 permits omitting it, but Chromium fails the handshake
+    # when the client offered one and the 101 response has none -- so the
+    # live dashboard socket never connected in Chrome. The ticket was
+    # already consumed for auth and the client already holds it.
+    offered = _extract_ticket(websocket)
+    await connection_manager.connect(websocket, subprotocol=offered)
     try:
         while True:
             # Dashboard clients don't need to send anything; keep the

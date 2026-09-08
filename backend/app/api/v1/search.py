@@ -292,7 +292,7 @@ def global_search(
             groups["VEHICLES"].append(GlobalHit(
                 kind="VEHICLE", id=p, label=p,
                 sublabel=f"{cnt} sighting(s) · last {last:%d %b %H:%M}",
-                href=f"/investigation?plate={p}",
+                href=f"/workspace?plate={p}",
             ))
 
     # cameras: code or name
@@ -354,7 +354,7 @@ def global_search(
                 kind="EVIDENCE", id=ev.id,
                 label=f"{ev.plate_number_normalized} @ {ev.camera_code or '?'}",
                 sublabel=f"{ev.timestamp:%d %b %H:%M}",
-                href=f"/investigation?plate={ev.plate_number_normalized}",
+                href=f"/workspace?plate={ev.plate_number_normalized}",
             ))
 
     total = sum(len(v) for v in groups.values())
