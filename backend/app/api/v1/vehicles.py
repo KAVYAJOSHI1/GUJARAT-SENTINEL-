@@ -51,7 +51,7 @@ EVIDENCE_ROOT = os.getenv(
 )
 
 
-def _build_journey_summary(sightings: list[VehicleSighting]) -> VehicleJourneySummary:
+def _build_journey_summary(sightings: list[VehicleSighting], db=None) -> VehicleJourneySummary:
     """All fields derived from the real sighting rows only. `sightings` is
     already chronological ascending."""
     if not sightings:
@@ -65,7 +65,7 @@ def _build_journey_summary(sightings: list[VehicleSighting]) -> VehicleJourneySu
     types = sorted({s.vehicle_type for s in sightings if s.vehicle_type})
     distinct_geo_cameras = len({s.camera_id for s in sightings if s.has_location})
 
-    transitions = _build_transitions(sightings)
+    transitions = _build_transitions(sightings, db)
     return VehicleJourneySummary(
         first_seen=first,
         last_seen=last,
@@ -81,11 +81,36 @@ def _build_journey_summary(sightings: list[VehicleSighting]) -> VehicleJourneySu
     )
 
 
-def _build_transitions(sightings: list[VehicleSighting]) -> list[JourneyTransition]:
+def _travel_band_str(band: dict) -> str:
+    lo, hi = band.get("typical_min_seconds"), band.get("typical_max_seconds")
+    if lo is None:
+        return "no travel-time baseline"
+    src = band.get("source")
+    n = band.get("sample_count") or 0
+    tag = f"historical, {n} sample(s)" if src == "historical" else src
+    return f"typical {round(lo/60)}–{round(hi/60)} min ({tag})"
+
+
+def _build_transitions(sightings: list[VehicleSighting], db=None) -> list[JourneyTransition]:
     """One INFERRED transition per consecutive pair of sightings at DIFFERENT
     cameras. Distance / speed only when both cameras are geolocated; never
     fabricated. Confidence drops as the time gap grows (more chance the
-    vehicle went elsewhere in between)."""
+    vehicle went elsewhere in between).
+
+    Phase 14 §3: when a db session is available, each transition is also
+    labelled PLAUSIBLE / FAST / SLOW / IMPOSSIBLE / UNKNOWN against the
+    historical (or distance-model) travel band for that camera pair. This
+    is a cheap stats lookup -- the full multi-signal correlation breakdown
+    lives on POST /ai/correlation/analyze."""
+    transition_svc = None
+    if db is not None:
+        try:
+            from app.services.ai.camera_transitions import CameraTransitionService
+
+            transition_svc = CameraTransitionService(db)
+        except Exception:  # noqa: BLE001
+            transition_svc = None
+
     out: list[JourneyTransition] = []
     for a, b in zip(sightings, sightings[1:]):
         if a.camera_id == b.camera_id:
@@ -121,6 +146,20 @@ def _build_transitions(sightings: list[VehicleSighting]) -> list[JourneyTransiti
             level = "LOW"
             notes.append(f"{dt // 60} min gap — the vehicle may have been elsewhere in between")
 
+        classification = None
+        band_str = None
+        if transition_svc is not None and dt > 0:
+            try:
+                cls = transition_svc.classify(a.camera_id, b.camera_id, dt)
+                classification = cls["classification"]
+                band_str = _travel_band_str(cls["expected"])
+                if classification == "IMPOSSIBLE":
+                    notes.append("travel time is implausibly short for this camera pair")
+                elif classification == "SLOW":
+                    notes.append("gap is longer than typical for this camera pair")
+            except Exception:  # noqa: BLE001 -- classification is best-effort
+                classification = None
+
         out.append(JourneyTransition(
             from_camera_id=a.camera_id, from_camera_code=a.camera_code,
             to_camera_id=b.camera_id, to_camera_code=b.camera_code,
@@ -128,6 +167,8 @@ def _build_transitions(sightings: list[VehicleSighting]) -> list[JourneyTransiti
             time_diff_seconds=max(0, dt),
             distance_meters=dist, estimated_speed_kmh=speed,
             confidence_level=level, notes=notes,
+            transition_classification=classification,
+            expected_travel_band=band_str,
         ))
     return out
 
@@ -198,7 +239,7 @@ def search_vehicle(
             )
         )
 
-    journey = _build_journey_summary(sightings)
+    journey = _build_journey_summary(sightings, db)
 
     is_watchlisted = (
         db.execute(

@@ -54,6 +54,11 @@ class JourneyTransition(BaseModel):
     confidence_level: str = "MEDIUM"     # HIGH | MEDIUM | LOW
     match_method: str = "consecutive exact-plate sightings; movement inferred, not observed"
     notes: List[str] = []
+    # Phase 14 §3: how the observed gap compares to the historical /
+    # distance-model travel band for this camera pair. One of
+    # PLAUSIBLE / FAST / SLOW / IMPOSSIBLE / UNKNOWN (None if not computed).
+    transition_classification: Optional[str] = None
+    expected_travel_band: Optional[str] = None
 
 
 class VehicleJourneySummary(BaseModel):

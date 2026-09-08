@@ -69,6 +69,7 @@ def _reset(db) -> None:
     from app.models.notification import Notification
     from app.models.vehicle_event import VehicleEvent
     from app.models.vehicle_embedding import VehicleEmbedding
+    from app.models.camera_transition_stat import CameraTransitionStat
 
     from app.models.case import CaseNote
     from app.models.incident import IncidentNote
@@ -112,6 +113,10 @@ def _reset(db) -> None:
         # 4. events + cameras + notifications + the marker
         delete(VehicleEmbedding).where(VehicleEmbedding.vehicle_event_id.in_(ei)),
         delete(VehicleEvent).where(VehicleEvent.id.in_(ei)),
+        delete(CameraTransitionStat).where(
+            CameraTransitionStat.from_camera_id.in_(ci)
+            | CameraTransitionStat.to_camera_id.in_(ci)
+        ),
         delete(Camera).where(Camera.id.in_(ci)),
         delete(Notification).where(Notification.resource == "anomaly"),
         delete(AuditLog).where(AuditLog.action == _MARKER),
@@ -285,6 +290,15 @@ def main() -> int:
             print(f"[seed_ai_demo] re-id backfill -> {bf['indexed']} embedding(s)")
         except Exception as exc:  # noqa: BLE001
             print(f"[seed_ai_demo] re-id backfill skipped ({exc})")
+
+        # --- Phase 14 §3: camera transition baselines from the demo events ---
+        try:
+            from app.services.ai.camera_transitions import CameraTransitionService
+
+            tr = CameraTransitionService(db).recompute()
+            print(f"[seed_ai_demo] camera-transition stats -> {tr['pairs_upserted']} pair(s)")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[seed_ai_demo] transition recompute skipped ({exc})")
 
         db.add(AuditLog(action=_MARKER, resource="ai_demo",
                         detail=f"cameras={len(cam_by_code)} journey_events={len(journey_events)} "

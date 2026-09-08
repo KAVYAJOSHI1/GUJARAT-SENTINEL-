@@ -124,6 +124,32 @@ async def _anomaly_scan_loop() -> None:
         await asyncio.sleep(interval_s)
 
 
+async def _camera_transition_recompute_loop() -> None:
+    """Phase 14 §3 -- periodically rebuild camera_transition_stats from
+    stored vehicle_events (a plain statistical aggregate, NOT ML). Bounded,
+    idempotent upsert. Off in the test suite."""
+    from app.database import SessionLocal
+    from app.services.ai.camera_transitions import CameraTransitionService
+
+    interval_s = max(300, settings.CAMERA_TRANSITION_RECOMPUTE_INTERVAL_S)
+    await asyncio.sleep(min(90, interval_s))
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                result = CameraTransitionService(db).recompute()
+                if result["pairs_upserted"]:
+                    logger.info(
+                        "camera transition recompute: %d pair(s) from %d event(s)",
+                        result["pairs_upserted"], result["events_scanned"],
+                    )
+            finally:
+                db.close()
+        except Exception:  # noqa: BLE001 -- a failed recompute must not kill the loop
+            logger.exception("camera transition recompute failed; retrying next interval")
+        await asyncio.sleep(interval_s)
+
+
 @contextlib.asynccontextmanager
 async def lifespan(_: FastAPI):
     tasks: list[asyncio.Task] = []
@@ -145,6 +171,12 @@ async def lifespan(_: FastAPI):
         logger.info(
             "AI anomaly scan enabled: every %ds (stopped-vehicle detector)",
             settings.AI_ANOMALY_SCAN_INTERVAL_S,
+        )
+    if settings.CAMERA_TRANSITION_RECOMPUTE_ENABLED:
+        tasks.append(asyncio.create_task(_camera_transition_recompute_loop()))
+        logger.info(
+            "camera transition recompute enabled: every %ds",
+            settings.CAMERA_TRANSITION_RECOMPUTE_INTERVAL_S,
         )
     try:
         yield
