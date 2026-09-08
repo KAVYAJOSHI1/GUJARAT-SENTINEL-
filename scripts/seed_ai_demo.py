@@ -285,14 +285,32 @@ def main() -> int:
                 camera_id=cam.id, camera_code="CAM-04", track_id=200 + i, timestamp=ts,
                 vehicle_type="car", vehicle_color=colour, confidence_score=0.81,
                 latitude=lat, longitude=lon, location=_pt(lat, lon)))
-        for i in range(4):
+        # unknown / unreadable plates at CAM-05 -- each with an explicit
+        # ANPR failure reason (Phase 15B), so the ANPR dashboard has a
+        # realistic failure mix instead of a flat 100%.
+        _reasons = ["LOW_RESOLUTION", "BLUR", "OCCLUDED", "OCR_DISAGREEMENT",
+                    "LOW_RESOLUTION", "BLUR"]
+        for i in range(6):
             cam = cam_by_code["CAM-05"]
-            ts = today0 + timedelta(hours=20, minutes=30 + i * 15)
+            ts = now - timedelta(hours=3, minutes=i * 20)
             _, _, lat, lon = _CAMERAS[4]
             db.add(VehicleEvent(
                 plate_number="UNKNOWN", plate_number_normalized="UNKNOWN",
                 camera_id=cam.id, camera_code="CAM-05", track_id=300 + i, timestamp=ts,
-                vehicle_type="truck", confidence_score=0.4,
+                vehicle_type="truck", confidence_score=0.31,
+                anpr_status="UNKNOWN", anpr_failure_reason=_reasons[i],
+                anpr_quality_score=round(0.25 + 0.05 * i, 2), plate_quality=0.45,
+                latitude=lat, longitude=lon, location=_pt(lat, lon)))
+        # a couple of low-confidence readable plates at CAM-03
+        for i in range(3):
+            cam = cam_by_code["CAM-03"]
+            _, _, lat, lon = _CAMERAS[2]
+            db.add(VehicleEvent(
+                plate_number=f"GJ27LC{4400+i}", plate_number_normalized=f"GJ27LC{4400+i}",
+                camera_id=cam.id, camera_code="CAM-03", track_id=350 + i,
+                timestamp=now - timedelta(hours=2, minutes=10 + i * 8),
+                vehicle_type="car", vehicle_color="grey", confidence_score=0.62,
+                anpr_status="OK", anpr_quality_score=0.58, plate_quality=0.6,
                 latitude=lat, longitude=lon, location=_pt(lat, lon)))
         db.commit()
 
@@ -347,6 +365,15 @@ def main() -> int:
                 vehicle_type="auto-rickshaw", vehicle_color="yellow", confidence_score=0.72,
                 latitude=la6 + (i - 2) * 0.0002, longitude=lo6 + (i - 2) * 0.0002,
                 location=_pt(la6 + (i - 2) * 0.0002, lo6 + (i - 2) * 0.0002)))
+        db.commit()
+
+        # --- Phase 15H §12: flag EVERYTHING seeded here as DEMO data so it
+        #     is never presented as a real/mock government feed ---
+        from sqlalchemy import update as _update
+        _cam_ids = [c.id for c in cam_by_code.values()]
+        db.execute(_update(Camera).where(Camera.id.in_(_cam_ids)).values(is_demo=True))
+        db.execute(_update(VehicleEvent).where(VehicleEvent.camera_id.in_(_cam_ids))
+                   .values(is_demo=True))
         db.commit()
 
         res = BehaviorAnalyticsService(db).scan()

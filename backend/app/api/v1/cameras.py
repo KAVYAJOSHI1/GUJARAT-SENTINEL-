@@ -39,6 +39,7 @@ from app.services.audit import record_audit
 from app.services.camera_health import record_transition_if_changed
 from app.services.camera_resolver import find_camera, upsert_camera_from_registry
 from app.services.camera_stream import CameraStreamService
+from app.services.feed_source import feed_source as _feed_source
 from app.models.camera_health_history import CameraHealthHistory
 
 router = APIRouter()
@@ -164,6 +165,8 @@ def _to_camera_read(
         reconnect_count=camera.reconnect_count,
         health_updated_at=camera.health_updated_at,
         is_mock=bool(camera.code and _MOCK_CODE_RE.match(camera.code)),
+        is_demo=bool(getattr(camera, "is_demo", False)),
+        feed_source=_feed_source(is_demo=getattr(camera, "is_demo", False), code=camera.code),
         last_detection_at=last_detection_at,
         permitted_direction_deg=camera.permitted_direction_deg,
         restricted_zones=camera.restricted_zones,

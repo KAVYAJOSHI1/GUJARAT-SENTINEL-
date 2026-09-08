@@ -43,6 +43,8 @@ class CameraStreamProfile(BaseModel):
     camera_name: Optional[str] = None
     location_desc: Optional[str] = None
     is_mock: bool
+    is_demo: bool = False
+    feed_source: str = "REAL"
     effective_status: str
     mode: str            # LIVE | DEGRADED | RECORDED | OFFLINE
     mode_reasons: list[str] = []
@@ -92,6 +94,9 @@ class CameraRead(BaseModel):
     health_updated_at: Optional[datetime] = None
     # Phase 13: REAL government camera vs a local MOCK/demo feed (code prefix).
     is_mock: bool = False
+    is_demo: bool = False
+    # Phase 15H §12: DEMO | MOCK | REAL -- derived, badged explicitly in the UI.
+    feed_source: str = "REAL"
     # timestamp of the most recent vehicle_event on this camera (list view only).
     last_detection_at: Optional[datetime] = None
     # Phase 14 §6: behaviour-analytics config.

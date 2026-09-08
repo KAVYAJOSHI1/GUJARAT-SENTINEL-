@@ -15,6 +15,7 @@ const TITLES = {
   "/cameras": "Camera Network",
   "/cameras/manage": "Camera Management",
   "/camera-intelligence": "Camera Reliability Intelligence",
+  "/anpr-intelligence": "ANPR Intelligence",
   "/alerts": "Alerts",
   "/anomalies": "AI Anomaly Detection",
   "/traffic": "Traffic Intelligence",

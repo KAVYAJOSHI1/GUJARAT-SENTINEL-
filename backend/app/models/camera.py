@@ -29,6 +29,11 @@ class Camera(TimestampMixin, table=True):
     # falls back to the mock clip / latest snapshot, clearly labelled).
     hls_url: Optional[str] = Field(default=None, nullable=True)
     webrtc_url: Optional[str] = Field(default=None, nullable=True)
+    # Phase 15H §12: seeded demo data, NOT a real or mock government feed.
+    # feed_source is derived: DEMO (is_demo) > MOCK (code ^mock[_-]?cam) >
+    # REAL. The UI badges each explicitly -- demo data is never shown as
+    # government CCTV.
+    is_demo: bool = Field(default=False, nullable=False, index=True)
     # Last-known status. For a camera actively reporting stream health (see
     # `health_updated_at` below), the API layer (cameras.py) overrides what it
     # SERVES with a freshness-checked "effective" status computed from these

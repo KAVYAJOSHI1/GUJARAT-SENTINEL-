@@ -136,9 +136,13 @@ export default function CameraPlayer({ cameraId, height = 260 }) {
           {profile.mode === "LIVE" && <span style={{ width: 6, height: 6, borderRadius: "50%", background: m.c }} />}
           {m.t}
         </span>
-        {profile.is_mock && (
-          <span style={{ background: "rgba(0,0,0,0.6)", color: C.violet, border: `1px solid ${C.violet}`, borderRadius: 3, padding: "2px 6px", fontSize: 8, fontWeight: 700 }}>
-            MOCK STREAM
+        {profile.feed_source && profile.feed_source !== "REAL" ? (
+          <span style={{ background: "rgba(0,0,0,0.6)", color: profile.feed_source === "DEMO" ? C.amber : C.violet, border: `1px solid ${profile.feed_source === "DEMO" ? C.amber : C.violet}`, borderRadius: 3, padding: "2px 6px", fontSize: 8, fontWeight: 700 }}>
+            {profile.feed_source === "DEMO" ? "DEMO DATA" : "MOCK STREAM"}
+          </span>
+        ) : (
+          <span style={{ background: "rgba(0,0,0,0.6)", color: C.green, border: `1px solid ${C.green}`, borderRadius: 3, padding: "2px 6px", fontSize: 8, fontWeight: 700 }}>
+            REAL FEED
           </span>
         )}
         {src && (
