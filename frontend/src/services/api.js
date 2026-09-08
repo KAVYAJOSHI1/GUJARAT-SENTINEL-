@@ -118,15 +118,22 @@ export async function login(username, password) {
   const token = data?.access_token || data?.token;
   if (!token) throw new Error("no token in login response");
   setToken(token);
+  try { localStorage.setItem("sentinel_username", data?.username || username || ""); } catch { /* ignore */ }
   // Warm the media-ticket cache so the first evidence <img> already has a
   // usable ?token=.
   ensureMediaTicket().catch(() => {});
   return token;
 }
 
+// The signed-in username (UI-only: matching "assigned to me" rows, greeting).
+export function currentUsername() {
+  try { return localStorage.getItem("sentinel_username") || null; } catch { return null; }
+}
+
 export function logout() {
   setToken("");
   clearMediaTicket();
+  try { localStorage.removeItem("sentinel_username"); } catch { /* ignore */ }
 }
 
 // Proxied evidence-image URL for one AI event, usable as <img src>.
