@@ -109,6 +109,11 @@ class AIPipeline:
         # Phase 15B: per-crop quality metrics + explicit ANPR failure reasons.
         from ai.anpr.quality import PlateQualityAssessor
         self.quality_assessor = PlateQualityAssessor()
+        # Phase 15C: character-level temporal fusion (refines the string-level
+        # consensus; bounded memory + TTL). Never overwrites a stable plate
+        # with a weak disagreeing frame.
+        from ai.anpr.plate_track_state import PlateTrackStore
+        self.plate_track_store = PlateTrackStore()
 
         # Bounded in-memory buffer for retry on API *unreachability* (5xx /
         # connection errors). 4xx responses are NOT buffered -- retrying a
@@ -125,6 +130,8 @@ class AIPipeline:
         self.saved_evidence_tracks: Dict[str, str] = {}
         # camera:track -> last plate string we emitted an event for (dedup)
         self._emitted_tracks: Dict[str, str] = {}
+        # Phase 15C: last character-level fusion result per track_key.
+        self._plate_track_meta: Dict[str, Dict[str, Any]] = {}
 
         # Performance & Benchmark Statistics
         self.stats = {
@@ -574,6 +581,29 @@ class AIPipeline:
                 final_plate = consensus_res["consensus_plate"]
                 final_conf = consensus_res["confidence"]
 
+                # Phase 15C: character-level temporal fusion refinement.
+                try:
+                    _pq = float((quality_obj.overall_score if quality_obj is not None else 0.0)
+                                or locator_res.get("confidence", 0.0))
+                    _st = self.plate_track_store.observe(
+                        camera_id, track_id, normalized_plate, ocr_conf,
+                        plate_quality=_pq, format_score=float(fmt_score),
+                    )
+                    _cl = _st.resolve()
+                    self._plate_track_meta[track_key] = _cl
+                    # Only override when the fusion layer is confidently stable
+                    # AND at least as confident as the string-level consensus
+                    # (this is where a one-char misread gets corrected).
+                    if (_cl["stable"] and _cl["plate"] != "UNKNOWN"
+                            and _cl["confidence"] >= max(final_conf, 0.75)):
+                        if _cl["plate"] != final_plate:
+                            logger.debug("plate-track fusion: %s -> %s (%s)",
+                                         final_plate, _cl["plate"], _cl["method"])
+                        final_plate = _cl["plate"]
+                        final_conf = float(_cl["confidence"])
+                except Exception:  # noqa: BLE001 -- fusion is best-effort
+                    pass
+
             # Determine whether a valid license plate was successfully recognized
             plate_detected = bool(final_plate != "UNKNOWN" and final_conf > 0.0)
 
@@ -655,7 +685,7 @@ class AIPipeline:
                     "frame_snapshot_path": snapshot_path,
                     "plate_crop_path": crop_path
                 },
-                # Phase 15B: ANPR quality + explicit failure reason.
+                # Phase 15B/15C: ANPR quality + failure reason + temporal fusion.
                 "anpr": {
                     "status": anpr_status,
                     "failure_reason": anpr_failure_reason,
@@ -663,6 +693,8 @@ class AIPipeline:
                     "quality": _q.to_dict() if hasattr(_q, "to_dict") else {},
                     "quality_score": _q.overall_score if hasattr(_q, "overall_score") else 0.0,
                     "ocr_confidence": round(float(final_conf), 4),
+                    "fusion_method": (self._plate_track_meta.get(track_key) or {}).get("method"),
+                    "char_confidence": (self._plate_track_meta.get(track_key) or {}).get("char_confidence", []),
                 },
             }
 
