@@ -10,6 +10,9 @@ import { useSentinelData } from "./hooks/useSentinelData.js";
 // meaningful as an officer moves around the command centre.
 const TITLES = {
   "/": "Command Center",
+  "/command-center": "Command Center",
+  "/dashboard": "Operations Dashboard",
+  "/live-monitoring": "Live Monitoring",
   "/copilot": "AI Investigation Copilot",
   "/my-work": "My Work",
   "/cameras": "Camera Network",

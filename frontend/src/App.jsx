@@ -3,6 +3,8 @@ import { ToastProvider } from "./context/ToastContext.jsx";
 import LoginGate from "./components/LoginGate.jsx";
 import AppLayout from "./AppLayout.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
+import CommandCenterPage from "./pages/CommandCenterPage.jsx";
+import LiveMonitoringPage from "./pages/LiveMonitoringPage.jsx";
 import CamerasPage from "./pages/CamerasPage.jsx";
 import AlertsPage from "./pages/AlertsPage.jsx";
 import IncidentsPage from "./pages/IncidentsPage.jsx";
@@ -32,7 +34,12 @@ export function AppRoutes() {
   return (
     <Routes>
       <Route element={<AppLayout />}>
-        <Route index element={<Dashboard />} />
+        {/* Phase 16 — Command Center is the primary landing page.
+            The Phase 10 dashboard stays reachable at /dashboard. */}
+        <Route index element={<CommandCenterPage />} />
+        <Route path="command-center" element={<CommandCenterPage />} />
+        <Route path="dashboard" element={<Dashboard />} />
+        <Route path="live-monitoring" element={<LiveMonitoringPage />} />
         <Route path="cameras" element={<CamerasPage />} />
         <Route path="cameras/manage" element={<CameraManagementPage />} />
         <Route path="alerts" element={<AlertsPage />} />

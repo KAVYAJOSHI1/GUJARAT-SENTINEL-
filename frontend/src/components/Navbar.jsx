@@ -9,7 +9,8 @@ import ConnectionIndicator from "./ui/ConnectionIndicator.jsx";
 import { useToast } from "../context/ToastContext.jsx";
 
 const TABS = [
-  { to: "/", label: "Overview", end: true },
+  { to: "/", label: "Command", end: true },
+  { to: "/live-monitoring", label: "Live" },
   { to: "/copilot", label: "Copilot" },
   { to: "/workspace", label: "Workspace" },
   { to: "/my-work", label: "My Work" },
