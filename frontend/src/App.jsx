@@ -21,6 +21,7 @@ import CameraManagementPage from "./pages/CameraManagementPage.jsx";
 import TrafficIntelligencePage from "./pages/TrafficIntelligencePage.jsx";
 import CameraIntelligencePage from "./pages/CameraIntelligencePage.jsx";
 import InvestigationGraphPage from "./pages/InvestigationGraphPage.jsx";
+import LiveInvestigationWorkspace from "./pages/LiveInvestigationWorkspace.jsx";
 import InvestigationPage from "./pages/InvestigationPage.jsx";
 import MapPage from "./pages/MapPage.jsx";
 
@@ -56,6 +57,7 @@ export function AppRoutes() {
         <Route path="traffic" element={<TrafficIntelligencePage />} />
         <Route path="camera-intelligence" element={<CameraIntelligencePage />} />
         <Route path="graph" element={<InvestigationGraphPage />} />
+        <Route path="workspace" element={<LiveInvestigationWorkspace />} />
 
         <Route path="system" element={<SystemPage />} />
         <Route path="admin" element={<AdminPage />} />

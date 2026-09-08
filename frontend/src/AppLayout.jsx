@@ -28,6 +28,7 @@ const TITLES = {
   "/admin": "Activity / Audit Log",
   "/investigation": "Vehicle Investigation",
   "/graph": "Investigation Graph",
+  "/workspace": "Investigation Workspace",
 };
 
 function titleFor(pathname) {

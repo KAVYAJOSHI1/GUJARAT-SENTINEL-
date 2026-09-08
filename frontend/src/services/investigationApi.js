@@ -218,6 +218,14 @@ export async function searchVehicle(plate, { from, to } = {}) {
   return { ...res, data: normalizeVehicleSearch(res.data || {}, normalized) };
 }
 
+// Phase 15D — consolidated vehicle profile for the investigation workspace.
+export async function fetchVehicleProfile(plate) {
+  const { data } = await http.get("/vehicles/profile", {
+    params: { plate: normalizePlate(plate) },
+  });
+  return data;
+}
+
 export async function fetchEvidence(eventId) {
   // The evidence endpoint serves a snapshot file (DEVELOPER_README §8). We only
   // need a resolvable URL; the modal handles load errors with a placeholder.

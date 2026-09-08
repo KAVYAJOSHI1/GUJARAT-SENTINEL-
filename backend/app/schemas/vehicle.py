@@ -89,3 +89,48 @@ class VehicleHistoryResponse(BaseModel):
     is_watchlisted: bool
     sightings: list[VehicleSighting]
     journey: VehicleJourneySummary = VehicleJourneySummary()
+
+
+class CameraSeen(BaseModel):
+    camera_id: str
+    camera_code: Optional[str] = None
+    camera_name: Optional[str] = None
+    location_desc: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    sightings: int
+    first_seen: datetime
+    last_seen: datetime
+
+
+class RelatedRecord(BaseModel):
+    kind: str            # ALERT | INCIDENT | CASE
+    id: str
+    label: str
+    status: Optional[str] = None
+    href: str
+
+
+class VehicleProfile(BaseModel):
+    """Phase 15D -- the consolidated view opened from a search result.
+    Everything derived live from persisted rows."""
+    plate: str
+    total_sightings: int
+    first_seen: Optional[datetime] = None
+    last_seen: Optional[datetime] = None
+    distinct_cameras: int = 0
+    geolocated_sightings: int = 0
+    vehicle_types: List[str] = []
+    vehicle_colors: List[str] = []
+    is_watchlisted: bool = False
+    watchlist_category: Optional[str] = None
+    cameras: List[CameraSeen] = []
+    journey: VehicleJourneySummary = VehicleJourneySummary()
+    # ANPR quality breakdown for this plate's sightings
+    anpr_readable: int = 0
+    anpr_unknown: int = 0
+    anpr_failure_reasons: dict = {}
+    # relationship counts + refs
+    counts: dict = {}
+    related: List[RelatedRecord] = []
+    visual_match_count: int = 0
