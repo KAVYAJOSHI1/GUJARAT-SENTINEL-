@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "axios": "^1.7.9",
+    "hls.js": "^1.7.2",
     "jspdf": "^2.5.2",
     "leaflet": "^1.9.4",
     "leaflet-polylinedecorator": "^1.6.0",

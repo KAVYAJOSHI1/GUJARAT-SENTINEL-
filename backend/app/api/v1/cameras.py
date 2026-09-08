@@ -22,6 +22,7 @@ from app.models.camera import Camera
 from app.schemas.camera import (
     CameraCreate,
     CameraBehaviorConfig,
+    CameraStreamProfile,
     CameraUpdate,
     CameraHealthEntry,
     CameraHealthPush,
@@ -37,6 +38,7 @@ from app.schemas.camera_health import CameraHealthHistoryResponse, CameraHealthH
 from app.services.audit import record_audit
 from app.services.camera_health import record_transition_if_changed
 from app.services.camera_resolver import find_camera, upsert_camera_from_registry
+from app.services.camera_stream import CameraStreamService
 from app.models.camera_health_history import CameraHealthHistory
 
 router = APIRouter()
@@ -151,6 +153,8 @@ def _to_camera_read(
         code=camera.code,
         name=camera.name,
         rtsp_url=camera.rtsp_url,
+        hls_url=camera.hls_url,
+        webrtc_url=camera.webrtc_url,
         location_desc=camera.location_desc,
         status=_effective_status(camera),
         latitude=lat,
@@ -320,6 +324,21 @@ def get_mock_camera_video(
     return FileResponse(path, media_type=media_type)
 
 
+@router.get("/{camera_id}/stream", response_model=CameraStreamProfile)
+def camera_stream_profile(
+    camera_id: str,
+    db: Session = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    """Phase 15A -- the ordered browser-playable sources for one camera plus
+    an honest playback mode (LIVE / DEGRADED / RECORDED / OFFLINE). A
+    snapshot is never presented as a live feed."""
+    camera = find_camera(db, camera_id)
+    if camera is None:
+        raise NotFoundError("Camera", camera_id)
+    return CameraStreamProfile(**CameraStreamService(db).profile(camera))
+
+
 @router.get("/{camera_id}/health/history", response_model=CameraHealthHistoryResponse)
 def camera_health_history(
     camera_id: str,
@@ -377,6 +396,8 @@ def create_camera(
         name=payload.name,
         code=payload.code,
         rtsp_url=payload.rtsp_url,
+        hls_url=payload.hls_url,
+        webrtc_url=payload.webrtc_url,
         location_desc=payload.location_desc,
         status=payload.status,
         location=f"SRID=4326;POINT({payload.longitude} {payload.latitude})",
@@ -402,7 +423,7 @@ def update_camera(
     if camera is None:
         raise NotFoundError("Camera", camera_id)
 
-    for field in ("name", "rtsp_url", "location_desc", "status"):
+    for field in ("name", "rtsp_url", "hls_url", "webrtc_url", "location_desc", "status"):
         value = getattr(payload, field)
         if value is not None:
             setattr(camera, field, value)

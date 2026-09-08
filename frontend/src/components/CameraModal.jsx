@@ -4,6 +4,7 @@ import { Activity, Camera, MapPinned, Radio, Send, X } from "lucide-react";
 import { C } from "../theme.js";
 import { cameraHealthHistory } from "../services/opsApi.js";
 import { fmtDateTime } from "../utils/datetime.js";
+import CameraPlayer from "./camera/CameraPlayer.jsx";
 
 // Camera details modal (README §4.6) — stream resolution, FPS, protocol
 // (RTSP / WebRTC) and location. Also the hand-off point into Vishakha's GIS
@@ -30,11 +31,13 @@ export default function CameraModal({ cam, onClose }) {
 
   const rtsp = cam.streamUrl || `rtsp://sentinel.guj/${cam.id.toLowerCase()}/live`;
   const meta = [
-    ["Zone", cam.zone],
+    ["Code", cam.code || cam.id],
     ["Status", String(cam.status).toUpperCase()],
-    ["Protocol", cam.protocol || "RTSP"],
-    ["Resolution", cam.resolution || "—"],
+    ["Location", cam.locationDesc || cam.zone || "—"],
     ["FPS", cam.fps ?? "—"],
+    ["Last frame", cam.healthUpdatedAt ? fmtDateTime(cam.healthUpdatedAt) : "no telemetry"],
+    ["Last detection", cam.lastDetectionAt ? fmtDateTime(cam.lastDetectionAt) : "—"],
+    ["AI status", cam.lastDetectionAt ? "PROCESSING" : "NO DATA"],
     ["Lat / Lng", cam.lat != null && cam.lng != null ? `${cam.lat}, ${cam.lng}` : "—"],
   ];
 
@@ -81,27 +84,13 @@ export default function CameraModal({ cam, onClose }) {
           </button>
         </div>
 
-        <div
-          style={{
-            background: "#000",
-            borderRadius: 4,
-            height: 160,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            position: "relative",
-            overflow: "hidden",
-          }}
-        >
-          <div style={{ position: "absolute", inset: 0, background: "linear-gradient(135deg, #071420, #0A1E32)" }} />
-          <div style={{ position: "relative", textAlign: "center" }}>
-            <Radio size={26} color={C.feedText} />
-            <div style={{ color: C.feedMuted, fontSize: 11, marginTop: 6 }}>
-              {cam.protocol === "WebRTC" ? "WebRTC" : "RTSP"} stream renders here in production
-            </div>
-            <div style={{ color: C.feedText, fontSize: 10, fontFamily: "monospace", marginTop: 4 }}>{rtsp}</div>
+        {(cam.uuid || cam.id) ? (
+          <CameraPlayer cameraId={cam.uuid || cam.id} height={200} />
+        ) : (
+          <div style={{ background: "#000", borderRadius: 4, height: 160, display: "flex", alignItems: "center", justifyContent: "center", color: C.muted, fontSize: 11 }}>
+            No camera id
           </div>
-        </div>
+        )}
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginTop: 12 }}>
           {meta.map(([k, v]) => (
