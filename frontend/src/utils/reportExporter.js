@@ -139,3 +139,81 @@ export function exportVehicleReportCSV(result) {
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
+
+// ─── Generic CSV → PDF (Phase 13 §8) ────────────────────────────────────────
+// Renders a downloaded report CSV as a simple paginated PDF table. Pure
+// client-side (jsPDF, already a dependency). CSV remains the primary format.
+function parseCsv(text) {
+  const rows = [];
+  let row = [], cur = "", q = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text[i];
+    if (q) {
+      if (c === '"' && text[i + 1] === '"') { cur += '"'; i += 1; }
+      else if (c === '"') q = false;
+      else cur += c;
+    } else if (c === '"') q = true;
+    else if (c === ",") { row.push(cur); cur = ""; }
+    else if (c === "\n" || c === "\r") {
+      if (c === "\r" && text[i + 1] === "\n") i += 1;
+      row.push(cur); rows.push(row); row = []; cur = "";
+    } else cur += c;
+  }
+  if (cur !== "" || row.length) { row.push(cur); rows.push(row); }
+  return rows.filter((r) => r.some((c) => c !== ""));
+}
+
+export function exportCsvTextToPDF(title, csvText) {
+  const rows = parseCsv(csvText);
+  if (!rows.length) return;
+  const doc = new jsPDF({ unit: "pt", format: "a4", orientation: "landscape" });
+  const pageW = doc.internal.pageSize.getWidth();
+  const pageH = doc.internal.pageSize.getHeight();
+  const margin = 36;
+  let y = margin;
+
+  doc.setFillColor(18, 22, 28);
+  doc.rect(0, 0, pageW, 54, "F");
+  doc.setTextColor(230, 234, 238);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(14);
+  doc.text(`SENTINEL — ${title}`, margin, 26);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8);
+  doc.setTextColor(150, 160, 175);
+  doc.text(
+    `Gujarat Police · generated ${new Date().toLocaleString("en-IN", { hour12: false })} · ${rows.length - 1} row(s)`,
+    margin, 42,
+  );
+  y = 74;
+
+  const header = rows[0];
+  const cols = header.length;
+  const colW = (pageW - margin * 2) / cols;
+
+  const drawRow = (cells, bold) => {
+    if (y > pageH - margin) { doc.addPage(); y = margin; }
+    doc.setFont("helvetica", bold ? "bold" : "normal");
+    doc.setFontSize(bold ? 8 : 7.5);
+    doc.setTextColor(bold ? 40 : 70, bold ? 40 : 70, bold ? 40 : 70);
+    cells.forEach((c, i) => {
+      const s = String(c ?? "");
+      const clipped = s.length > 26 ? `${s.slice(0, 24)}…` : s;
+      doc.text(clipped, margin + i * colW, y);
+    });
+    y += bold ? 15 : 12;
+    if (bold) { doc.setDrawColor(200); doc.line(margin, y - 8, pageW - margin, y - 8); }
+  };
+
+  drawRow(header, true);
+  rows.slice(1).forEach((r) => drawRow(r, false));
+
+  const pages = doc.getNumberOfPages();
+  for (let p = 1; p <= pages; p += 1) {
+    doc.setPage(p);
+    doc.setFontSize(7);
+    doc.setTextColor(150);
+    doc.text(`SENTINEL confidential · Page ${p} of ${pages}`, margin, pageH - 18);
+  }
+  doc.save(`${title.replace(/\s+/g, "_")}.pdf`);
+}

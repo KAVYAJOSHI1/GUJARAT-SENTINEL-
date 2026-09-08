@@ -10,6 +10,23 @@
 > Migration `0006` (8 new tables, additive only). Backend + demo-flow tests
 > added and passing. See §A rows tagged *(2026-09-08)* and §I.
 >
+> **2026-09-08 — Phase 13: hackathon readiness & polish.** No new major
+> feature and no migration. **Journey Intelligence** — the vehicle journey
+> now returns explicit CONFIRMED (observed) sightings chained by INFERRED
+> camera-to-camera transitions carrying time gap, and — only when both
+> cameras are geolocated — great-circle distance and a plausibility-checked
+> estimated speed (never fabricated). A lightweight **Camera Management
+> console** (`/cameras/manage`) — table over the existing `/cameras` data
+> with REAL/MOCK, effective health, last heartbeat and last detection; no
+> credential handling. `/cameras` + `/vehicles/search` now expose `is_mock`
+> (naming-convention derived) and `last_detection_at`. NL-search interpreted
+> filters shown as human chips; Reports gained a client-side **PDF** option
+> (CSV unchanged); command-center **AI Anomalies** KPI; per-route browser
+> tab titles; `./scripts/reset_demo.sh` one-command demo reset. New docs:
+> `docs/HACKATHON_DEMO_RUNBOOK.md` (2-minute script), `HACKATHON_ARCHITECTURE.md`,
+> `GOVERNMENT_FEED_READINESS.md`, `SCALE_TO_80000.md`. See §A rows tagged
+> *(Phase 13)* and §L.
+>
 > **2026-09-08 — Phase 12: AI intelligence layer.** Added an
 > **Investigation Copilot** (natural-language questions → deterministic
 > parse → validated tools → grounded answer), **natural-language CCTV
@@ -38,7 +55,9 @@ where something has not been demonstrated it is marked as such. Companion docs:
 [`DEMO_RUNBOOK.md`](DEMO_RUNBOOK.md) (how to reproduce the demo),
 [`SUBMISSION_REQUIREMENTS.md`](SUBMISSION_REQUIREMENTS.md) (requirement status),
 [`SENTINEL_System_Audit_Report.md`](SENTINEL_System_Audit_Report.md) (full engineering audit),
-[`SCALABILITY.md`](SCALABILITY.md) (measured load ladder + roadmap).
+[`SCALABILITY.md`](SCALABILITY.md) (measured load ladder + roadmap),
+[`docs/HACKATHON_DEMO_RUNBOOK.md`](docs/HACKATHON_DEMO_RUNBOOK.md) (2-minute demo script),
+[`docs/GOVERNMENT_FEED_READINESS.md`](docs/GOVERNMENT_FEED_READINESS.md) (feed-return checklist).
 
 Legend: **Implemented** = code exists and is wired · **Verified** = exercised
 this pass with the result recorded in §F · **Partial** = works with a stated
@@ -88,7 +107,10 @@ Everything in this section was exercised on 2026-09-05 (commands and results in 
 | **AI incident / case summary** *(Phase 12)* | Verified | `POST /api/v1/ai/{incidents\|cases}/{id}/summary` — deterministic structured summary from existing rows (incident/case, linked alert, notes, evidence, the vehicle's sightings) + investigation gaps. Labelled "AI-GENERATED SUMMARY"; missing data → "Not available in recorded evidence." Audited. |
 | **Stopped-vehicle anomaly detection** *(Phase 12)* | Verified | `BehaviorAnalyticsService.scan_stopped_vehicles` — one grouped aggregate over stored ByteTrack `vehicle_events` (never video). Threshold-configurable. Each hit → `anomaly_events` row **+ an `Alert(source=ANOMALY)`** that flows through the existing acknowledge/assign/escalate/promote workflow, **+ notification**, **+ WS frame**. Idempotent (unique `(camera,track,first_seen)`). Periodic in-process scan + `POST /ai/anomalies/scan` (ADMIN/OFFICER). Tests: `test_ai_behavior.py` (4). |
 | **AI offline demo** *(Phase 12)* | Verified | `scripts/seed_ai_demo.py` (compose `SEED_AI_DEMO=1`) seeds 8 cameras + a GJ18TC0450 journey + watchlist alert + `INC-<yr>-9001` + `CASE-<yr>-9001` + a stopped-vehicle track, then runs the real detector — all via production code paths. The full AI layer works with government CCTV disconnected and no LLM key (deterministic provider). Verified end-to-end on a fresh `docker compose up`. |
-| **Test suites** | Verified | Backend **187 passed** (157 prior + 30 Phase 12); AI/ingestion 143 passed, 8 skipped. Counts in §F. |
+| **Test suites** | Verified | Backend **191 passed** (187 prior + 4 Phase 13 `test_phase13_polish.py`); AI/ingestion 143 passed, 8 skipped. Counts in §F. |
+| **Journey Intelligence** *(Phase 13)* | Verified | `/api/v1/vehicles/search` journey now returns `transitions[]` — one INFERRED move per consecutive pair of sightings at different cameras, with `time_diff_seconds`, and `distance_meters` + `estimated_speed_kmh` **only** when both cameras are geolocated. Speed dropped when < 50 m apart, ≤ 0 s, or > 200 km/h (note explains why). `confidence_level` HIGH/MEDIUM/LOW by time gap + geolocation. Sightings carry `kind="CONFIRMED"`, `vehicle_color`, `is_mock`. Derived on read; no schema change. `haversine_m` shared via `app/services/geo.py`. Tests: `test_phase13_polish.py` (4). |
+| **Camera Management console** *(Phase 13)* | Verified | `/cameras/manage` — table over the existing `/cameras` payload: search, REAL/MOCK + status filters, effective health, last heartbeat, `last_detection_at` (one bulk group-by, no N+1), coords, FPS; row → the existing camera modal. Read-only; no RTSP/credential surface. `CameraRead` gained `is_mock` + `last_detection_at`. |
+| **Demo reset / polish** *(Phase 13)* | Verified | `./scripts/reset_demo.sh` (in-place, demo rows only) / `--full` (teardown+rebuild). `seed_ai_demo.py --reset` deletes only demo rows in FK-safe order — verified idempotent. NL-search filter chips, Reports PDF (client-side jsPDF; CSV primary/unchanged), AI-Anomalies KPI, per-route tab titles. |
 
 ---
 
@@ -175,13 +197,15 @@ Explicitly **not built** — target design only (see `SCALABILITY.md`, which is 
 
 | Suite | Command | Result |
 | :--- | :--- | :--- |
-| Backend | `cd backend && DATABASE_URL=…/sentinel_test pytest -q` | **187 passed** (~119 s) — 157 prior + 30 Phase 12 (`test_ai_nlq` 8, `test_ai_copilot` 7, `test_ai_behavior` 4, `test_ai_search_and_summary` 6, `test_ai_api` 5) |
+| Backend | `cd backend && DATABASE_URL=…/sentinel_test pytest -q` | **191 passed** (~103 s) — 187 prior + 4 Phase 13 (`test_phase13_polish` 4: confirmed-vs-inferred transitions, implausible-speed suppression, camera `is_mock`/`last_detection_at`, single-sighting → no transitions) |
 | Migration round-trip | `alembic upgrade head` on empty DB, then `downgrade 0006` → `upgrade head` | **OK** — `0001…0008` up/down/up clean. `alembic check` warns about the intentional mutual `alerts ↔ anomaly_events` FK cycle (SQLAlchemy sort limitation; runtime-safe — the migration creates `anomaly_events` first). Only pre-existing SQLModel-vs-migration index-naming noise otherwise. |
 | Fresh Docker + Phase 12 acceptance | `docker compose down -v && SEED_AI_DEMO=1 up -d --build`; drive the API | **PASS (22/22)** — AI status = deterministic/offline; Copilot "where was GJ18TC0450 seen" → 5 grounded results + timeline + map + related alert + `AI MATCH: HIGH`; no-hallucination (result ids ⊆ real ids); journey; last-6-hours window; empty → "not available in recorded evidence"; NL search → filters + results; incident + case AI summary; seeded stopped-vehicle anomaly + its ANOMALY alert in the feed; re-scan idempotent; RBAC 401; `AI_*` audit rows. |
 | Fresh Docker + Phase 10/11 regression | same stack | **PASS** — the full GJ18TC0450 demo acceptance flow (detect→alert→ack→incident→assign→trace→evidence→case→report→resolve→close→audit) + all Phase 11 smokes still green. |
-| AI / ingestion | `.venv/bin/python -m pytest tests/ -q` | **143 passed, 8 skipped** (~50 s) — unchanged (no `ai/` or ingestion file touched). |
-| Real cam04 / cam06 smoke | (Phase 11 run — not re-run) | RTSP auth OK, both ONLINE, YOLO+ByteTrack, plates `UNKNOWN`. Phase 12 changes nothing in ingestion/RTSP/ANPR. |
-| Frontend build | `cd frontend && npm run build` | **OK** — 2118 modules, `dist/` built. Dockerised dev-server transforms all new AI modules (0 errors); `/copilot`, `/anomalies` and every existing route serve; `/api/v1/ai/*` proxy works. **Not** a rendered browser click-test (Chrome extension unavailable). |
+| AI / ingestion | `PYTHONPATH=backend:. .venv/bin/pytest tests/ -q` | **143 passed, 8 skipped** (~39 s) — unchanged (`behavior.py` only swaps its local haversine for the shared `app/services/geo.py`; no `ai/` or ingestion file touched). |
+| Fresh Docker + Phase 13 acceptance | `./scripts/reset_demo.sh --full`; drive the API on `:8001` | **PASS (16/16)** — login; `/vehicles/search?plate=GJ18TC0450` → 5 CONFIRMED sightings (colour + `is_mock=false`) + 4 INFERRED transitions with distance > 0, plausible speed, HIGH/MEDIUM/LOW confidence; `/cameras` → `is_mock` + `last_detection_at`; reports CSV still 200; Copilot grounded (5 results, HIGH/MEDIUM); NL search → `vehicle_color=white` + `time_from=21:00`; anomaly present; `/ai/*` needs auth (401); `AI_INVESTIGATION`/`AI_SEARCH`/`VEHICLE_SEARCH` audit rows. |
+| Fresh Docker + Phase 10/11/12 regression | same stack (`smoke.py`, `p11smoke.py`, `p12smoke.py`) | **PASS** — full GJ18TC0450 demo acceptance flow + all Phase 11 smokes + all 21 Phase 12 checks green on pristine demo data. (The p10/p11 smokes ingest extra GJ18TC0450 sightings, so re-run `./scripts/reset_demo.sh` before a demo.) |
+| Real cam04 / cam06 smoke | (Phase 11 run — not re-run) | RTSP auth OK, both ONLINE, YOLO+ByteTrack, plates `UNKNOWN`. Phase 13 changes nothing in ingestion/RTSP/ANPR. |
+| Frontend build | `docker compose exec frontend npm run build` | **OK** — 2120 modules, `dist/` built. Dockerised dev-server transforms `CameraManagementPage.jsx`, `JourneyIntelligence.jsx`, updated `SearchPage.jsx` (0 errors); `/cameras/manage` + every existing route serve 200. **Not** a rendered browser click-test (Chrome extension unavailable). |
 
 ### Fresh-volume Docker
 
@@ -462,3 +486,72 @@ no mock fallback.
 ### Not done this phase
 
 See §D "Phase 12 (AI) — deliberately out of scope / deferred".
+
+---
+
+## L. PHASE 13 — HACKATHON READINESS & POLISH (2026-09-08)
+
+Polish pass. **No new major feature, no migration, no change to ANPR /
+RTSP ingestion / worker strategy / watchlist→alert / security.** All new
+values are derived on read from existing rows.
+
+### Journey Intelligence (`app/api/v1/vehicles.py`, `schemas/vehicle.py`)
+
+- `VehicleJourneySummary.transitions[]` — one `JourneyTransition` per
+  consecutive pair of sightings **at different cameras**:
+  `time_diff_seconds`; `distance_meters` (great-circle) and
+  `estimated_speed_kmh` **only when both cameras have coordinates**.
+- Speed is suppressed (with a human-readable note) when cameras are
+  < 50 m apart, timestamps are non-increasing, or the implied speed is
+  > 200 km/h (plate misread / clock skew).
+- `confidence_level` — HIGH (≤ 20 min + geolocated), MEDIUM (≤ 60 min),
+  LOW (> 60 min or bad timestamps).
+- Sightings now carry `kind="CONFIRMED"`, `vehicle_color`, `is_mock`.
+- `kind` is `CONFIRMED` for sightings, `INFERRED` for transitions — a
+  transition is never presented as observed fact.
+- `haversine_m` extracted to `app/services/geo.py` (shared with the
+  anomaly detector, which previously had its own copy).
+
+### Camera Management (`app/api/v1/cameras.py`, `schemas/camera.py`)
+
+- `CameraRead` gained `is_mock` (`^mock[_-]?cam` naming convention, never
+  a schema flag — a real government feed cannot be mislabelled) and
+  `last_detection_at`.
+- `GET /cameras` computes `last_detection_at` for all cameras in **one**
+  `GROUP BY` aggregate (no N+1).
+- Frontend `/cameras/manage` — table console: search, REAL/MOCK + status
+  filters, effective health, last heartbeat, last detection, coords, FPS;
+  row → the existing `CameraModal`. Linked from the Camera Network header.
+  No credential / device-management surface.
+
+### Other polish
+
+- **NL search** — interpreted filters rendered as human chips
+  (`Colour: WHITE`, `Type: CAR`, `Time: after 21:00`, `Dwell ≥ N min`).
+- **Reports** — client-side **PDF** export (jsPDF, already a dependency)
+  alongside CSV. CSV is unchanged and remains primary.
+- **Command centre** — `AI Anomalies` KPI card (NEW-status count).
+- **UX** — per-route browser tab titles (`AppLayout.jsx`).
+- **Demo reset** — `./scripts/reset_demo.sh` (in-place, demo rows only,
+  FK-safe, idempotent) / `--full` (teardown + rebuild). Backed by
+  `seed_ai_demo.py --reset`.
+
+### Docs added
+
+`docs/HACKATHON_DEMO_RUNBOOK.md` (2-minute click-by-click script + API-only
+demo + troubleshooting), `docs/HACKATHON_ARCHITECTURE.md`,
+`docs/GOVERNMENT_FEED_READINESS.md` (field-by-field live-event → column
+map; the feed path is unchanged and needs only availability),
+`docs/SCALE_TO_80000.md`.
+
+### Government feed
+
+Unchanged and verified ready — see `docs/GOVERNMENT_FEED_READINESS.md`.
+No modification to government CCTV connectivity was made (feeds currently
+unavailable). Journey distance/speed and camera `is_mock` all populate
+automatically from the live pipeline's existing payload fields.
+
+### Not done this phase
+
+GIS layer-toggle panel, journey-replay scrubber, analytics charts page
+(aggregates already available as CSV/endpoints) — deferred, listed in §D.

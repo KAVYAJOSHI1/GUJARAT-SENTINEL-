@@ -45,6 +45,10 @@ class CameraRead(BaseModel):
     frame_drop_count: Optional[int] = None
     reconnect_count: Optional[int] = None
     health_updated_at: Optional[datetime] = None
+    # Phase 13: REAL government camera vs a local MOCK/demo feed (code prefix).
+    is_mock: bool = False
+    # timestamp of the most recent vehicle_event on this camera (list view only).
+    last_detection_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True

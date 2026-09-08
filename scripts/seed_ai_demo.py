@@ -55,8 +55,74 @@ def _pt(lat, lon):
     return f"SRID=4326;POINT({lon} {lat})"
 
 
+def _reset(db) -> None:
+    """Delete only the AI-demo rows (by known camera codes / refs), keeping
+    any real data + the GJ18TC0450 watchlist entry. Then the caller re-seeds."""
+    from sqlalchemy import delete, select, update
+
+    from app.models.alert import Alert
+    from app.models.anomaly_event import AnomalyEvent
+    from app.models.audit_log import AuditLog
+    from app.models.camera import Camera
+    from app.models.case import Case, CaseEvidence, CaseIncident
+    from app.models.incident import Incident, IncidentEvidence
+    from app.models.notification import Notification
+    from app.models.vehicle_event import VehicleEvent
+
+    from app.models.case import CaseNote
+    from app.models.incident import IncidentNote
+
+    codes = [c[0] for c in _CAMERAS]
+    NIL = ["-"]
+    cam_ids = [r for (r,) in db.execute(select(Camera.id).where(Camera.code.in_(codes))).all()]
+    ev_ids = [r for (r,) in db.execute(
+        select(VehicleEvent.id).where(VehicleEvent.camera_id.in_(cam_ids or NIL))).all()]
+    alert_ids = [r for (r,) in db.execute(
+        select(Alert.id).where(Alert.camera_id.in_(cam_ids or NIL))).all()]
+    inc_ids = [r for (r,) in db.execute(
+        select(Incident.id).where(
+            Incident.incident_number.like("INC-%-9001")
+            | Incident.alert_id.in_(alert_ids or NIL)
+            | Incident.vehicle_event_id.in_(ev_ids or NIL))).all()]
+    case_ids = [r for (r,) in db.execute(
+        select(Case.id).where(Case.case_number.like("CASE-%-9001"))).all()]
+
+    ci = cam_ids or NIL
+    ei = ev_ids or NIL
+    ai = alert_ids or NIL
+    ii = inc_ids or NIL
+    kk = case_ids or NIL
+
+    for stmt in (
+        # 1. break mutual / dangling FK links
+        update(Alert).where(Alert.camera_id.in_(ci)).values(anomaly_event_id=None),
+        update(AnomalyEvent).where(AnomalyEvent.camera_id.in_(ci)).values(alert_id=None),
+        # 2. child link/detail rows
+        delete(CaseEvidence).where(CaseEvidence.case_id.in_(kk) | CaseEvidence.vehicle_event_id.in_(ei)),
+        delete(CaseIncident).where(CaseIncident.case_id.in_(kk) | CaseIncident.incident_id.in_(ii)),
+        delete(CaseNote).where(CaseNote.case_id.in_(kk)),
+        delete(IncidentEvidence).where(IncidentEvidence.incident_id.in_(ii) | IncidentEvidence.vehicle_event_id.in_(ei)),
+        delete(IncidentNote).where(IncidentNote.incident_id.in_(ii)),
+        # 3. incidents / cases (now unreferenced), then anomalies, then alerts
+        delete(Incident).where(Incident.id.in_(ii)),
+        delete(Case).where(Case.id.in_(kk)),
+        delete(AnomalyEvent).where(AnomalyEvent.camera_id.in_(ci)),
+        delete(Alert).where(Alert.camera_id.in_(ci)),
+        # 4. events + cameras + notifications + the marker
+        delete(VehicleEvent).where(VehicleEvent.id.in_(ei)),
+        delete(Camera).where(Camera.id.in_(ci)),
+        delete(Notification).where(Notification.resource == "anomaly"),
+        delete(AuditLog).where(AuditLog.action == _MARKER),
+    ):
+        db.execute(stmt)
+    db.commit()
+    print(f"[seed_ai_demo] reset: removed {len(cam_ids)} cameras, {len(ev_ids)} events, "
+          f"{len(inc_ids)} incident(s), {len(case_ids)} case(s)")
+
+
 def main() -> int:
-    if os.getenv("SEED_AI_DEMO", "0").strip().lower() not in ("1", "true", "yes", "on"):
+    reset = "--reset" in sys.argv
+    if not reset and os.getenv("SEED_AI_DEMO", "0").strip().lower() not in ("1", "true", "yes", "on"):
         print("[seed_ai_demo] SEED_AI_DEMO not set -- skipping")
         return 0
 
@@ -77,6 +143,8 @@ def main() -> int:
 
     db = SessionLocal()
     try:
+        if reset:
+            _reset(db)
         if db.execute(select(AuditLog).where(AuditLog.action == _MARKER)).first():
             print("[seed_ai_demo] already seeded -- nothing to do")
             return 0

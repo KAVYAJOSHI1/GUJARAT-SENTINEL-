@@ -17,7 +17,6 @@ pre-check means a re-scan never double-flags the same event.
 from __future__ import annotations
 
 import logging
-import math
 from datetime import datetime, timedelta
 
 from sqlalchemy import func, select
@@ -30,18 +29,10 @@ from app.models.base import AlertSource, AnomalyKind, AnomalyStatus, Notificatio
 from app.models.camera import Camera
 from app.models.vehicle_event import VehicleEvent
 from app.services.ai.confidence import anomaly_confidence
+from app.services.geo import haversine_m as _haversine_m
 from app.services.notifications import push_notification
 
 logger = logging.getLogger("sentinel.ai.behavior")
-
-
-def _haversine_m(lat1, lon1, lat2, lon2) -> float:
-    r = 6371000.0
-    p1, p2 = math.radians(lat1), math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlmb = math.radians(lon2 - lon1)
-    a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlmb / 2) ** 2
-    return 2 * r * math.asin(min(1.0, math.sqrt(a)))
 
 
 class BehaviorAnalyticsService:

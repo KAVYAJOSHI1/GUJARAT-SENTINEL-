@@ -139,6 +139,7 @@ export default function Dashboard() {
         <StatCard label="Active Alerts" value={activeAlerts} sub="Requires attention" icon={BellRing} color={activeAlerts > 0 ? C.red : C.green} pulse={activeAlerts > 0} loading={loading} />
         <StatCard label="Active Incidents" value={stats?.activeIncidents ?? 0} sub="Open / investigating" icon={ClipboardList} color={(stats?.activeIncidents ?? 0) > 0 ? C.amber : C.green} loading={loading} />
         <StatCard label="Open Cases" value={stats?.openCases ?? 0} sub="Under investigation" icon={FolderOpen} color={C.violet} loading={loading} />
+        <StatCard label="AI Anomalies" value={anomalies.filter((a) => a.status === "NEW").length} sub="Stopped vehicles · NEW" icon={Bot} color={anomalies.some((a) => a.status === "NEW") ? C.violet : C.muted} loading={loading} />
       </div>
 
       {/* ── Quick actions (command center) ─────────────────────────────────── */}

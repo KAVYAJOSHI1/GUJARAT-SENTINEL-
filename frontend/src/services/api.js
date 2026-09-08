@@ -216,6 +216,10 @@ export function normalizeCamera(raw) {
     healthUpdatedAt: pick(raw, ["health_updated_at", "healthUpdatedAt"], null),
     frameDrops: pick(raw, ["frame_drop_count", "frameDrops"], null),
     reconnects: pick(raw, ["reconnect_count", "reconnects"], null),
+    // Phase 13: authoritative REAL/MOCK flag + last detection time from the backend.
+    isMockBackend: pick(raw, ["is_mock"], null),
+    lastDetectionAt: pick(raw, ["last_detection_at", "lastDetectionAt"], null),
+    rtspUrl: pick(raw, ["rtsp_url"], null),
   };
 }
 

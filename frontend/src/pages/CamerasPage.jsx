@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useOutletContext } from "react-router-dom";
+import { Link, useOutletContext } from "react-router-dom";
 import { C } from "../theme.js";
 import CameraGrid from "../components/CameraGrid.jsx";
 import CameraModal from "../components/CameraModal.jsx";
@@ -38,6 +38,12 @@ export default function CamerasPage() {
       <div style={{ marginBottom: 14, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <div style={{ fontWeight: 600 }}>Camera Network — {visible.length} feeds</div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <Link to="/cameras/manage" style={{
+            border: `1px solid ${C.border}`, color: C.accent, borderRadius: 4,
+            padding: "4px 12px", fontSize: 11, textDecoration: "none", fontWeight: 600,
+          }}>
+            Management console →
+          </Link>
           {hasMock && (
             <>
               {SOURCE_FILTERS.map((s) => (

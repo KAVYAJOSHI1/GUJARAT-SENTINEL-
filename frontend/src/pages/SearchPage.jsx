@@ -164,10 +164,19 @@ export default function SearchPage() {
           {nlBusy ? "Interpreting…" : "AI search"}
         </button>
         {nlParsed && (
-          <span style={{ fontSize: 10, color: C.muted }}>
-            interpreted → {Object.entries(nlParsed).filter(([, v]) => v !== undefined && v !== false)
-              .map(([k, v]) => `${k}:${v}`).join("  ") || "no filters"}
-          </span>
+          <div style={{ flexBasis: "100%", display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", marginTop: 6 }}>
+            <span style={{ fontSize: 9, color: C.dim, textTransform: "uppercase", letterSpacing: 0.6 }}>
+              AI interpreted your query as:
+            </span>
+            {nlInterpretedChips(nlParsed).map((t) => (
+              <span key={t} style={{ background: C.accentGlow, border: `1px solid ${C.accent}55`, color: C.accent, borderRadius: 3, padding: "1px 8px", fontSize: 10, fontWeight: 600 }}>
+                {t}
+              </span>
+            ))}
+            {nlInterpretedChips(nlParsed).length === 0 && (
+              <span style={{ fontSize: 10, color: C.muted }}>no specific filters — broad search</span>
+            )}
+          </div>
         )}
       </form>
 
@@ -297,6 +306,23 @@ export default function SearchPage() {
       {res && <Pager offset={offset} total={res.total} onPage={setOffset} loading={loading} page={PAGE} />}
     </div>
   );
+}
+
+function nlInterpretedChips(f) {
+  const out = [];
+  if (f.plate) out.push(`Plate: ${f.plate}`);
+  if (f.vehicle_color) out.push(`Colour: ${String(f.vehicle_color).toUpperCase()}`);
+  if (f.vehicle_type) out.push(`Type: ${String(f.vehicle_type).toUpperCase()}`);
+  if (f.camera_code) out.push(`Camera: ${f.camera_code}`);
+  if (f.unknown_only) out.push("Unknown plates only");
+  if (f.watchlist_only) out.push("Watchlist matches only");
+  if (f.time_from && f.time_to) out.push(`Time: ${f.time_from}–${f.time_to}`);
+  else if (f.time_from) out.push(`Time: after ${f.time_from}`);
+  else if (f.time_to) out.push(`Time: before ${f.time_to}`);
+  if (f.date_from) out.push(`From: ${String(f.date_from).slice(0, 16).replace("T", " ")}`);
+  if (f.date_to) out.push(`To: ${String(f.date_to).slice(0, 16).replace("T", " ")}`);
+  if (f.min_duration_seconds) out.push(`Dwell ≥ ${Math.round(f.min_duration_seconds / 60)} min`);
+  return out;
 }
 
 function In({ label, v, on, type = "text", mono }) {
