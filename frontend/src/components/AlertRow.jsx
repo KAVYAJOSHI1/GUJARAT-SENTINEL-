@@ -134,10 +134,10 @@ export default function AlertRow({ alert, onAck, onViewEvidence }) {
         <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
           {trackable && (
             <button
-              onClick={() => navigate(`/investigation?plate=${encodeURIComponent(alert.vehicle)}`)}
-              style={miniBtn(C.accent)}
+              onClick={() => navigate(`/workspace?plate=${encodeURIComponent(alert.vehicle)}&alert=${encodeURIComponent(alert.id)}`)}
+              style={{ ...miniBtn(C.accent), background: C.accent, color: "#0b0f14" }}
             >
-              <Crosshair size={10} /> Track vehicle
+              <Crosshair size={10} /> Investigate
             </button>
           )}
           {thumb && (

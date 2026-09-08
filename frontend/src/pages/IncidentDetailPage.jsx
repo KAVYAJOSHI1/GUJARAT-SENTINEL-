@@ -125,7 +125,7 @@ export default function IncidentDetailPage() {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 0 }}>
           <Field label="Vehicle">
             {inc.plate_number_normalized ? (
-              <Link to={`/investigation?plate=${encodeURIComponent(inc.plate_number_normalized)}`}
+              <Link to={`/workspace?plate=${encodeURIComponent(inc.plate_number_normalized)}`}
                     style={{ color: C.amber, fontFamily: "monospace", textDecoration: "none" }}>
                 {inc.plate_number_normalized}
               </Link>
@@ -150,8 +150,8 @@ export default function IncidentDetailPage() {
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", padding: "12px 16px", borderTop: `1px solid ${C.border}` }}>
           {inc.plate_number_normalized && (
             <button style={actBtn(C.accent)}
-                    onClick={() => navigate(`/investigation?plate=${encodeURIComponent(inc.plate_number_normalized)}`)}>
-              <Crosshair size={12} /> Trace vehicle
+                    onClick={() => navigate(`/workspace?plate=${encodeURIComponent(inc.plate_number_normalized)}`)}>
+              <Crosshair size={12} /> Investigate vehicle
             </button>
           )}
           {manage && (

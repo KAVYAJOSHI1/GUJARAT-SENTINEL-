@@ -41,6 +41,18 @@ _MOCK_RE = re.compile(r"^mock[_-]?cam", re.IGNORECASE)
 def _is_mock_code(code: str | None) -> bool:
     return bool(code and _MOCK_RE.match(code))
 
+
+def _feed_source(code: str | None, is_demo: bool | None) -> str:
+    """Honest provenance label for a sighting's camera: seeded DEMO data,
+    a local MOCK stream, or a REAL government feed. Mirrors the same
+    precedence the camera stream service uses (DEMO > MOCK > REAL) so the
+    investigation UI never implies demo data is real CCTV."""
+    if is_demo:
+        return "DEMO"
+    if _is_mock_code(code):
+        return "MOCK"
+    return "REAL"
+
 # Where THIS process can see the AI pipeline's local evidence tree
 # (evidence/live/, evidence/mock/, ...). The DB stores whatever absolute
 # path the pipeline process wrote (host machine, since the pipeline only
@@ -208,6 +220,7 @@ def search_vehicle(
             Camera.location_desc,
             ST_Y(Camera.location),
             ST_X(Camera.location),
+            Camera.is_demo,
         )
         .join(Camera, Camera.id == VehicleEvent.camera_id, isouter=True)
         .where(VehicleEvent.plate_number_normalized == plate_normalized)
@@ -217,7 +230,7 @@ def search_vehicle(
     rows = db.execute(stmt).all()
 
     sightings = []
-    for ev, camera_name, camera_code, location_desc, cam_lat, cam_lon in rows:
+    for ev, camera_name, camera_code, location_desc, cam_lat, cam_lon, cam_is_demo in rows:
         # prefer the event's own fix; fall back to the camera's location
         lat = ev.latitude if ev.latitude is not None else cam_lat
         lon = ev.longitude if ev.longitude is not None else cam_lon
@@ -242,6 +255,7 @@ def search_vehicle(
                 anpr_failure_reason=ev.anpr_failure_reason,
                 anpr_quality_score=ev.anpr_quality_score,
                 is_mock=_is_mock_code(camera_code or ev.camera_code),
+                feed_source=_feed_source(camera_code or ev.camera_code, cam_is_demo),
             )
         )
 
@@ -304,7 +318,7 @@ def vehicle_profile(
     norm = normalize_plate(plate)
     rows = db.execute(
         select(VehicleEvent, Camera.name, Camera.code, Camera.location_desc,
-               ST_Y(Camera.location), ST_X(Camera.location))
+               ST_Y(Camera.location), ST_X(Camera.location), Camera.is_demo)
         .join(Camera, Camera.id == VehicleEvent.camera_id, isouter=True)
         .where(VehicleEvent.plate_number_normalized == norm)
         .order_by(VehicleEvent.timestamp.asc())
@@ -317,7 +331,7 @@ def vehicle_profile(
     readable = unknown = 0
     types: Counter = Counter()
     colors: Counter = Counter()
-    for ev, cname, ccode, cloc, clat, clon in rows:
+    for ev, cname, ccode, cloc, clat, clon, cdemo in rows:
         lat = ev.latitude if ev.latitude is not None else clat
         lon = ev.longitude if ev.longitude is not None else clon
         sightings.append(VehicleSighting(
@@ -329,6 +343,7 @@ def vehicle_profile(
             plate_number=ev.plate_number, anpr_status=ev.anpr_status or "OK",
             anpr_failure_reason=ev.anpr_failure_reason, anpr_quality_score=ev.anpr_quality_score,
             is_mock=_is_mock_code(ccode or ev.camera_code),
+            feed_source=_feed_source(ccode or ev.camera_code, cdemo),
         ))
         if (ev.anpr_status or "OK") == "OK":
             readable += 1
@@ -433,13 +448,14 @@ def recent_vehicle_events(
             Camera.location_desc,
             ST_Y(Camera.location),
             ST_X(Camera.location),
+            Camera.is_demo,
         )
         .join(Camera, Camera.id == VehicleEvent.camera_id, isouter=True)
         .order_by(VehicleEvent.timestamp.desc())
         .limit(limit)
     )
     out = []
-    for ev, name, code, location_desc, cam_lat, cam_lon in db.execute(stmt).all():
+    for ev, name, code, location_desc, cam_lat, cam_lon, cam_is_demo in db.execute(stmt).all():
         lat = ev.latitude if ev.latitude is not None else cam_lat
         lon = ev.longitude if ev.longitude is not None else cam_lon
         out.append(
@@ -463,6 +479,7 @@ def recent_vehicle_events(
                 anpr_failure_reason=ev.anpr_failure_reason,
                 anpr_quality_score=ev.anpr_quality_score,
                 is_mock=_is_mock_code(code or ev.camera_code),
+                feed_source=_feed_source(code or ev.camera_code, cam_is_demo),
             )
         )
     return out

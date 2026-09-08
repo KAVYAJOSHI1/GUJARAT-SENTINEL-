@@ -128,3 +128,19 @@ def test_confidence_score_present_in_sighting(client, officer_user, make_camera,
 
 def test_search_requires_auth(client):
     assert client.get("/api/v1/vehicles/search?plate=GJ01AB1234").status_code == 401
+
+
+def test_sighting_feed_source_labels_provenance(client, officer_user, make_camera, make_vehicle_event):
+    """Phase 16: a sighting carries an honest feed_source so the investigation
+    UI never implies seeded/demo data is a real government feed."""
+    _, token = officer_user
+    demo_cam = make_camera(code="cam-fs-demo", is_demo=True)
+    real_cam = make_camera(code="cam-fs-real")
+    mock_cam = make_camera(code="mock_cam_fs")
+    make_vehicle_event(demo_cam, plate="GJ09FS0001")
+    make_vehicle_event(real_cam, plate="GJ09FS0002")
+    make_vehicle_event(mock_cam, plate="GJ09FS0003")
+    by_plate = lambda p: _search(client, token, p).json()["sightings"][0]["feed_source"]
+    assert by_plate("GJ09FS0001") == "DEMO"
+    assert by_plate("GJ09FS0002") == "REAL"
+    assert by_plate("GJ09FS0003") == "MOCK"

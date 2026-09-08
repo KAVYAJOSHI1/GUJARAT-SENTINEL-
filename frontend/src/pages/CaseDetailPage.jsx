@@ -104,7 +104,7 @@ export default function CaseDetailPage() {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))" }}>
           <Field label="Primary vehicle">
             {c.primary_plate_normalized
-              ? <Link to={`/investigation?plate=${encodeURIComponent(c.primary_plate_normalized)}`} style={{ color: C.amber, fontFamily: "monospace", textDecoration: "none" }}>{c.primary_plate_normalized}</Link>
+              ? <Link to={`/workspace?plate=${encodeURIComponent(c.primary_plate_normalized)}`} style={{ color: C.amber, fontFamily: "monospace", textDecoration: "none" }}>{c.primary_plate_normalized}</Link>
               : "—"}
           </Field>
           <Field label="Incidents">{c.incident_count}</Field>
@@ -116,8 +116,8 @@ export default function CaseDetailPage() {
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", padding: "12px 16px", borderTop: `1px solid ${C.border}` }}>
           {c.primary_plate_normalized && (
-            <button style={actBtn(C.accent)} onClick={() => navigate(`/investigation?plate=${encodeURIComponent(c.primary_plate_normalized)}`)}>
-              <Crosshair size={12} /> Trace vehicle
+            <button style={actBtn(C.accent)} onClick={() => navigate(`/workspace?plate=${encodeURIComponent(c.primary_plate_normalized)}`)}>
+              <Crosshair size={12} /> Investigate vehicle
             </button>
           )}
           <button style={actBtn(C.border)} onClick={() => downloadCaseReportCSV(c.id, c.case_number)}>

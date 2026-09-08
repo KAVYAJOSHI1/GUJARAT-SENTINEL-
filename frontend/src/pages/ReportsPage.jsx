@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { FileBarChart, FileDown } from "lucide-react";
 import { C } from "../theme.js";
 import { useToast } from "../context/ToastContext.jsx";
@@ -11,9 +12,15 @@ import { SkeletonRows } from "../components/ui/Skeleton.jsx";
 // table can be printed).
 export default function ReportsPage() {
   const { push } = useToast();
+  const [sp] = useSearchParams();
   const [reports, setReports] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [f, setF] = useState({ date_from: "", date_to: "", camera_code: "", department: "", severity: "", plate: "" });
+  // Phase 16: an investigation can deep-link here with ?plate= / ?camera_code=
+  // pre-filled so "Generate report" from the workspace lands ready to run.
+  const [f, setF] = useState({
+    date_from: "", date_to: "", camera_code: sp.get("camera_code") || "",
+    department: "", severity: "", plate: (sp.get("plate") || "").toUpperCase(),
+  });
   const [busy, setBusy] = useState("");
 
   useEffect(() => {

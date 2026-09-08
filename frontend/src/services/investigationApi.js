@@ -107,6 +107,11 @@ export function normalizeSighting(raw) {
     vehicleType: pick(raw, ["vehicle_type", "vehicleType", "type"], null),
     vehicleColor: pick(raw, ["vehicle_color", "vehicleColor"], null),
     isMock: Boolean(pick(raw, ["is_mock", "isMock"], false)),
+    // Phase 16 — honest provenance: DEMO (seeded) / MOCK (local stream) / REAL.
+    feedSource: pick(raw, ["feed_source", "feedSource"], raw?.is_mock ? "MOCK" : "REAL"),
+    anprStatus: pick(raw, ["anpr_status", "anprStatus"], "OK"),
+    anprFailureReason: pick(raw, ["anpr_failure_reason", "anprFailureReason"], null),
+    anprQualityScore: Number(pick(raw, ["anpr_quality_score", "anprQualityScore"], NaN)),
     trackId: pick(raw, ["track_id", "trackId"], null),
     kind: pick(raw, ["kind"], "CONFIRMED"),
   };
