@@ -61,6 +61,32 @@ export function isAuthenticated() {
   return Boolean(getToken());
 }
 
+// Decode the (unverified) JWT payload for UI-only decisions — hiding an
+// admin-only nav item, disabling a mutation button for a read-only role.
+// The backend still enforces every permission; this is purely cosmetic.
+export function currentSession() {
+  const t = getToken();
+  if (!t) return null;
+  try {
+    const payload = JSON.parse(
+      atob(t.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))
+    );
+    return { userId: payload.sub || null, role: payload.role || null };
+  } catch {
+    return null;
+  }
+}
+
+export function currentRole() {
+  return currentSession()?.role || null;
+}
+
+// ADMIN / OFFICER may manage incidents & cases; OPERATOR is read-only.
+export function canManageOps() {
+  const r = currentRole();
+  return r === "ADMIN" || r === "OFFICER";
+}
+
 http.interceptors.request.use((config) => {
   const t = getToken();
   if (t) config.headers.Authorization = `Bearer ${t}`;
@@ -278,6 +304,10 @@ function normalizeStats(raw) {
     degradedCameras,
     activeAlerts: pick(raw, ["activeAlerts", "active_alerts", "alerts_active"], MOCK_STATS.activeAlerts),
     watchlistMatches: pick(raw, ["watchlistMatches", "watchlist_matches"], MOCK_STATS.activeAlerts),
+    // Operational counts (added with the incident/case layer). Absent on an
+    // older backend -> 0, never a fabricated value.
+    activeIncidents: pick(raw, ["activeIncidents", "active_incidents"], 0),
+    openCases: pick(raw, ["openCases", "open_cases"], 0),
     todaysDetections: pick(raw, ["todaysDetections", "todays_detections", "detections_today"], MOCK_STATS.todaysDetections),
     anprReadsPerHour: pick(raw, ["anprReadsPerHour", "anpr_reads_per_hour"], MOCK_STATS.anprReadsPerHour),
     zonesOnline: pick(raw, ["zonesOnline", "zones_online"], MOCK_STATS.zonesOnline),

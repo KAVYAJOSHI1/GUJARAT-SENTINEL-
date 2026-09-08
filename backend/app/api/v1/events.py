@@ -21,8 +21,10 @@ from app.core.exceptions import NotFoundError
 from app.database import get_db
 from app.models.vehicle_event import VehicleEvent
 from app.schemas.event import AIDetectionEventIn, AIDetectionEventOut
+from app.models.base import NotificationSeverity, PriorityLevel
 from app.services.alert_dispatcher import connection_manager
 from app.services.camera_resolver import resolve_camera
+from app.services.notifications import push_notification
 from app.services.minio_service import get_minio_service
 from app.services.plate_utils import normalize_plate
 from app.services.vehicle_types import canonical_vehicle_type
@@ -116,6 +118,23 @@ async def ingest_ai_detection(
     match, alert, suppressed = process_event_against_watchlist(db, event)
 
     if alert is not None:
+        # Operational notification for the control-room notification center.
+        # Real event only -- one row per alert actually created (cooldown-
+        # suppressed hits never reach here). Best-effort; never blocks ingest.
+        _sev = (
+            NotificationSeverity.CRITICAL
+            if alert.priority_level in (PriorityLevel.HIGH, PriorityLevel.CRITICAL)
+            else NotificationSeverity.WARNING
+        )
+        push_notification(
+            db,
+            type="WATCHLIST_MATCH",
+            title=f"Watchlist match — {alert.plate_number_normalized}",
+            body=f"{camera_code}: {alert.priority_level.value} priority watchlist vehicle detected",
+            severity=_sev,
+            resource="alert",
+            resource_id=alert.id,
+        )
         await connection_manager.broadcast(
             {
                 "type": "ALERT",

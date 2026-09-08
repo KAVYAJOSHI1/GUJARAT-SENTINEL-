@@ -38,7 +38,8 @@ from sqlmodel import SQLModel  # noqa: E402
 # Import every table module so SQLModel.metadata knows about all of them
 # before create_all() runs.
 from app.models import (  # noqa: E402,F401
-    alert, audit_log, camera, pipeline_status, user, vehicle_event, watchlist,
+    alert, audit_log, camera, case, incident, notification, pipeline_status,
+    user, vehicle_event, watchlist,
 )
 from app.core.security import create_access_token, hash_password  # noqa: E402
 from app.database import SessionLocal, engine, get_db  # noqa: E402
@@ -50,6 +51,14 @@ from app.models.vehicle_event import VehicleEvent  # noqa: E402
 from app.services.plate_utils import normalize_plate  # noqa: E402
 
 TABLES_TO_CLEAN = (
+    "notifications",
+    "case_evidence",
+    "case_incidents",
+    "case_notes",
+    "cases",
+    "incident_evidence",
+    "incident_notes",
+    "incidents",
     "audit_logs",
     "alerts",
     "vehicle_events",

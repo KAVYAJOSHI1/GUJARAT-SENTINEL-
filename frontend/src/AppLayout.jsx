@@ -13,7 +13,12 @@ export default function AppLayout() {
 
   return (
     <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", background: C.bg, color: C.text }}>
-      <Navbar wsStatus={data.wsStatus} unackCount={data.unackCount} critCount={data.critCount} />
+      <Navbar
+        wsStatus={data.wsStatus}
+        unackCount={data.unackCount}
+        critCount={data.critCount}
+        notifUnread={data.notifUnread}
+      />
 
       <main className="app-main" style={{ flex: 1, width: "100%" }}>
         <Outlet context={data} />

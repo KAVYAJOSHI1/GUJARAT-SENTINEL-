@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
 import { Bell, BellOff, MapPinned } from "lucide-react";
 import { C, LOGO_URL } from "../theme.js";
+import { currentRole } from "../services/api.js";
 import Pulse from "./Pulse.jsx";
 import ConnectionIndicator from "./ui/ConnectionIndicator.jsx";
 import { useToast } from "../context/ToastContext.jsx";
@@ -10,12 +11,16 @@ const TABS = [
   { to: "/", label: "Overview", end: true },
   { to: "/cameras", label: "Cameras" },
   { to: "/alerts", label: "Alerts" },
+  { to: "/incidents", label: "Incidents" },
+  { to: "/cases", label: "Cases" },
   { to: "/map", label: "Map" },
+  { to: "/system", label: "System" },
 ];
 
-export default function Navbar({ wsStatus, unackCount = 0, critCount = 0 }) {
+export default function Navbar({ wsStatus, unackCount = 0, critCount = 0, notifUnread = 0 }) {
   const [time, setTime] = useState(new Date());
   const { muted, toggleMuted } = useToast();
+  const isAdmin = currentRole() === "ADMIN";
 
   useEffect(() => {
     const t = setInterval(() => setTime(new Date()), 1000);
@@ -89,6 +94,7 @@ export default function Navbar({ wsStatus, unackCount = 0, critCount = 0 }) {
             <NavLink key={t.to} to={t.to} end={t.end} style={tabStyle}>
               {t.label}
               {t.label === "Alerts" && unackCount > 0 ? ` (${unackCount})` : ""}
+              {t.label === "System" && notifUnread > 0 ? ` (${notifUnread})` : ""}
             </NavLink>
           ))}
           {/* Deep link into Vishakha's GIS / Investigation console
@@ -98,7 +104,28 @@ export default function Navbar({ wsStatus, unackCount = 0, critCount = 0 }) {
               <MapPinned size={12} /> Investigation
             </span>
           </NavLink>
+          {isAdmin && (
+            <NavLink to="/admin" style={tabStyle}>Admin</NavLink>
+          )}
         </nav>
+
+        <NavLink to="/system" title="Notification center" style={({ isActive }) => ({
+          position: "relative",
+          display: "flex",
+          color: isActive ? C.accent : C.muted,
+          textDecoration: "none",
+        })}>
+          <Bell size={15} />
+          {notifUnread > 0 && (
+            <span style={{
+              position: "absolute", top: -6, right: -8, background: C.red, color: "#fff",
+              borderRadius: 8, fontSize: 9, fontWeight: 700, padding: "0 4px", minWidth: 14,
+              textAlign: "center", lineHeight: "14px",
+            }}>
+              {notifUnread > 99 ? "99+" : notifUnread}
+            </span>
+          )}
+        </NavLink>
 
         <ConnectionIndicator status={wsStatus} />
 
