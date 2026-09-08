@@ -22,6 +22,7 @@ from app.api.v1 import (
     reports,
     saved_searches,
     search,
+    system,
     traffic,
     vehicles,
     watchlist,
@@ -52,4 +53,5 @@ api_router.include_router(graph.router, prefix="/ai/graph", tags=["ai", "graph"]
 api_router.include_router(analytics.router, prefix="/analytics", tags=["analytics"])
 api_router.include_router(traffic.router, prefix="/analytics/traffic", tags=["analytics", "traffic"])
 api_router.include_router(pipeline.router, prefix="/pipeline", tags=["pipeline"])
+api_router.include_router(system.router, prefix="/system", tags=["system"])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])

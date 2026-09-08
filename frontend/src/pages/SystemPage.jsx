@@ -4,6 +4,7 @@ import { Bell, BellRing, CheckCheck, ServerCog } from "lucide-react";
 import { C } from "../theme.js";
 import SystemHealthPanel from "../components/observability/SystemHealthPanel.jsx";
 import AiPipelinePanel from "../components/observability/AiPipelinePanel.jsx";
+import MetricsSummaryPanel from "../components/observability/MetricsSummaryPanel.jsx";
 import EmptyState from "../components/ui/EmptyState.jsx";
 import ErrorBanner from "../components/ui/ErrorBanner.jsx";
 import { SkeletonRows } from "../components/ui/Skeleton.jsx";
@@ -71,6 +72,7 @@ export default function SystemPage() {
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
         <SystemHealthPanel health={ctx.health} healthLive={ctx.healthLive} cameras={ctx.cameras || []} lastRefresh={ctx.lastRefresh} />
         <AiPipelinePanel health={ctx.health} />
+        <MetricsSummaryPanel />
       </div>
 
       <div style={panel}>
