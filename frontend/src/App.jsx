@@ -18,6 +18,7 @@ import ReportsPage from "./pages/ReportsPage.jsx";
 import CopilotPage from "./pages/CopilotPage.jsx";
 import AnomaliesPage from "./pages/AnomaliesPage.jsx";
 import CameraManagementPage from "./pages/CameraManagementPage.jsx";
+import TrafficIntelligencePage from "./pages/TrafficIntelligencePage.jsx";
 import InvestigationPage from "./pages/InvestigationPage.jsx";
 import MapPage from "./pages/MapPage.jsx";
 
@@ -48,6 +49,9 @@ export function AppRoutes() {
         {/* Phase 12 — AI intelligence layer */}
         <Route path="copilot" element={<CopilotPage />} />
         <Route path="anomalies" element={<AnomaliesPage />} />
+
+        {/* Phase 14 — advanced video intelligence */}
+        <Route path="traffic" element={<TrafficIntelligencePage />} />
 
         <Route path="system" element={<SystemPage />} />
         <Route path="admin" element={<AdminPage />} />
