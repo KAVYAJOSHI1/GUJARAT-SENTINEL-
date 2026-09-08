@@ -481,7 +481,7 @@ def get_evidence(
     opaque UUID, so this is a low-sensitivity read.
     """
     ev = db.get(VehicleEvent, event_id)
-    if ev is None or not ev.snapshot_url:
+    if ev is None:
         raise NotFoundError("Evidence", event_id)
     record_audit(
         db,
@@ -490,6 +490,13 @@ def get_evidence(
         resource="vehicle_event",
         resource_id=event_id,
     )
+    if not ev.snapshot_url:
+        # The event is real but carries no snapshot (many detections don't).
+        # Serve the honest placeholder with 200 so the UI renders cleanly.
+        from fastapi.responses import Response
+
+        return Response(content=_EVIDENCE_PLACEHOLDER_SVG, media_type="image/svg+xml",
+                        headers={"X-Evidence-Status": "no-snapshot", "Cache-Control": "no-store"})
     url = ev.snapshot_url
 
     # Proxy the bytes through the backend so it works from any network (browser
@@ -514,4 +521,25 @@ def get_evidence(
     local_path = _resolve_local_evidence_path(local_path) or local_path
     if os.path.isabs(local_path) and os.path.isfile(local_path):
         return FileResponse(local_path)
-    raise NotFoundError("Evidence file", event_id)
+
+    # Phase 16: the reference exists on the row but the actual image is not
+    # resolvable here (a demo/seeded snapshot_url, or a real crop that never
+    # reached this host). Serve an explicit, honestly-labelled placeholder
+    # with 200 instead of a 404 so the UI shows "evidence pending / not
+    # available" cleanly and the browser console stays clean. This is NOT a
+    # fabricated photo -- it is visibly a placeholder.
+    from fastapi.responses import Response
+
+    return Response(content=_EVIDENCE_PLACEHOLDER_SVG, media_type="image/svg+xml",
+                    headers={"X-Evidence-Status": "unavailable", "Cache-Control": "no-store"})
+
+
+_EVIDENCE_PLACEHOLDER_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="200" viewBox="0 0 320 200">'
+    '<rect width="320" height="200" fill="#12161C"/>'
+    '<rect x="8" y="8" width="304" height="184" fill="none" stroke="#2C333F" stroke-dasharray="4 4"/>'
+    '<text x="160" y="96" fill="#8993A1" font-family="monospace" font-size="13" text-anchor="middle">'
+    'EVIDENCE IMAGE NOT AVAILABLE</text>'
+    '<text x="160" y="116" fill="#3A4250" font-family="monospace" font-size="10" text-anchor="middle">'
+    'no crop reached this host</text></svg>'
+).encode()

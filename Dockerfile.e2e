@@ -1,0 +1,13 @@
+# Phase 16 — headless browser test runner for real UI validation.
+# node:20-slim + Playwright + Chromium (pinned). Run against the running
+# dev server with `--network host`. See scripts/browser_test.sh.
+FROM node:20-slim
+
+WORKDIR /runner
+RUN npm init -y >/dev/null 2>&1 \
+    && npm i --no-audit --no-fund playwright-core@1.48.2 \
+    && npx --yes playwright-core@1.48.2 install --with-deps chromium
+
+# specs are bind-mounted at /runner/specs at run time -> ESM resolves
+# `playwright-core` by walking up to /runner/node_modules.
+ENTRYPOINT ["node"]
