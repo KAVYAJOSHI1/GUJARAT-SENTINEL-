@@ -129,6 +129,9 @@ class Settings(BaseSettings):
     # CCTV. Set by docker-compose; default off for plain / test runs.
     SEED_AI_DEMO: bool = False
 
+    # --- Phase 15A: camera playback ---
+    STREAM_LOW_FPS: float = 8.0        # below this a live source is DEGRADED
+
     # --- Phase 14: Vehicle Visual Re-ID ---
     # Appearance embedding backend: "attribute" (default -- deterministic,
     # no ML deps, always available) or "torch" (ResNet-50 on the crop, only

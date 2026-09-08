@@ -22,6 +22,13 @@ class Camera(TimestampMixin, table=True):
     code: Optional[str] = Field(default=None, index=True, unique=True)
     name: str = Field(nullable=False, index=True)
     rtsp_url: Optional[str] = Field(default=None, nullable=True)
+    # Phase 15: browser-playable stream sources. WHEP (WebRTC) is preferred
+    # for low latency; HLS is the widely-compatible fallback. Both are set
+    # by an operator / the registry sync when a media gateway is deployed
+    # in front of the RTSP feed. NULL = no live browser source (the UI then
+    # falls back to the mock clip / latest snapshot, clearly labelled).
+    hls_url: Optional[str] = Field(default=None, nullable=True)
+    webrtc_url: Optional[str] = Field(default=None, nullable=True)
     # Last-known status. For a camera actively reporting stream health (see
     # `health_updated_at` below), the API layer (cameras.py) overrides what it
     # SERVES with a freshness-checked "effective" status computed from these

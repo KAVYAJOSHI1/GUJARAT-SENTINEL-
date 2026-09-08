@@ -220,6 +220,8 @@ export function normalizeCamera(raw) {
     isMockBackend: pick(raw, ["is_mock"], null),
     lastDetectionAt: pick(raw, ["last_detection_at", "lastDetectionAt"], null),
     rtspUrl: pick(raw, ["rtsp_url"], null),
+    hlsUrl: pick(raw, ["hls_url"], null),
+    webrtcUrl: pick(raw, ["webrtc_url"], null),
   };
 }
 

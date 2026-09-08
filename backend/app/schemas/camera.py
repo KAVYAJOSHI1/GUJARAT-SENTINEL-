@@ -11,6 +11,8 @@ class CameraCreate(BaseModel):
     name: str
     code: Optional[str] = None
     rtsp_url: Optional[str] = None
+    hls_url: Optional[str] = None
+    webrtc_url: Optional[str] = None
     location_desc: Optional[str] = None
     latitude: float = Field(..., ge=-90, le=90)
     longitude: float = Field(..., ge=-180, le=180)
@@ -20,10 +22,38 @@ class CameraCreate(BaseModel):
 class CameraUpdate(BaseModel):
     name: Optional[str] = None
     rtsp_url: Optional[str] = None
+    hls_url: Optional[str] = None
+    webrtc_url: Optional[str] = None
     location_desc: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     status: Optional[CameraStatus] = None
+
+
+class CameraStreamSource(BaseModel):
+    kind: str            # webrtc | hls | recorded | snapshot
+    url: str
+    realtime: bool
+    label: str
+
+
+class CameraStreamProfile(BaseModel):
+    camera_id: str
+    camera_code: Optional[str] = None
+    camera_name: Optional[str] = None
+    location_desc: Optional[str] = None
+    is_mock: bool
+    effective_status: str
+    mode: str            # LIVE | DEGRADED | RECORDED | OFFLINE
+    mode_reasons: list[str] = []
+    sources: list[CameraStreamSource] = []
+    primary_source: Optional[str] = None
+    stream_fps: Optional[float] = None
+    last_frame_at: Optional[datetime] = None
+    last_detection_at: Optional[datetime] = None
+    ai_status: str
+    reconnect_count: Optional[int] = None
+    note: str
 
 
 class RestrictedZone(BaseModel):
@@ -44,6 +74,8 @@ class CameraRead(BaseModel):
     code: Optional[str] = None
     name: str
     rtsp_url: Optional[str]
+    hls_url: Optional[str] = None
+    webrtc_url: Optional[str] = None
     location_desc: Optional[str]
     # `status` here is the freshness-checked EFFECTIVE status (see
     # cameras.py::_effective_status) -- derived from actual stream health
