@@ -10,6 +10,7 @@ from app.api.v1 import (
     camera_intel,
     cameras,
     cases,
+    command_center,
     correlation,
     dashboard,
     events,
@@ -54,4 +55,5 @@ api_router.include_router(analytics.router, prefix="/analytics", tags=["analytic
 api_router.include_router(traffic.router, prefix="/analytics/traffic", tags=["analytics", "traffic"])
 api_router.include_router(pipeline.router, prefix="/pipeline", tags=["pipeline"])
 api_router.include_router(system.router, prefix="/system", tags=["system"])
+api_router.include_router(command_center.router, prefix="/command-center", tags=["command-center"])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
