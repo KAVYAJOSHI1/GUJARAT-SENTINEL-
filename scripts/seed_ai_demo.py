@@ -68,6 +68,7 @@ def _reset(db) -> None:
     from app.models.incident import Incident, IncidentEvidence
     from app.models.notification import Notification
     from app.models.vehicle_event import VehicleEvent
+    from app.models.vehicle_embedding import VehicleEmbedding
 
     from app.models.case import CaseNote
     from app.models.incident import IncidentNote
@@ -109,6 +110,7 @@ def _reset(db) -> None:
         delete(AnomalyEvent).where(AnomalyEvent.camera_id.in_(ci)),
         delete(Alert).where(Alert.camera_id.in_(ci)),
         # 4. events + cameras + notifications + the marker
+        delete(VehicleEmbedding).where(VehicleEmbedding.vehicle_event_id.in_(ei)),
         delete(VehicleEvent).where(VehicleEvent.id.in_(ei)),
         delete(Camera).where(Camera.id.in_(ci)),
         delete(Notification).where(Notification.resource == "anomaly"),
@@ -273,6 +275,16 @@ def main() -> int:
 
         res = BehaviorAnalyticsService(db).scan_stopped_vehicles()
         print(f"[seed_ai_demo] anomaly scan -> {res['created']} stopped-vehicle event(s)")
+
+        # --- Phase 14: index appearance embeddings for every demo event so
+        #     /ai/reid/search returns real candidates offline ---
+        try:
+            from app.services.ai.reid import VehicleReIDService
+
+            bf = VehicleReIDService(db).backfill()
+            print(f"[seed_ai_demo] re-id backfill -> {bf['indexed']} embedding(s)")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[seed_ai_demo] re-id backfill skipped ({exc})")
 
         db.add(AuditLog(action=_MARKER, resource="ai_demo",
                         detail=f"cameras={len(cam_by_code)} journey_events={len(journey_events)} "

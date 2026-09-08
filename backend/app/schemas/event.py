@@ -70,6 +70,12 @@ class AIDetectionEventIn(BaseModel):
     vehicle_color: Optional[str] = None
     confidence_score: Optional[float] = None
 
+    # Phase 14: an upgraded pipeline may supply a precomputed appearance
+    # embedding (e.g. a real CNN). Stored verbatim in vehicle_embeddings;
+    # when absent the backend computes the attribute-baseline vector.
+    embedding: Optional[List[float]] = None
+    embedding_model: Optional[str] = None
+
     # ---- resolved accessors -------------------------------------------------
     def resolved_plate(self) -> str:
         for cand in (

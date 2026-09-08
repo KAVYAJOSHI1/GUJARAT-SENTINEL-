@@ -119,6 +119,26 @@ class Settings(BaseSettings):
     # CCTV. Set by docker-compose; default off for plain / test runs.
     SEED_AI_DEMO: bool = False
 
+    # --- Phase 14: Vehicle Visual Re-ID ---
+    # Appearance embedding backend: "attribute" (default -- deterministic,
+    # no ML deps, always available) or "torch" (ResNet-50 on the crop, only
+    # if torch/torchvision import -- the AI pipeline container). An upgraded
+    # pipeline may also POST a precomputed `embedding[]` on the ingest event,
+    # which is always stored verbatim regardless of this setting.
+    REID_EMBEDDING_BACKEND: str = "attribute"
+    # Index an embedding for every ingested vehicle_event (best-effort, never
+    # blocks ingest). Off in the test suite.
+    REID_AUTO_INDEX: bool = True
+    # Hard ceiling on rows a single similarity scan will load + compare.
+    REID_MAX_CANDIDATES: int = 500
+    # Max events one /ai/reid/backfill call will index.
+    REID_BACKFILL_BATCH: int = 500
+    # Cosine-similarity band thresholds. STRONG never means "confirmed" --
+    # only a deterministic plate match does (correlation layer, Phase 14 §2).
+    REID_SIMILARITY_STRONG: float = 0.92
+    REID_SIMILARITY_MODERATE: float = 0.80
+    REID_SIMILARITY_WEAK: float = 0.65
+
     # --- AI event ingestion ---
     # Shared secret the AI pipeline sends as the `X-Ingest-Key` header on
     # POST /api/v1/events/ai-detection. When unset, that endpoint also
