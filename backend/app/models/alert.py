@@ -3,6 +3,7 @@ alerts: generated whenever the watchlist engine confirms a match outside
 the cooldown window. Indexed on (plate_number, camera_id, created_at) to
 make cooldown lookups ("same plate + camera within last 300s?") fast.
 """
+from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import Index
@@ -31,6 +32,21 @@ class Alert(TimestampMixin, table=True):
     acknowledged_by_user_id: Optional[str] = Field(
         default=None, foreign_key="users.id", nullable=True
     )
+    # Phase 11: escalation workflow. The watchlist engine never sets any of
+    # these -- they are only ever written by the alert-workflow API.
+    assigned_to_user_id: Optional[str] = Field(
+        default=None, foreign_key="users.id", nullable=True, index=True
+    )
+    escalated_by_user_id: Optional[str] = Field(
+        default=None, foreign_key="users.id", nullable=True
+    )
+    escalated_at: Optional[datetime] = Field(default=None, nullable=True)
+    escalation_reason: Optional[str] = Field(default=None, nullable=True)
+    resolved_by_user_id: Optional[str] = Field(
+        default=None, foreign_key="users.id", nullable=True
+    )
+    resolved_at: Optional[datetime] = Field(default=None, nullable=True)
+
     snapshot_url: Optional[str] = Field(default=None, nullable=True)
 
     __table_args__ = (

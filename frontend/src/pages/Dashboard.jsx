@@ -4,9 +4,11 @@ import {
   Activity,
   BarChart3,
   BellRing,
+  Briefcase,
   Car,
   ClipboardList,
   Clock,
+  FileBarChart,
   FolderOpen,
   PanelRightOpen,
   ScanLine,
@@ -139,9 +141,12 @@ export default function Dashboard() {
 
       {/* ── Quick actions (command center) ─────────────────────────────────── */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
-        <QuickAction icon={Search} label="Search vehicle" onClick={() => navigate("/investigation")} />
+        <QuickAction icon={Search} label="Advanced Search" onClick={() => navigate("/search")} />
+        <QuickAction icon={Briefcase} label="My Work" onClick={() => navigate("/my-work")} />
         <QuickAction icon={ClipboardList} label="Incidents" onClick={() => navigate("/incidents")} />
         <QuickAction icon={FolderOpen} label="Cases" onClick={() => navigate("/cases")} />
+        <QuickAction icon={ShieldAlert} label="Watchlists" onClick={() => navigate("/watchlists")} />
+        <QuickAction icon={FileBarChart} label="Reports" onClick={() => navigate("/reports")} />
         <QuickAction icon={Video} label="Cameras" onClick={() => navigate("/cameras")} />
         <QuickAction icon={ShieldAlert} label="Alerts" onClick={() => navigate("/alerts")} />
       </div>

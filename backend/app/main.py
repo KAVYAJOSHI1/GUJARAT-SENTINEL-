@@ -55,20 +55,62 @@ async def _retention_sweep_loop() -> None:
         await asyncio.sleep(interval_s)
 
 
+async def _camera_staleness_watcher_loop() -> None:
+    """Phase 11 FEATURE 5/13 -- the smallest reliable mechanism for
+    "camera went silent" transitions. Every CAMERA_HEALTH_WATCH_INTERVAL_S
+    it recomputes each camera's effective status (fresh push -> stale ->
+    OFFLINE) and records a transition + notification on a real change.
+    Dedup lives in record_transition_if_changed, so a camera that stays
+    offline never re-notifies. Bounded query (all cameras, ~dozens)."""
+    from app.api.v1.cameras import _effective_status
+    from app.database import SessionLocal
+    from app.models.camera import Camera
+    from app.services.camera_health import record_transition_if_changed
+    from sqlalchemy import select
+
+    interval_s = max(10, settings.CAMERA_HEALTH_WATCH_INTERVAL_S)
+    await asyncio.sleep(min(30, interval_s))
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                for cam in db.execute(select(Camera)).scalars().all():
+                    # only cameras that have EVER reported health -- a camera
+                    # that never had a push keeps its onboard status and is
+                    # not a "transition to offline"
+                    if cam.health_updated_at is None:
+                        continue
+                    record_transition_if_changed(
+                        db, cam, _effective_status(cam), source="staleness_watcher",
+                        stream_fps=cam.stream_fps, reconnect_count=cam.reconnect_count,
+                    )
+            finally:
+                db.close()
+        except Exception:  # noqa: BLE001 -- a failed tick must not kill the loop
+            logger.exception("camera staleness watch tick failed; retrying next interval")
+        await asyncio.sleep(interval_s)
+
+
 @contextlib.asynccontextmanager
 async def lifespan(_: FastAPI):
-    task = None
+    tasks: list[asyncio.Task] = []
     if settings.RETENTION_SWEEP_ENABLED and settings.VEHICLE_EVENT_RETENTION_DAYS > 0:
-        task = asyncio.create_task(_retention_sweep_loop())
+        tasks.append(asyncio.create_task(_retention_sweep_loop()))
         logger.info(
             "retention sweep enabled: every %dh, %d-day policy",
             settings.RETENTION_SWEEP_INTERVAL_HOURS,
             settings.VEHICLE_EVENT_RETENTION_DAYS,
         )
+    if settings.CAMERA_HEALTH_WATCH_ENABLED:
+        tasks.append(asyncio.create_task(_camera_staleness_watcher_loop()))
+        logger.info(
+            "camera health watcher enabled: every %ds",
+            settings.CAMERA_HEALTH_WATCH_INTERVAL_S,
+        )
     try:
         yield
     finally:
-        if task is not None:
+        for task in tasks:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task

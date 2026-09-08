@@ -4,15 +4,20 @@ import { Bell, BellOff, MapPinned } from "lucide-react";
 import { C, LOGO_URL } from "../theme.js";
 import { currentRole } from "../services/api.js";
 import Pulse from "./Pulse.jsx";
+import GlobalSearch from "./ops/GlobalSearch.jsx";
 import ConnectionIndicator from "./ui/ConnectionIndicator.jsx";
 import { useToast } from "../context/ToastContext.jsx";
 
 const TABS = [
   { to: "/", label: "Overview", end: true },
+  { to: "/my-work", label: "My Work" },
   { to: "/cameras", label: "Cameras" },
   { to: "/alerts", label: "Alerts" },
   { to: "/incidents", label: "Incidents" },
   { to: "/cases", label: "Cases" },
+  { to: "/search", label: "Search" },
+  { to: "/watchlists", label: "Watchlists" },
+  { to: "/reports", label: "Reports" },
   { to: "/map", label: "Map" },
   { to: "/system", label: "System" },
 ];
@@ -108,6 +113,8 @@ export default function Navbar({ wsStatus, unackCount = 0, critCount = 0, notifU
             <NavLink to="/admin" style={tabStyle}>Admin</NavLink>
           )}
         </nav>
+
+        <GlobalSearch />
 
         <NavLink to="/system" title="Notification center" style={({ isActive }) => ({
           position: "relative",

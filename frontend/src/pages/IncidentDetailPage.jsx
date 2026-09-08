@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft,
   Camera as CameraIcon,
+  Clock,
   Crosshair,
   FileStack,
   Paperclip,
@@ -20,11 +21,13 @@ import {
   attachIncidentEvidence,
   detachIncidentEvidence,
   getIncident,
+  incidentTimeline,
   listAssignableUsers,
   listCases,
   setIncidentStatus,
   updateIncident,
 } from "../services/opsApi.js";
+import Timeline from "../components/ops/Timeline.jsx";
 import SeverityBadge from "../components/SeverityBadge.jsx";
 import StatusBadge from "../components/ops/StatusBadge.jsx";
 import ErrorBanner from "../components/ui/ErrorBanner.jsx";
@@ -61,6 +64,8 @@ export default function IncidentDetailPage() {
       setLoading(false);
     }
   }, [id]);
+
+  const timelineLoader = useCallback((category) => incidentTimeline(id, category), [id]);
 
   useEffect(() => {
     load();
@@ -251,6 +256,14 @@ export default function IncidentDetailPage() {
             </span>
           </div>
         )}
+      </div>
+
+      {/* Timeline */}
+      <div style={panel}>
+        <SectionHead icon={Clock} title="Timeline" />
+        <div style={{ padding: 12 }}>
+          <Timeline loader={timelineLoader} refreshKey={inc.updated_at} />
+        </div>
       </div>
 
       {/* Notes */}

@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Car, Crosshair, FolderPlus, ImageOff, MapPin } from "lucide-react";
+import { ArrowUpCircle, Car, Crosshair, FolderPlus, ImageOff, MapPin } from "lucide-react";
 import { C, SEVERITY_COLOR } from "../theme.js";
 import { canManageOps, evidenceUrl } from "../services/api.js";
-import { createIncident } from "../services/opsApi.js";
+import { createIncident, escalateAlert } from "../services/opsApi.js";
 import { useToast } from "../context/ToastContext.jsx";
 import SeverityBadge from "./SeverityBadge.jsx";
 
@@ -140,7 +140,29 @@ export default function AlertRow({ alert, onAck, onViewEvidence }) {
               <FolderPlus size={10} /> {creating ? "Opening…" : "Create incident"}
             </button>
           )}
+          {canPromote && alert.rawStatus !== "ESCALATED" && alert.rawStatus !== "RESOLVED" && (
+            <button
+              onClick={async () => {
+                const reason = window.prompt("Escalation reason (goes to a supervisor):");
+                if (!reason) return;
+                try {
+                  await escalateAlert(alert.id, reason);
+                  push({ title: "Alert escalated", severity: "high" });
+                } catch (e) {
+                  push({ title: "Escalate failed", msg: e?.response?.data?.error?.message || "", severity: "high" });
+                }
+              }}
+              style={miniBtn(C.red)}
+            >
+              <ArrowUpCircle size={10} /> Escalate
+            </button>
+          )}
         </div>
+        {alert.rawStatus === "ESCALATED" && (
+          <div style={{ marginTop: 6, color: C.red, fontSize: 10, fontWeight: 700 }}>
+            ESCALATED{alert.escalationReason ? ` — ${alert.escalationReason}` : ""}
+          </div>
+        )}
       </div>
 
       <div style={{ textAlign: "right", flexShrink: 0 }}>

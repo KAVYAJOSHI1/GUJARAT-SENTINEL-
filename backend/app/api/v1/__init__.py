@@ -13,8 +13,12 @@ from app.api.v1 import (
     incidents,
     notifications,
     pipeline,
+    reports,
+    saved_searches,
+    search,
     vehicles,
     watchlist,
+    work_queue,
 )
 
 api_router = APIRouter()
@@ -28,6 +32,10 @@ api_router.include_router(alerts.router, prefix="/alerts", tags=["alerts"])
 api_router.include_router(incidents.router, prefix="/incidents", tags=["incidents"])
 api_router.include_router(cases.router, prefix="/cases", tags=["cases"])
 api_router.include_router(notifications.router, prefix="/notifications", tags=["notifications"])
+api_router.include_router(search.router, prefix="/search", tags=["search"])
+api_router.include_router(saved_searches.router, prefix="/saved-searches", tags=["saved-searches"])
+api_router.include_router(work_queue.router, prefix="/work-queue", tags=["work-queue"])
+api_router.include_router(reports.router, prefix="/reports", tags=["reports"])
 api_router.include_router(analytics.router, prefix="/analytics", tags=["analytics"])
 api_router.include_router(pipeline.router, prefix="/pipeline", tags=["pipeline"])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])

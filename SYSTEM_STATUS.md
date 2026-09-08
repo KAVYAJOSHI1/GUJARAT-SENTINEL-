@@ -9,6 +9,17 @@
 > **Notification center**, plus command-center wiring for all of it.
 > Migration `0006` (8 new tables, additive only). Backend + demo-flow tests
 > added and passing. See §A rows tagged *(2026-09-08)* and §I.
+>
+> **2026-09-08 — Phase 11: advanced operational features.** Added
+> **Unified Advanced Search** + **Global Quick Search**, **Saved
+> Investigations**, an **Advanced Watchlist Management** console (CSV
+> import/export, effective/expiry windows), **Alert Escalation** workflow,
+> **Incident & Case timelines** (derived from audit + linked rows),
+> **Officer Work Queue**, a **Reports Center** (9 CSV reports), and
+> **Camera Health History** with real ONLINE↔OFFLINE transition
+> notifications. Migration `0007` (2 new tables, additive columns +
+> `pg_trgm`). See §A rows tagged *(Phase 11)* and §J. Deferred items are
+> listed in §D "Phase 11 follow-ups".
 
 This document is the authoritative statement of what is implemented, what is
 verified, what is partial, and what is future. It is deliberately conservative:
@@ -30,8 +41,8 @@ Everything in this section was exercised on 2026-09-05 (commands and results in 
 
 | Area | Status | Notes |
 | :--- | :--- | :--- |
-| **Docker / deployment** | Verified | `docker compose down -v && docker compose up --build -d` brings up postgis + minio + backend + frontend from zero volumes. Backend entrypoint runs Alembic `0001→0005` then the idempotent seed. |
-| **Database** | Verified | PostgreSQL 15 + PostGIS 3.3. Migrations `0001`–`0006` apply cleanly on a fresh volume (and downgrade/upgrade round-trips). `0004` = analytics covering indexes; `0005` = `pipeline_status`; `0006` = operational layer (`incidents`, `incident_notes`, `incident_evidence`, `cases`, `case_notes`, `case_incidents`, `case_evidence`, `notifications`) — additive only, FKs + query-shaped indexes, no change to existing tables. |
+| **Docker / deployment** | Verified | `docker compose down -v && docker compose up --build -d` brings up postgis + minio + backend + frontend from zero volumes. Backend entrypoint runs `alembic upgrade head` (`0001→0007`) then the idempotent seed. Re-verified from an empty volume this pass. |
+| **Database** | Verified | PostgreSQL 15 + PostGIS 3.3. Migrations `0001`–`0007` apply cleanly on a fresh volume (and full downgrade→upgrade round-trips). `0004` = analytics covering indexes; `0005` = `pipeline_status`; `0006` = operational layer (8 tables); `0007` = Phase 11 — `saved_searches` + `camera_health_history` tables, `watchlist`/`alerts` additive columns, `AlertStatus.ESCALATED` enum value, `pg_trgm` + GIN partial-plate indexes. Additive only; no existing table redesigned. |
 | **Authentication / security** | Verified | JWT (HS256) login; RBAC (ADMIN/OFFICER/OPERATOR); login rate-limit (5 fails / 300s → 429); explicit CORS allow-list; short-lived scoped tickets for WebSocket handshake (`purpose="ws"`, ~60s) and media `<img>`/`<video>` (`purpose="media"`, ~120s) so the session JWT never rides the WS wire or a URL. |
 | **Backend APIs** | Verified | `/health`, `/api/v1/auth/*`, `/api/v1/cameras` (+ `/sync`, `/geojson`, `/health`, `/{id}/mock-video`), `/api/v1/vehicles/search` (+ `/evidence/{event_id}`, `/events/recent`), `/api/v1/watchlist`, `/api/v1/alerts`, `/api/v1/incidents/*`, `/api/v1/cases/*`, `/api/v1/notifications/*`, `/api/v1/dashboard/stats` (+ `active_incidents` / `open_cases`) + `/dashboard/health`, `/api/v1/pipeline/status`, `/api/v1/analytics/*`, `/api/v1/admin/*` (+ `/admin/audit`, `/admin/users`). |
 | **Camera onboarding** | Verified | `POST /api/v1/cameras/sync` upserts a catalogue keyed by external `code`; the pipeline auto-syncs its registry on start (`-> 200 (3 cameras)` for the demo registry). 30 real cameras registered in `data/camera_registry.json`. |
@@ -51,8 +62,17 @@ Everything in this section was exercised on 2026-09-05 (commands and results in 
 | **Evidence linking** *(2026-09-08)* | Verified | `incident_evidence` / `case_evidence` are pointer rows to existing `vehicle_events` — the snapshot file is never duplicated; the frontend serves it through the existing evidence proxy + media ticket. Attach / detach audited. |
 | **Audit / Activity center** *(2026-09-08)* | Verified | `GET /api/v1/admin/audit` (ADMIN only) — read-only projection over the **existing** `audit_logs` table (no second audit system), filter by action / user / resource / date / detail substring, paginated, actor username resolved. Tests: `backend/tests/test_audit_center.py` (3). |
 | **Notification center** *(2026-09-08)* | Verified | `notifications` table, single writer `app/services/notifications.py` (best-effort, never blocks the caller). Rows produced **only** by real backend events — a watchlist match creating an alert, an incident/case created or assigned. Broadcast vs directed (`target_user_id`) visibility; read / read-all / unread-count. Tests: `backend/tests/test_notifications.py` (5). |
-| **Demo acceptance flow** *(2026-09-08)* | Verified | Full chain — detect → watchlist match → alert → acknowledge → create incident → assign → trace vehicle (journey) → attach evidence → add remark → create case → attach incident + evidence + note → CSV case report → resolve incident → close case — is one passing end-to-end test (`backend/tests/test_demo_acceptance_flow.py`), all real persisted state. |
-| **Test suites** | Verified | Backend 138 passed (112 baseline + 26 operational-layer); AI/ingestion 143 passed, 8 skipped. Counts in §F. |
+| **Demo acceptance flow** *(2026-09-08)* | Verified | Full chain — detect → watchlist match → alert → acknowledge → create incident → assign → trace vehicle (journey) → attach evidence → add remark → create case → attach incident + evidence + note → CSV case report → resolve incident → close case — is one passing end-to-end test (`backend/tests/test_demo_acceptance_flow.py`), all real persisted state. Re-verified after Phase 11 against a fresh migrated Docker stack. |
+| **Unified Advanced Search** *(Phase 11)* | Verified | `POST /api/v1/search/vehicles` — bounded query over `vehicle_events`⋈`cameras` with exact/partial plate (pg_trgm GIN), vehicle type, camera, location, date + wall-clock time band, watchlist status, has-alert/incident/case, confidence, REAL/MOCK; sort latest/earliest/confidence/camera; pagination; per-row live watchlist/alert/incident/case links. Audited (`ADVANCED_SEARCH`). Tests: `test_advanced_search.py` (3). |
+| **Global Quick Search** *(Phase 11)* | Verified | `GET /api/v1/search/global?q=` — grouped hits across VEHICLES / CAMERAS / INCIDENTS / CASES / ALERTS / EVIDENCE, each linking to its page. Navbar search box (debounced). |
+| **Saved Investigations** *(Phase 11)* | Verified | `saved_searches` table — criteria only, never result sets; re-run live on open. Per-user (ADMIN sees all). CRUD + audit. Tests in `test_phase11_workflow.py`. |
+| **Advanced Watchlist Management** *(Phase 11)* | Verified | `watchlist` gains `description` / `effective_from` / `updated_by_user_id`. Console: filter (category / priority / effective·pending·expired·inactive) + sort + pagination; add / edit / activate / deactivate; **CSV import** (validates plate format, category, dates, in-file dupes → created/updated/skipped/invalid summary; `dry_run`) and **CSV export**. `effective_from` is enforced by the matching engine's shared `active_watchlist_clause()`. GJ18TC0450 demo entry (no window) unaffected — verified. Tests: `test_watchlist_management.py` (7). |
+| **Alert Escalation workflow** *(Phase 11)* | Verified | `AlertStatus` gains `ESCALATED`; `alerts` gains assignment + escalation columns. `POST /alerts/{id}/assign` · `/escalate` (records `escalated_by/at/reason` + CRITICAL notification) · `/resolve` (`resolved_by/at`). The watchlist engine still only ever creates `NEW` alerts. Audited. Tests in `test_phase11_workflow.py`. |
+| **Incident & Case timelines** *(Phase 11)* | Verified | `GET /incidents/{id}/timeline` and `/cases/{id}/timeline` — chronological entries **derived** from `audit_logs`, the entity's own timestamps, its notes / evidence links and the vehicle's camera sightings; category filter (ALERT/INCIDENT/CASE/EVIDENCE/NOTE/VEHICLE/STATUS/ACTIVITY). No new event table. Tests in `test_phase11_workflow.py`. |
+| **Officer Work Queue** *(Phase 11)* | Verified | `GET /api/v1/work-queue` — role-aware: ADMIN sees all open work, OFFICER sees work assigned to them + unassigned NEW/ESCALATED alerts; counts + priority/newest/oldest sort. Tests in `test_phase11_workflow.py`. |
+| **Reports Center** *(Phase 11)* | Verified | `GET /api/v1/reports` + `GET /api/v1/reports/{key}.csv` — 9 reports (vehicle-detections, watchlist-matches, alerts, incidents, cases, camera-activity, camera-health, vehicle-journey, daily-summary), each a bounded PostgreSQL aggregate; date-range / camera / department / plate / severity filters; CSV export; audited (`REPORT_EXPORT`). Tests: `test_phase11_reports_and_camera_health.py`. |
+| **Camera Health History** *(Phase 11)* | Verified | `camera_health_history` table — one row per real effective-status transition, written by the health-push endpoint and by a lightweight 30 s in-process staleness watcher (`CAMERA_HEALTH_WATCH_*`). `CAMERA_OFFLINE` / `CAMERA_RECOVERED` notifications on the operationally-significant edges, deduped against the last row. `GET /cameras/{id}/health/history`. Tests: `test_phase11_reports_and_camera_health.py`. |
+| **Test suites** | Verified | Backend **157 passed** (138 prior + 19 Phase 11); AI/ingestion 143 passed, 8 skipped. Counts in §F. |
 
 ---
 
@@ -83,18 +103,18 @@ No other component was observed failing this pass.
 
 ## D. NOT YET IMPLEMENTED
 
-Operational-layer follow-ups (the 2026-09-08 phase deliberately scoped to a
-coherent core — incidents / cases / evidence links / audit view /
-notifications — and left these for a later pass; nothing below is started):
+**Phase 11 follow-ups** (deliberately scoped to P0 + selected P1; not
+started unless noted):
 
-- **Unified advanced search** screen (one interface across plate / camera / department / date / severity / watchlist category / incident / case / confidence / real-mock with sortable, paginated results). Today: the existing per-domain searches (vehicle search, incident list filters, case list filters, audit filters) each work but are separate.
-- **Watchlist management** upgrade — effective/expiry dates in the UI, bulk CSV import/export, expired-entry indication, category taxonomy. Backend watchlist model already has `expires_at` + `active` and the engine enforces them; the management UI is still add/list/deactivate only.
-- **User / role / department administration** screens. `GET /api/v1/admin/users` (read-only, for assignment dropdowns) was added; full CRUD + department/region association is not.
-- **Camera management** UI upgrade (edit metadata, maintenance mode, per-camera recent incidents/detections panels).
-- **Alert workflow** escalation state + configurable per-rule cooldown (current alert model is `NEW/ACKNOWLEDGED/RESOLVED`; incidents carry the richer lifecycle).
-- **Reports section** (8 named report types with date/camera/department/severity filters, PDF+CSV). Today: vehicle-journey PDF/CSV (existing) + case-report CSV (new).
-- **GIS operations** layer toggles for incidents / case locations and camera-status/severity/date filters on the map.
-- **System notification** types for camera-offline / camera-recovered / AI-pipeline-offline / storage-warning (would need a background state-diff watcher). Current notifications are event-driven only (watchlist match, incident/case created + assigned).
+- **Camera Management console** (F4) — a dedicated per-camera admin page: edit metadata, an explicit "maintenance mode" state, recent-incidents / recent-detections panels. Today: camera CRUD via `PATCH /cameras/{id}`, effective status, and the new health-history section in the camera modal; enable/disable is via status. `camera_health_history` provides the "previous state" the console would show.
+- **GIS operational layers + filters** (F10) — layer toggles (active alerts / active incidents / case locations) and REAL·MOCK / online·offline / department / severity / date filters on the map. Today: the Investigation map shows cameras + the chronological camera-sighting trail; no layer/filter panel.
+- **Journey Replay UI polish** (F11) — numbered markers, a timeline scrubber, per-sighting evidence preview in the transport bar. Today: play/pause/reset + click-to-focus (map↔timeline) already work in the Investigation console; the scrubber and numbered-marker styling are not added.
+- **Operational analytics dashboard** (F17) — a dedicated police-ops charts page (detections/matches/incidents/cases per day, busiest cameras, camera availability, TODAY/7d/30d/custom). Today: `GET /api/v1/analytics/overview` + the Reports Center `daily-summary` CSV cover the underlying aggregates; no dedicated charts screen.
+- **Global Activity Feed widget** (F18) — a live "09:31 Officer X acknowledged Alert …" stream on the command center. Today: the Admin Audit Center is the full activity log; the compact feed widget is not added.
+- **Data export / retention admin panel** (F16) — a UI for `POST /admin/retention/purge` + retention config + last-purge status + selective record export. Today: the endpoint exists and is audited; no admin screen. Watchlist and case/report CSV exports exist.
+- **PDF report output** — Reports Center exports CSV for all 9 reports; PDF is deferred (the vehicle-journey PDF from the earlier phase still works client-side).
+- **User / role / department administration** — `GET /api/v1/admin/users` (read-only) exists for assignment dropdowns; full user CRUD + department/region association is not built.
+- **AI-pipeline-offline / storage-warning notifications** — `CAMERA_OFFLINE` / `CAMERA_RECOVERED` are implemented (real transitions). Pipeline-degradation and storage-quota notification types are not (would need thresholds on the existing `/dashboard/health` signals).
 
 Pre-existing gaps:
 
@@ -131,11 +151,12 @@ Explicitly **not built** — target design only (see `SCALABILITY.md`, which is 
 
 | Suite | Command | Result |
 | :--- | :--- | :--- |
-| Backend | `cd backend && DATABASE_URL=…/sentinel_test pytest -q` | **138 passed** (~59 s) — 112 baseline + 26 operational-layer (`test_incidents` 9, `test_cases` 8, `test_notifications` 5, `test_audit_center` 3, `test_demo_acceptance_flow` 1) |
-| Backend on **migrated** schema | `DATABASE_URL=…/sentinel_migtest` (alembic `upgrade head`) `pytest test_incidents test_cases test_notifications test_audit_center test_demo_acceptance_flow` | **26 passed** — app runs identically on a migration-built DB, not just `create_all` |
-| Migration round-trip | `alembic upgrade head` on empty DB, then `downgrade 0005` → `upgrade head` | **OK** — `0001…0006`, 8 new tables, `alembic check` shows no drift on the new tables |
-| AI / ingestion | `.venv/bin/python -m pytest tests/ -q` | **143 passed, 8 skipped** (~52 s) — unchanged (events ingest only gained a best-effort notification write) |
-| Frontend build | `cd frontend && npm run build` | **OK** — `dist/` built (~5 s) |
+| Backend | `cd backend && DATABASE_URL=…/sentinel_test pytest -q` | **157 passed** (~93 s) — 138 prior + 19 Phase 11 (`test_advanced_search` 3, `test_watchlist_management` 7, `test_phase11_workflow` 6, `test_phase11_reports_and_camera_health` 3) |
+| Migration round-trip | `alembic upgrade head` on empty DB, then `downgrade 0005` → `upgrade head` | **OK** — `0001…0007` up/down/up clean; `alembic check` shows no NEW drift on Phase 11 objects (only the pre-existing SQLModel `index=True`-vs-migration naming noise + the deliberately-raw `pg_trgm` functional index) |
+| Fresh Docker + Phase 11 smoke | `docker compose down -v && up -d --build`; migrate `sentinel` to `0007`; drive the API | **PASS** — advanced/global search, saved searches, watchlist CRUD + CSV import/export, alert assign/escalate/resolve, incident + case timelines, work queue, all 9 report CSVs, camera health history, RBAC, and the full GJ18TC0450 demo acceptance flow. GJ18TC0450 demo watchlist entry preserved through a CSV import. |
+| AI / ingestion | `.venv/bin/python -m pytest tests/ -q` | **143 passed, 8 skipped** (~39 s) — unchanged. |
+| Real cam04 / cam06 smoke | `run_pipeline_service.py --cameras cam04,cam06 --no-backend --duration 80` | RTSP auth OK (reconnect 19–27 s), both reach ONLINE, 554 frames decoded, YOLO+ByteTrack run, 6 AI events. 5/6 plates `UNKNOWN`; 1 event carried a spurious 7-char OCR string (`0620516`, not a valid GJ plate) — unchanged pre-existing OCR behaviour on low-quality wide-area feeds, **not** a Phase 11 regression (no `ai/` / ingestion file touched) and **not** a successful recognition. |
+| Frontend build | `cd frontend && npm run build` | **OK** — 2113 modules, `dist/` built (~5 s). Dev-server transforms all new modules with 0 errors; all new routes serve. Not a rendered browser click-test (Chrome extension unavailable). |
 
 ### Fresh-volume Docker
 
@@ -269,3 +290,68 @@ calls degrade to an explicit error/empty state — no mock fallback rows.
 ### Not done this phase
 
 See §D "Operational-layer follow-ups".
+
+---
+
+## J. PHASE 11 — ADVANCED OPERATIONAL FEATURES (2026-09-08)
+
+### Data model (migration `0007`, additive only)
+
+| Change | Purpose |
+| :--- | :--- |
+| `saved_searches` (table) | Saved Investigations — `params` JSON is criteria only, never a result set |
+| `camera_health_history` (table) | Append-only camera effective-status transition log (FEATURE 5) |
+| `watchlist.description`, `.effective_from`, `.updated_by_user_id` | Watchlist management console (FEATURE 3); `effective_from` enforced by `active_watchlist_clause()` |
+| `alerts.assigned_to_user_id`, `.escalated_by_user_id`, `.escalated_at`, `.escalation_reason`, `.resolved_by_user_id`, `.resolved_at` | Alert escalation workflow (FEATURE 6) |
+| `AlertStatus` enum gains `ESCALATED` (`ALTER TYPE … ADD VALUE`) | " |
+| `pg_trgm` extension + GIN indexes `ix_ve_plate_trgm`, `ix_watchlist_plate_trgm` | Bounded partial-plate `ILIKE` search |
+
+Nothing in the CCTV / ANPR / ByteTrack / watchlist-match / alert-generation
+pipeline was redesigned. The one read-side change is
+`watchlist_engine.active_watchlist_clause()` gaining an `effective_from`
+term (NULL = effective immediately, so every prior entry — including the
+GJ18TC0450 demo entry — is unaffected; verified by test + CSV-import smoke).
+
+### API added
+
+`POST /search/vehicles` · `GET /search/global` · `GET|POST /saved-searches`,
+`GET|PATCH|DELETE /saved-searches/{id}` · `GET /watchlist` (now
+filtered/sorted/paginated) · `PATCH /watchlist/{id}` ·
+`POST /watchlist/{id}/activate` · `GET /watchlist/categories` ·
+`GET /watchlist/export.csv` · `POST /watchlist/import.csv` ·
+`POST /alerts/{id}/assign|escalate|resolve` ·
+`GET /incidents/{id}/timeline` · `GET /cases/{id}/timeline` ·
+`GET /work-queue` · `GET /reports` + `GET /reports/{key}.csv` ·
+`GET /cameras/{id}/health/history`. Every list is bounded + paginated;
+every mutation is RBAC-guarded (`ADMIN`/`OFFICER` for watchlist & alert
+workflow, owner-or-`ADMIN` for saved searches, any authenticated for
+read/search) and audited (`ADVANCED_SEARCH`, `SAVED_SEARCH_*`,
+`WATCHLIST_UPDATED/ACTIVATED/IMPORT/EXPORT`, `ALERT_ASSIGNED/ESCALATED/RESOLVED`,
+`REPORT_EXPORT`).
+
+### Background task
+
+`app.main._camera_staleness_watcher_loop` — a single in-process asyncio
+task, every `CAMERA_HEALTH_WATCH_INTERVAL_S` (30 s), recomputes each
+camera's effective status and records a `camera_health_history` row +
+`CAMERA_OFFLINE`/`CAMERA_RECOVERED` notification on a real transition.
+Dedup against the last history row means a camera that stays offline never
+re-notifies. Bounded query (all cameras). Off in the test suite
+(`CAMERA_HEALTH_WATCH_ENABLED=false`); transitions are tested directly.
+
+### Frontend
+
+New routes: `/search` (Advanced Search + saved investigations),
+`/watchlists` (management console), `/my-work` (Officer Work Queue),
+`/reports` (Reports Center). Navbar gains those tabs + a debounced
+**Global Quick Search** box. Incident & Case detail pages gain a
+filterable **Timeline** panel. Alert cards gain an **Escalate** action and
+show escalation state. The camera modal shows **health history**. Dashboard
+quick actions extended (Advanced Search / My Work / Watchlists / Reports).
+All new calls degrade to explicit error/empty states — no mock fallback.
+
+### Not done this phase
+
+See §D "Phase 11 follow-ups" — Camera Management console, GIS layer
+filters, Journey Replay polish, operational-analytics charts page, Activity
+Feed widget, retention/export admin panel, PDF report output.

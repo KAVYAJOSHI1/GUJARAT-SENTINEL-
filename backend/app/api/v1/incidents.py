@@ -42,10 +42,12 @@ from app.schemas.incident import (
     IncidentStatusUpdate,
     IncidentUpdate,
 )
+from app.schemas.timeline import Timeline
 from app.services.audit import client_ip, record_audit
 from app.services.notifications import push_notification
 from app.models.base import NotificationSeverity
 from app.services.plate_utils import normalize_plate
+from app.services.timeline_builder import build_incident_timeline
 
 router = APIRouter()
 
@@ -336,6 +338,25 @@ def get_incident(
     _: CurrentUser = Depends(get_current_user),
 ):
     return _reload_detail(db, incident_id)
+
+
+@router.get("/{incident_id}/timeline", response_model=Timeline)
+def get_incident_timeline(
+    incident_id: str,
+    category: str | None = Query(
+        default=None, description="comma-separated: ALERT,INCIDENT,EVIDENCE,NOTE,VEHICLE,STATUS,ACTIVITY"
+    ),
+    db: Session = Depends(get_db),
+    _: CurrentUser = Depends(get_current_user),
+):
+    """Chronological timeline (FEATURE 7) derived from the linked alert, this
+    incident's audit trail, notes, evidence links and the vehicle's camera
+    sightings -- no new event records."""
+    inc = db.get(Incident, incident_id)
+    if inc is None:
+        raise NotFoundError("Incident", incident_id)
+    cats = {c.strip().upper() for c in category.split(",")} if category else None
+    return build_incident_timeline(db, inc, cats)
 
 
 @router.patch("/{incident_id}", response_model=IncidentDetail)

@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, status
 from fastapi.responses import FileResponse
 from geoalchemy2.functions import ST_X, ST_Y
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlmodel import Session
 
 from app.api.deps import get_current_user, require_ingest_auth, verify_bearer_header_or_query
@@ -31,8 +31,11 @@ from app.schemas.camera import (
     GeoJSONFeatureCollection,
     GeoJSONPointGeometry,
 )
+from app.schemas.camera_health import CameraHealthHistoryResponse, CameraHealthHistoryRow
 from app.services.audit import record_audit
+from app.services.camera_health import record_transition_if_changed
 from app.services.camera_resolver import find_camera, upsert_camera_from_registry
+from app.models.camera_health_history import CameraHealthHistory
 
 router = APIRouter()
 
@@ -231,6 +234,7 @@ def push_camera_health(
     updated = 0
     skipped: list[str] = []
     now = datetime.utcnow()
+    transitioned: list[Camera] = []
     for entry in payload.streams:
         camera = find_camera(db, entry.camera_id)
         if camera is None:
@@ -248,7 +252,19 @@ def push_camera_health(
         camera.health_updated_at = now
         db.add(camera)
         updated += 1
+        transitioned.append(camera)
     db.commit()
+
+    # Phase 11 FEATURE 5/13: record an effective-status transition + emit a
+    # camera offline/recovered notification, but only on a real change
+    # (dedup lives in record_transition_if_changed). Best-effort; a failure
+    # here never affects the health push result.
+    for camera in transitioned:
+        db.refresh(camera)
+        record_transition_if_changed(
+            db, camera, _effective_status(camera), source="health_push",
+            stream_fps=camera.stream_fps, reconnect_count=camera.reconnect_count,
+        )
     return CameraHealthResult(updated=updated, skipped=skipped)
 
 
@@ -277,6 +293,41 @@ def get_mock_camera_video(
     if not path:
         raise NotFoundError("Mock camera video", camera_id)
     return FileResponse(path, media_type=media_type)
+
+
+@router.get("/{camera_id}/health/history", response_model=CameraHealthHistoryResponse)
+def camera_health_history(
+    camera_id: str,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    """Effective-status transition log for one camera (Phase 11 FEATURE 5).
+    Lightweight PostgreSQL history -- one row per real ONLINE<->OFFLINE
+    change, never a per-second metric sample."""
+    camera = db.get(Camera, camera_id)
+    if camera is None:
+        raise NotFoundError("Camera", camera_id)
+    limit = max(1, min(limit, 500))
+    total = db.execute(
+        select(func.count(CameraHealthHistory.id)).where(
+            CameraHealthHistory.camera_id == camera_id
+        )
+    ).scalar() or 0
+    rows = db.execute(
+        select(CameraHealthHistory)
+        .where(CameraHealthHistory.camera_id == camera_id)
+        .order_by(CameraHealthHistory.detected_at.desc())
+        .limit(limit)
+    ).scalars().all()
+    return CameraHealthHistoryResponse(
+        camera_id=camera_id,
+        camera_code=camera.code,
+        current_status=_effective_status(camera),
+        health_updated_at=camera.health_updated_at,
+        transitions=[CameraHealthHistoryRow.model_validate(r) for r in rows],
+        total=int(total),
+    )
 
 
 @router.get("/{camera_id}", response_model=CameraRead)

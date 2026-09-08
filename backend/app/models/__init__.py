@@ -13,6 +13,8 @@ from app.models.pipeline_status import PipelineStatus
 from app.models.incident import Incident, IncidentNote, IncidentEvidence
 from app.models.case import Case, CaseNote, CaseIncident, CaseEvidence
 from app.models.notification import Notification
+from app.models.saved_search import SavedSearch
+from app.models.camera_health_history import CameraHealthHistory
 
 __all__ = [
     "Camera", "VehicleEvent", "Watchlist", "Alert", "User", "AuditLog",
@@ -20,4 +22,5 @@ __all__ = [
     "Incident", "IncidentNote", "IncidentEvidence",
     "Case", "CaseNote", "CaseIncident", "CaseEvidence",
     "Notification",
+    "SavedSearch", "CameraHealthHistory",
 ]
