@@ -26,6 +26,13 @@ export async function newBrowser() {
   const page = await ctx.newPage();
   const consoleErrors = [];
   page.on("console", (m) => { if (m.type() === "error") consoleErrors.push(m.text()); });
+  // set E2E_TRACE_AUTH=1 to print any 401/403 URL (diagnosing an auth race)
+  if (process.env.E2E_TRACE_AUTH) {
+    page.on("response", (r) => {
+      if (r.status() === 401 || r.status() === 403)
+        console.log("   [HTTP " + r.status() + "] " + r.request().method() + " " + r.url());
+    });
+  }
   page.on("pageerror", (e) => consoleErrors.push("pageerror: " + e.message));
   page.on("requestfailed", (r) => {
     const u = r.url();

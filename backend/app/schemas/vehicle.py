@@ -33,6 +33,9 @@ class VehicleSighting(BaseModel):
     # Phase 13: REAL government camera vs a local MOCK/demo feed. Derived
     # from the camera code prefix (never labels a real feed as mock).
     is_mock: bool = False
+    # Phase 16: honest provenance -- DEMO (seeded data) > MOCK (local stream)
+    # > REAL (government feed). Never labels seeded/demo data as REAL.
+    feed_source: str = "REAL"
     # A directly OBSERVED sighting is always a CONFIRMED fact.
     kind: str = "CONFIRMED"
 
