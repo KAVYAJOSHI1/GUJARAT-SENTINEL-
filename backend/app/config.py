@@ -139,6 +139,11 @@ class Settings(BaseSettings):
     # pipeline may also POST a precomputed `embedding[]` on the ingest event,
     # which is always stored verbatim regardless of this setting.
     REID_EMBEDDING_BACKEND: str = "attribute"
+    # Phase 15E alias -- REID_BACKEND=attribute|torch. When set to "torch"
+    # and torch/torchvision/PIL import, a CNN backbone is used; otherwise it
+    # silently falls back to the attribute baseline (see GET /ai/reid/status).
+    REID_BACKEND: str = "attribute"
+    REID_TORCH_MODEL: str = "mobilenet_v3_small"   # mobilenet_v3_small | resnet50
     # Index an embedding for every ingested vehicle_event (best-effort, never
     # blocks ingest). Off in the test suite.
     REID_AUTO_INDEX: bool = True

@@ -31,7 +31,7 @@ from app.schemas.reid import (
     ReIDSearchRequest,
     ReIDSearchResponse,
 )
-from app.services.ai.reid import VehicleReIDService
+from app.services.ai.reid import VehicleReIDService, reid_backend_status
 from app.services.audit import client_ip, record_audit
 from app.services.plate_utils import normalize_plate
 from sqlalchemy import select
@@ -59,6 +59,13 @@ def _resolve_query_event(db: Session, body: ReIDSearchRequest) -> str:
             raise NotFoundError("VehicleEvent for plate", norm)
         return ev.id
     raise SentinelException("VALIDATION_ERROR", "Provide either event_id or plate.", 400)
+
+
+@router.get("/status")
+def reid_status(_: CurrentUser = Depends(get_current_user)):
+    """Phase 15E -- which Re-ID embedding backend is active, on what device,
+    and whether it fell back to the attribute baseline."""
+    return reid_backend_status()
 
 
 @router.post("/search", response_model=ReIDSearchResponse)

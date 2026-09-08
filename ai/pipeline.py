@@ -114,6 +114,13 @@ class AIPipeline:
         # with a weak disagreeing frame.
         from ai.anpr.plate_track_state import PlateTrackStore
         self.plate_track_store = PlateTrackStore()
+        # Phase 15E: optional real appearance embedding on the vehicle crop
+        # (SENTINEL_REID_EMBED=1). Off by default; fails soft.
+        try:
+            from ai.reid.embed import VehicleEmbedder
+            self.vehicle_embedder = VehicleEmbedder()
+        except Exception:  # noqa: BLE001
+            self.vehicle_embedder = None
 
         # Bounded in-memory buffer for retry on API *unreachability* (5xx /
         # connection errors). 4xx responses are NOT buffered -- retrying a
@@ -697,6 +704,13 @@ class AIPipeline:
                     "char_confidence": (self._plate_track_meta.get(track_key) or {}).get("char_confidence", []),
                 },
             }
+
+            # Phase 15E: attach a real appearance embedding when enabled.
+            if self.vehicle_embedder is not None and self.vehicle_embedder.enabled:
+                _emb = self.vehicle_embedder.embed_bgr(vehicle_crop)
+                if _emb:
+                    event_payload["embedding"] = _emb
+                    event_payload["embedding_model"] = self.vehicle_embedder.model_name
 
             # Optionally inline the snapshot so the backend can store it in
             # object storage (works across container / host boundaries, unlike
