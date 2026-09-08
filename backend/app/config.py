@@ -139,6 +139,37 @@ class Settings(BaseSettings):
     REID_SIMILARITY_MODERATE: float = 0.80
     REID_SIMILARITY_WEAK: float = 0.65
 
+    # --- Phase 14: Camera Transition Intelligence (§3) ---
+    # Statistical travel-time baselines between camera pairs, from existing
+    # vehicle_events (NOT ML). Recomputed by a slow background task + on
+    # demand. Off in the test suite.
+    CAMERA_TRANSITION_RECOMPUTE_ENABLED: bool = True
+    CAMERA_TRANSITION_RECOMPUTE_INTERVAL_S: int = 3600
+    CAMERA_TRANSITION_LOOKBACK_DAYS: int = 30
+    CAMERA_TRANSITION_MAX_EVENTS: int = 50000
+    CAMERA_TRANSITION_MIN_SAMPLES: int = 2
+    CAMERA_TRANSITION_MAX_HOP_SECONDS: int = 3 * 3600
+    CAMERA_TRANSITION_TOPN: int = 5
+    # distance fallback model (urban) when there is no history
+    CAMERA_TRANSITION_MODEL_MAX_KMH: float = 60.0
+    CAMERA_TRANSITION_MODEL_MIN_KMH: float = 8.0   # crawling urban congestion
+    CAMERA_TRANSITION_FAST_FACTOR: float = 0.7      # < 0.7 * typical_min -> FAST
+    CAMERA_TRANSITION_IMPOSSIBLE_FACTOR: float = 4.0  # > 4 * typical_max -> hard cap
+
+    # --- Phase 14: Cross-Camera Correlation (§2) ---
+    # Explainable weighted score. Weights need not sum to 1 -- the overall is
+    # normalised by the sum of the weights actually present.
+    CORRELATION_W_PLATE: float = 0.40
+    CORRELATION_W_APPEARANCE: float = 0.18
+    CORRELATION_W_TEMPORAL: float = 0.18
+    CORRELATION_W_GEOGRAPHIC: float = 0.12
+    CORRELATION_W_TYPE: float = 0.07
+    CORRELATION_W_COLOR: float = 0.05
+    CORRELATION_CONF_MEDIUM: float = 0.72
+    CORRELATION_CONF_LOW: float = 0.5
+    CORRELATION_GEO_NEAR_M: float = 800.0
+    CORRELATION_GEO_FAR_M: float = 8000.0
+
     # --- AI event ingestion ---
     # Shared secret the AI pipeline sends as the `X-Ingest-Key` header on
     # POST /api/v1/events/ai-detection. When unset, that endpoint also

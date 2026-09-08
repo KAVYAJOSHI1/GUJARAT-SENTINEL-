@@ -17,6 +17,7 @@ from app.models.saved_search import SavedSearch
 from app.models.camera_health_history import CameraHealthHistory
 from app.models.anomaly_event import AnomalyEvent
 from app.models.vehicle_embedding import VehicleEmbedding
+from app.models.camera_transition_stat import CameraTransitionStat
 
 __all__ = [
     "Camera", "VehicleEvent", "Watchlist", "Alert", "User", "AuditLog",
@@ -27,4 +28,5 @@ __all__ = [
     "SavedSearch", "CameraHealthHistory",
     "AnomalyEvent",
     "VehicleEmbedding",
+    "CameraTransitionStat",
 ]

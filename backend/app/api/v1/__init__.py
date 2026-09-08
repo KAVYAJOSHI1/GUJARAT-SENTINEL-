@@ -9,6 +9,7 @@ from app.api.v1 import (
     auth,
     cameras,
     cases,
+    correlation,
     dashboard,
     events,
     incidents,
@@ -40,6 +41,7 @@ api_router.include_router(work_queue.router, prefix="/work-queue", tags=["work-q
 api_router.include_router(reports.router, prefix="/reports", tags=["reports"])
 api_router.include_router(ai.router, prefix="/ai", tags=["ai"])
 api_router.include_router(reid.router, prefix="/ai/reid", tags=["ai", "reid"])
+api_router.include_router(correlation.router, prefix="/ai/correlation", tags=["ai", "correlation"])
 api_router.include_router(analytics.router, prefix="/analytics", tags=["analytics"])
 api_router.include_router(pipeline.router, prefix="/pipeline", tags=["pipeline"])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
