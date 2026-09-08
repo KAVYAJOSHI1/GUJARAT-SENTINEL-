@@ -145,6 +145,8 @@ export default function Dashboard() {
       {/* ── Quick actions (command center) ─────────────────────────────────── */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
         <QuickAction icon={Bot} label="AI Copilot" onClick={() => navigate("/copilot")} />
+        <QuickAction icon={BarChart3} label="Traffic Intelligence" onClick={() => navigate("/traffic")} />
+        <QuickAction icon={Activity} label="Camera Reliability" onClick={() => navigate("/camera-intelligence")} />
         <QuickAction icon={Search} label="Advanced Search" onClick={() => navigate("/search")} />
         <QuickAction icon={Briefcase} label="My Work" onClick={() => navigate("/my-work")} />
         <QuickAction icon={ClipboardList} label="Incidents" onClick={() => navigate("/incidents")} />

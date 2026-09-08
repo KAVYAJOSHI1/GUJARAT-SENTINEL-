@@ -25,6 +25,7 @@ import SearchBar from "../components/investigation/SearchBar.jsx";
 import VehicleProfileCard from "../components/investigation/VehicleProfileCard.jsx";
 import SightingTimeline from "../components/investigation/SightingTimeline.jsx";
 import JourneyIntelligence from "../components/investigation/JourneyIntelligence.jsx";
+import VisualMatchesPanel from "../components/investigation/VisualMatchesPanel.jsx";
 import { fetchCamerasGeoJSON, searchVehicle } from "../services/investigationApi.js";
 import { exportVehicleReportCSV, exportVehicleReportPDF } from "../utils/reportExporter.js";
 import { CITY_ZOOM, FOCUS_ZOOM, GUJARAT_CENTER, GUJARAT_ZOOM } from "../lib/mockGisData.js";
@@ -352,6 +353,12 @@ export default function InvestigationPage() {
               >
                 <Search size={13} /> Ask AI about this vehicle
               </button>
+              <button
+                onClick={() => navigate(`/graph?plate=${encodeURIComponent(result.plate)}`)}
+                style={csvBtn}
+              >
+                <Search size={13} /> Investigation graph
+              </button>
             </div>
           </div>
 
@@ -381,6 +388,8 @@ export default function InvestigationPage() {
           </div>
 
           <JourneyIntelligence result={result} onSelectCamera={handleSelectSighting} />
+
+          <VisualMatchesPanel plate={result?.plate} />
 
           <div className="investigation-grid">
             {/* LEFT — chronological timeline */}

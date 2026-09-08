@@ -58,7 +58,10 @@ _TEXTURE_DIM = 8
 _TYPE_WEIGHT = 3.0
 _COLOR_WEIGHT = 2.5
 _META_WEIGHT = 0.6
-_TEXTURE_WEIGHT = 1.4
+# Texture is the "which specific object" signal. Weighted so that two
+# vehicles of the SAME type + colour but different identity land around
+# MODERATE (a lead), never STRONG -- only an exact plate match is "same".
+_TEXTURE_WEIGHT = 1.0
 
 ATTRIBUTE_MODEL_NAME = "attr-baseline-v1"
 
