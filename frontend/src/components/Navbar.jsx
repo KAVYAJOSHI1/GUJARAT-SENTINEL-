@@ -15,6 +15,7 @@ const TABS = [
   { to: "/cameras", label: "Cameras" },
   { to: "/alerts", label: "Alerts" },
   { to: "/anomalies", label: "Anomalies" },
+  { to: "/traffic", label: "Traffic" },
   { to: "/incidents", label: "Incidents" },
   { to: "/cases", label: "Cases" },
   { to: "/search", label: "Search" },

@@ -156,6 +156,12 @@ class Settings(BaseSettings):
     CAMERA_TRANSITION_FAST_FACTOR: float = 0.7      # < 0.7 * typical_min -> FAST
     CAMERA_TRANSITION_IMPOSSIBLE_FACTOR: float = 4.0  # > 4 * typical_max -> hard cap
 
+    # --- Phase 14: Traffic Analytics (§4, §5) ---
+    # All SQL aggregates over existing vehicle_events -- no video reprocessing.
+    TRAFFIC_TOPN: int = 10
+    TRAFFIC_CONGESTION_MODERATE_PER_HOUR: float = 40.0
+    TRAFFIC_CONGESTION_HIGH_PER_HOUR: float = 120.0
+
     # --- Phase 14: Cross-Camera Correlation (§2) ---
     # Explainable weighted score. Weights need not sum to 1 -- the overall is
     # normalised by the sum of the weights actually present.

@@ -16,6 +16,7 @@ const TITLES = {
   "/cameras/manage": "Camera Management",
   "/alerts": "Alerts",
   "/anomalies": "AI Anomaly Detection",
+  "/traffic": "Traffic Intelligence",
   "/incidents": "Incident Center",
   "/cases": "Investigation Cases",
   "/search": "Advanced Search",
