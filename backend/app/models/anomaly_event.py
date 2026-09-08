@@ -50,6 +50,12 @@ class AnomalyEvent(TimestampMixin, table=True):
     confidence_level: ConfidenceLevel = Field(default=ConfidenceLevel.LOW, nullable=False)
     reasoning: Optional[str] = Field(default=None, nullable=True)
 
+    # Phase 14 §6 -- extra detectors. All optional; STOPPED_VEHICLE leaves
+    # them NULL.
+    zone_name: Optional[str] = Field(default=None, nullable=True)           # RESTRICTED_ZONE
+    direction_deg: Optional[float] = Field(default=None, nullable=True)     # WRONG_WAY: observed heading
+    expected_direction_deg: Optional[float] = Field(default=None, nullable=True)  # WRONG_WAY: permitted heading
+
     # a representative vehicle_event (first sighting of the track) for evidence
     evidence_event_id: Optional[str] = Field(
         default=None, foreign_key="vehicle_events.id", nullable=True
@@ -65,10 +71,12 @@ class AnomalyEvent(TimestampMixin, table=True):
     reviewed_at: Optional[datetime] = Field(default=None, nullable=True)
 
     __table_args__ = (
-        # dedup lookup: "already flagged this camera+track+start?"
+        # dedup lookup: "already flagged this camera+track+start FOR THIS KIND?"
+        # (Phase 14 §6: kind is in the key so one track can be both a
+        # STOPPED_VEHICLE and a WRONG_WAY without colliding.)
         Index(
-            "ux_anomaly_camera_track_start",
-            "camera_id", "track_id", "first_seen",
+            "ux_anomaly_camera_track_start_kind",
+            "camera_id", "track_id", "first_seen", "kind",
             unique=True,
         ),
         Index("ix_anomaly_events_status_created", "status", "created_at"),

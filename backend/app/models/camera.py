@@ -4,10 +4,10 @@ Camera registry table.
 index for fast bounding-box / proximity queries used by the GeoJSON API.
 """
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 from geoalchemy2 import Geometry
-from sqlalchemy import Column, Index
+from sqlalchemy import JSON, Column, Index
 from sqlmodel import Field
 
 from app.models.base import TimestampMixin, CameraStatus, gen_uuid
@@ -39,6 +39,16 @@ class Camera(TimestampMixin, table=True):
     stream_fps: Optional[float] = Field(default=None, nullable=True)
     frame_drop_count: Optional[int] = Field(default=None, nullable=True)
     reconnect_count: Optional[int] = Field(default=None, nullable=True)
+
+    # --- Phase 14 §6: behaviour-analytics configuration (all optional) ---
+    # Compass bearing (degrees, 0 = N, 90 = E) the traffic at this camera is
+    # PERMITTED to flow. A track moving consistently opposite -> WRONG_WAY.
+    permitted_direction_deg: Optional[float] = Field(default=None, nullable=True)
+    # List of restricted polygons: [{"name": str, "points": [[lat, lon], ...]}].
+    # A tracked vehicle whose sighting falls inside one -> RESTRICTED_ZONE.
+    restricted_zones: Optional[List[dict]] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
     # Server-side receipt time of the last health push -- used to detect a
     # stalled/dead ingestion worker (stale health) even if the last status it
     # ever reported was ONLINE.

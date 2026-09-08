@@ -104,8 +104,11 @@ class AnomalyStatus(str, enum.Enum):
 
 
 class AnomalyKind(str, enum.Enum):
-    # One kind only this phase (per the brief). More would be additive.
     STOPPED_VEHICLE = "STOPPED_VEHICLE"
+    # Phase 14 §6 -- expanded behaviour analytics (same anomaly_events ->
+    # alerts -> notifications -> incidents workflow).
+    WRONG_WAY = "WRONG_WAY"
+    RESTRICTED_ZONE = "RESTRICTED_ZONE"
 
 
 class ConfidenceLevel(str, enum.Enum):

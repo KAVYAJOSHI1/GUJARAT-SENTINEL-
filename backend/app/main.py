@@ -106,17 +106,18 @@ async def _anomaly_scan_loop() -> None:
         try:
             db = SessionLocal()
             try:
-                result = BehaviorAnalyticsService(db).scan_stopped_vehicles()
+                result = BehaviorAnalyticsService(db).scan()
                 for a in result["anomalies"]:
                     if a.alert_id:
                         await connection_manager.broadcast({
                             "type": "ALERT", "alert_id": a.alert_id, "source": "ANOMALY",
                             "plate_number": a.plate_number_normalized or "UNKNOWN",
                             "camera_code": a.camera_code,
+                            "anomaly_kind": a.kind.value,
                             "priority_level": settings.ANOMALY_PRIORITY,
                         })
                 if result["created"]:
-                    logger.info("anomaly scan: %d new stopped-vehicle event(s)", result["created"])
+                    logger.info("anomaly scan: %d new anomaly event(s)", result["created"])
             finally:
                 db.close()
         except Exception:  # noqa: BLE001 -- a failed scan must not kill the loop

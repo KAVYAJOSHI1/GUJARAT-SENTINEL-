@@ -278,8 +278,47 @@ def main() -> int:
                 location=_pt(lat + jitter, lon + jitter)))
         db.commit()
 
-        res = BehaviorAnalyticsService(db).scan_stopped_vehicles()
-        print(f"[seed_ai_demo] anomaly scan -> {res['created']} stopped-vehicle event(s)")
+        # --- WRONG-WAY vehicle at CAM-02 (permitted flow = NE / 45°) ---
+        cam02 = cam_by_code["CAM-02"]
+        _, _, la2, lo2 = _CAMERAS[1]
+        cam02.permitted_direction_deg = 45.0        # traffic should head NE
+        db.add(cam02)
+        ww_start = now - timedelta(minutes=18)
+        for i in range(6):
+            # travelling SW (~225°) -- straight into oncoming traffic
+            db.add(VehicleEvent(
+                plate_number="GJ05WW1201", plate_number_normalized="GJ05WW1201",
+                camera_id=cam02.id, camera_code="CAM-02", track_id=8801,
+                timestamp=ww_start + timedelta(seconds=i * 12),
+                vehicle_type="car", vehicle_color="black", confidence_score=0.78,
+                latitude=la2 - i * 0.0006, longitude=lo2 - i * 0.0006,
+                location=_pt(la2 - i * 0.0006, lo2 - i * 0.0006)))
+
+        # --- RESTRICTED-ZONE entry at CAM-06 (a marked no-entry apron) ---
+        cam06 = cam_by_code["CAM-06"]
+        _, _, la6, lo6 = _CAMERAS[5]
+        cam06.restricted_zones = [{
+            "name": "Vijay Cross — pedestrian plaza (no vehicles)",
+            "points": [
+                [la6 - 0.0010, lo6 - 0.0010], [la6 - 0.0010, lo6 + 0.0010],
+                [la6 + 0.0010, lo6 + 0.0010], [la6 + 0.0010, lo6 - 0.0010],
+            ],
+        }]
+        db.add(cam06)
+        rz_start = now - timedelta(minutes=12)
+        for i in range(5):
+            db.add(VehicleEvent(
+                plate_number="GJ01RZ7788", plate_number_normalized="GJ01RZ7788",
+                camera_id=cam06.id, camera_code="CAM-06", track_id=8802,
+                timestamp=rz_start + timedelta(seconds=i * 15),
+                vehicle_type="auto-rickshaw", vehicle_color="yellow", confidence_score=0.72,
+                latitude=la6 + (i - 2) * 0.0002, longitude=lo6 + (i - 2) * 0.0002,
+                location=_pt(la6 + (i - 2) * 0.0002, lo6 + (i - 2) * 0.0002)))
+        db.commit()
+
+        res = BehaviorAnalyticsService(db).scan()
+        print(f"[seed_ai_demo] anomaly scan -> {res['created']} anomaly event(s) "
+              f"({', '.join(sorted({a.kind.value for a in res['anomalies']})) or 'none'})")
 
         # --- Phase 14: index appearance embeddings for every demo event so
         #     /ai/reid/search returns real candidates offline ---
