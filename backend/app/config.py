@@ -186,6 +186,13 @@ class Settings(BaseSettings):
     CORRELATION_GEO_NEAR_M: float = 800.0
     CORRELATION_GEO_FAR_M: float = 8000.0
 
+    # --- Phase 14: Investigation Agent (§7) + Gap Detection (§8) ---
+    AI_AGENT_ENABLED: bool = True
+    AI_AGENT_MAX_STEPS: int = 14            # hard ceiling on tool calls per run
+    GAP_LONG_INTERVAL_SECONDS: int = 45 * 60
+    GAP_MISSING_COVERAGE_METERS: float = 2500.0
+    GAP_PATH_CORRIDOR_METERS: float = 1500.0
+
     # --- AI event ingestion ---
     # Shared secret the AI pipeline sends as the `X-Ingest-Key` header on
     # POST /api/v1/events/ai-detection. When unset, that endpoint also

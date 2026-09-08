@@ -53,3 +53,14 @@ export async function reviewAnomaly(id, status) {
   const { data } = await http.post(`/ai/anomalies/${encodeURIComponent(id)}/review`, { status });
   return data;
 }
+
+// ─── Phase 14 §7/§8 — Investigation Agent + gap detection ─────────────────
+export async function runInvestigation(query, plate) {
+  const { data } = await http.post("/ai/investigation/run", { query, plate: plate || undefined });
+  return data;
+}
+
+export async function investigationGaps(plate) {
+  const { data } = await http.get("/ai/investigation/gaps", { params: { plate } });
+  return data;
+}

@@ -177,6 +177,63 @@ class AnomalyReviewRequest(BaseModel):
     status: AnomalyStatus
 
 
+# --------------------------------------------------------------------------- #
+#  Investigation Agent (Phase 14 §7) + Gap Detection (§8)                      #
+# --------------------------------------------------------------------------- #
+class AgentRunRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=500)
+    plate: Optional[str] = None          # optional page context
+
+
+class AgentStep(BaseModel):
+    tool: str
+    purpose: str
+    params: Optional[dict] = None
+    result_summary: Optional[str] = None
+    skipped: Optional[bool] = None
+    reason: Optional[str] = None
+    error: Optional[str] = None
+
+
+class ReportSection(BaseModel):
+    title: str
+    body: str
+
+
+class InvestigationGap(BaseModel):
+    kind: str
+    severity: str                        # low | medium | high
+    description: str
+    evidence_event_ids: List[str] = []
+    cameras_on_path: Optional[List[str]] = None
+
+
+class AgentRunResponse(BaseModel):
+    query: str
+    plate: Optional[str] = None
+    provider: str
+    read_only: bool = True
+    plan_source: str                     # deterministic | llm
+    steps: List[AgentStep] = []
+    summary: str
+    sections: List[ReportSection] = []
+    gaps: List[InvestigationGap] = []
+    related: List[RelatedRef] = []
+    confidence_score: float
+    confidence_level: str
+    disclaimer: str
+    generated_at: datetime
+
+
+class GapDetectionResponse(BaseModel):
+    plate: str
+    sighting_count: int
+    gap_count: int = 0
+    gaps: List[InvestigationGap] = []
+    disclaimer: Optional[str] = None
+    note: Optional[str] = None
+
+
 class AIStatus(BaseModel):
     provider: str
     llm_available: bool
