@@ -11,10 +11,11 @@ from fastapi import APIRouter, Depends, status
 from fastapi.responses import FileResponse
 from geoalchemy2.functions import ST_X, ST_Y
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session
 
 from app.api.deps import get_current_user, require_ingest_auth, verify_bearer_header_or_query
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import NotFoundError, SentinelException
 from app.core.rbac import require_roles
 from app.database import get_db
 from app.models.base import CameraStatus, UserRole
@@ -497,7 +498,23 @@ def delete_camera(
         raise NotFoundError("Camera", camera_id)
     code = camera.code
     db.delete(camera)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Phase 20 Part H/I: deleting a camera with existing detections/
+        # alerts/evidence linked to it previously surfaced as an unhandled
+        # 500 (a real IntegrityError propagating to the generic exception
+        # handler) -- found while cleaning up test-generated cameras.
+        # Refusing to silently cascade-delete real investigation evidence
+        # is the RIGHT behavior; returning a clean, explicit 409 instead of
+        # a 500 is the fix.
+        db.rollback()
+        raise SentinelException(
+            code="CAMERA_HAS_DEPENDENT_RECORDS",
+            message=f"Camera '{code or camera_id}' has vehicle detections, alerts, or evidence "
+                    "linked to it and cannot be deleted. Remove or reassign those records first.",
+            status_code=status.HTTP_409_CONFLICT,
+        )
     record_audit(
         db, action="CAMERA_DELETED", user_id=user.id, resource="camera", resource_id=camera_id,
         detail={"code": code},
