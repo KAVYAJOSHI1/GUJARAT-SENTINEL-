@@ -274,6 +274,12 @@ def build_report(svc: PipelineService, sampler: "Sampler", args, elapsed_s: floa
             "per_worker_resource_usage": final_metrics["per_worker_resource_usage"],
             "per_worker_latency": final_metrics["per_worker_latency"],
         }
+    if not pooled and hasattr(svc.consumer, "scheduler"):
+        # Phase 17 --fair-scheduler: the scheduler's own view of fairness
+        # (per-camera starvation counts, drop reasons, queue depth) --
+        # independent of / in addition to the starved_camera_ids check
+        # above (which only sees "processed a frame or not", not WHY).
+        report["fair_scheduler"] = svc.consumer.get_metrics()
     return report
 
 
@@ -283,6 +289,7 @@ def print_human_report(report: dict) -> None:
     print("=" * 72)
     print(f" cameras:            {', '.join(report['cameras']) or '(none)'}")
     print(f" ai_workers:         {report.get('ai_workers', 1)}")
+    print(f" fair_scheduler:     {'fair_scheduler' in report}")
     print(f" duration requested: {report['duration_requested_s']}s   actual: {report['duration_actual_s']}s")
     print(f" samples collected:  {report['sample_count']}")
     print("-" * 72)
@@ -357,6 +364,16 @@ def print_human_report(report: dict) -> None:
                 f"handoff_drops={p['per_worker_handoff_drops'].get(str(wid), p['per_worker_handoff_drops'].get(wid))} "
                 f"stale_evicted_total={stale_total}"
             )
+    if "fair_scheduler" in report:
+        fs = report["fair_scheduler"]
+        print("-" * 72)
+        print(f" FAIR SCHEDULER  frames_skipped(sampling)={fs['frames_skipped']}  load_state={fs['load_state']}")
+        for cam_id, c in fs["scheduler"]["cameras"].items():
+            print(
+                f"  {cam_id}: priority={c['priority']} processed={c['frames_processed']} "
+                f"dropped={c['frames_dropped_total']} starvation={c['starvation_count']} "
+                f"fps={_fmt(c['current_fps'])}"
+            )
     print("=" * 72)
 
 
@@ -380,6 +397,12 @@ def main() -> None:
     ap.add_argument("--ai-workers", type=int, default=int(os.getenv("SENTINEL_AI_WORKERS", "1")),
                     help="number of parallel AI worker processes (default 1 -- pre-Phase-2C behavior)")
     ap.add_argument("--frame-skip", type=int, default=int(os.getenv("FRAME_SKIP", "0")))
+    ap.add_argument(
+        "--fair-scheduler", action="store_true",
+        default=os.getenv("SENTINEL_FAIR_SCHEDULER", "0").lower() in ("1", "true", "yes", "on"),
+        help="Phase 17: single-consumer path only -- use ai.scheduled_consumer's fair, "
+             "priority-weighted scheduler instead of the plain FIFO FrameConsumer.",
+    )
     ap.add_argument("--device", default=os.getenv("SENTINEL_AI_DEVICE", "cpu"))
     ap.add_argument("--evidence-dir", default=os.getenv("SENTINEL_EVIDENCE_DIR", "evidence/benchmark"))
     ap.add_argument("--max-queue", type=int, default=500, help="ingestion frame-queue size")

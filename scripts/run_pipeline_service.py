@@ -39,7 +39,7 @@ import signal
 import sys
 import threading
 import time
-from typing import Optional
+from typing import Any, Optional
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -47,6 +47,8 @@ import requests  # noqa: E402
 
 from ai.adapter.ingestion_bridge import FrameConsumer  # noqa: E402
 from ai.pipeline import AIPipeline  # noqa: E402
+from ai.sampling import SamplingConfig  # noqa: E402
+from ai.scheduled_consumer import ScheduledFrameConsumer  # noqa: E402
 from ai.worker_pool import AIWorkerPool  # noqa: E402
 from ingestion.config import CONFIG  # noqa: E402
 from ingestion.models import CameraLocation, CameraRecord  # noqa: E402
@@ -163,7 +165,19 @@ class PipelineService:
         self.ai_workers = max(1, getattr(args, "ai_workers", 1))
         self.pool: Optional[AIWorkerPool] = None
         self.pipeline: Optional[AIPipeline] = None
-        self.consumer: Optional[FrameConsumer] = None
+        self.consumer: Optional[Any] = None
+
+        # Phase 17: --fair-scheduler / SENTINEL_FAIR_SCHEDULER=1 swaps the
+        # plain-FIFO FrameConsumer for ai.scheduled_consumer's bounded,
+        # priority-weighted fair scheduler -- same single consumer THREAD
+        # (no added CPU parallelism, unlike --ai-workers>1), just a
+        # different service order. Only meaningful on the single-consumer
+        # path; --ai-workers>1 already has its own (differently-scoped,
+        # currently not-recommended-on-constrained-hardware) fairness fix
+        # in ai/worker_pool.py, so the two are not combined here.
+        self.fair_scheduler = bool(getattr(args, "fair_scheduler", False)) and self.ai_workers <= 1
+        if getattr(args, "fair_scheduler", False) and self.ai_workers > 1:
+            log.warning("--fair-scheduler is ignored when --ai-workers>1 (ai.worker_pool has its own fairness fix)")
 
         if self.ai_workers <= 1:
             self.pipeline = AIPipeline(
@@ -177,14 +191,24 @@ class PipelineService:
                 # dry run: swallow dispatch so we still exercise detection/OCR/tracking
                 self.pipeline._dispatch_event = lambda payload: True
 
-            self.consumer = FrameConsumer(
-                self.manager.frame_queue,
-                self.pipeline,
-                on_events=self._on_events,
-                camera_names=self.camera_names,
-                stop_event=self._stop,
-                frame_skip=args.frame_skip,
-            )
+            if self.fair_scheduler:
+                self.consumer = ScheduledFrameConsumer(
+                    self.manager.frame_queue,
+                    self.pipeline,
+                    on_events=self._on_events,
+                    camera_names=self.camera_names,
+                    stop_event=self._stop,
+                )
+                self._configure_scheduled_cameras()
+            else:
+                self.consumer = FrameConsumer(
+                    self.manager.frame_queue,
+                    self.pipeline,
+                    on_events=self._on_events,
+                    camera_names=self.camera_names,
+                    stop_event=self._stop,
+                    frame_skip=args.frame_skip,
+                )
         else:
             self.pool = AIWorkerPool(
                 self.manager.frame_queue,
@@ -197,6 +221,33 @@ class PipelineService:
                 no_backend=args.no_backend,
                 stats_interval=args.stats_interval,
             )
+
+    # -- Phase 17: per-camera priority/mode/sampling from the registry ---- #
+    def _configure_scheduled_cameras(self) -> None:
+        """Reads optional ``priority`` / ``processing_mode`` / ``target_fps``
+        / ``min_fps`` / ``max_fps`` fields from each registry entry (all
+        optional -- a registry with none of these fields behaves exactly
+        like the plain FrameConsumer path: every camera at NORMAL priority,
+        ANPR mode, unrestricted sampling)."""
+        assert isinstance(self.consumer, ScheduledFrameConsumer)
+        for e in self.entries:
+            cam_id = str(e.get("camera_id") or e.get("id"))
+            priority = e.get("priority")
+            mode = e.get("processing_mode")
+            sampling = None
+            target_fps = e.get("target_fps")
+            if target_fps is not None:
+                sampling = SamplingConfig(
+                    target_fps=float(target_fps),
+                    min_fps=float(e.get("min_fps", 0.5)),
+                    max_fps=float(e.get("max_fps", 15.0)),
+                )
+            if priority or mode or sampling:
+                self.consumer.configure_camera(cam_id, priority=priority, mode=mode, sampling=sampling)
+                log.info(
+                    "camera %s: priority=%s mode=%s target_fps=%s",
+                    cam_id, priority or "NORMAL (default)", mode or "ANPR (default)", target_fps,
+                )
 
     # -- backend registration ---------------------------------------------- #
     def _api_base(self) -> str:
@@ -504,6 +555,13 @@ def main():
                     help="number of parallel AI worker processes, camera-sharded (default 1 -- "
                          "preserves the exact pre-Phase-2C single-consumer-thread behavior)")
     ap.add_argument("--frame-skip", type=int, default=int(os.getenv("FRAME_SKIP", "0")))
+    ap.add_argument(
+        "--fair-scheduler", action="store_true",
+        default=os.getenv("SENTINEL_FAIR_SCHEDULER", "0").lower() in ("1", "true", "yes", "on"),
+        help="Phase 17: single-consumer path only (--ai-workers=1, default) -- swap the plain FIFO "
+             "FrameConsumer for ai.scheduled_consumer's bounded, priority-weighted fair scheduler + "
+             "adaptive sampling. Same one consumer thread, no added CPU parallelism.",
+    )
     ap.add_argument("--device", default=os.getenv("SENTINEL_AI_DEVICE", "cpu"))
     ap.add_argument("--evidence-dir", default=os.getenv("SENTINEL_EVIDENCE_DIR", "evidence/live"))
     ap.add_argument("--max-queue", type=int, default=500)
