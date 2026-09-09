@@ -18,6 +18,16 @@ class VehicleEvent(TimestampMixin, table=True):
     __tablename__ = "vehicle_events"
 
     id: str = Field(default_factory=gen_uuid, primary_key=True, index=True)
+    # Phase 18 Part H: the AI pipeline's own event_id (ai/pipeline.py
+    # `f"evt_{uuid4().hex[:12]}"`), when the caller supplies one. Lets
+    # ingest_ai_detection() reject a re-delivered event (e.g. the pipeline's
+    # retry-on-connection-error path re-POSTing an event whose first
+    # attempt actually succeeded server-side but whose response was lost)
+    # instead of silently creating a second vehicle_events row for the same
+    # detection. Nullable + unique (Postgres allows any number of NULLs in
+    # a unique column) -- older/synthetic callers that never set it are
+    # unaffected.
+    event_id: Optional[str] = Field(default=None, nullable=True, index=True, unique=True)
     # Raw (pre-normalisation) plate string is stored for traceability but is
     # NEVER filtered on -- every lookup uses plate_number_normalized. No
     # index (the production migrations never created one either).
