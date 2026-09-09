@@ -221,3 +221,32 @@ together exceed the host's total core budget). The **next real step**, not
 done here, is re-running this exact same matrix on hardware with
 meaningfully more spare cores (or a GPU) before recommending
 `SENTINEL_AI_WORKERS>1` for any real deployment.
+
+---
+
+## 5. Fair scheduling for the DEFAULT (single-consumer) path + capacity model (Phase 17)
+
+Section 4 fixed FIFO-starvation for the multi-process pool, then found
+that pool currently costs more than it saves on this host — leaving the
+DEFAULT (`SENTINEL_AI_WORKERS=1`) path's own FIFO starvation (§3) still
+unfixed. Phase 17 (`docs/SCALE_TO_80000.md` §5, full data in
+`docs/PHASE17_BENCHMARK.md`) added a second, independent fix for the
+*same* bug that changes SERVICE ORDER, not parallelism —
+`ai/scheduled_consumer.py`'s `ScheduledFrameConsumer`, opt-in via
+`--fair-scheduler`. It reproduces the exact FIFO-starvation finding above
+(6 of 10 mock cameras get zero processed frames with the plain consumer),
+and does serve every camera when enabled — but **measured LOWER real
+AI-processed throughput than the FIFO baseline on this same 8-core host**
+(an extra scheduling thread competing for CPU/GIL time against the one
+real inference thread), so it too ships default-**off**, for the same
+class of reason as `SENTINEL_AI_WORKERS>1` above. Two independent
+attempts at scheduling infrastructure around one CPU-bound inference
+thread, two measured net costs on this hardware — that pattern is itself
+now the strongest evidence for what §2's Kafka/K8s/GPU roadmap was always
+arguing: the fix is more real compute (regional workers, eventually GPU),
+not more scheduling cleverness on one host. Phase 17 also added a
+transparent capacity formula (`ai/capacity.py`) that turns this section's
+own ~1 FPS/worker measured ceiling into an honest required-worker count
+for 80,000 cameras instead of an arbitrary division — see
+`docs/PHASE17_BENCHMARK.md` §6 for the full, assumption-labeled
+calculation.

@@ -228,6 +228,21 @@ class AIPipeline:
         # Optional CPU%/RSS sampling (psutil). Never a hard dependency --
         # get_resource_usage() just returns Nones if it isn't importable.
         self._psutil_process = None
+        # psutil.Process.cpu_percent(interval=None) measures "process CPU
+        # time consumed since the LAST call to cpu_percent() on this same
+        # object" -- it is NOT safe to call from more than one independent
+        # poller at arbitrary intervals: two callers racing (e.g. this
+        # pipeline's own stats loop AND ai.scheduled_consumer's load-state
+        # check, each on their own ~2s timer) reset each other's reference
+        # point, and a call that lands only milliseconds after another one
+        # divides real CPU time by a near-zero elapsed window, producing
+        # wildly spurious spikes (measured during Phase 17 benchmarking:
+        # >3000% "CPU" on an 8-core host). Throttling the actual psutil
+        # call to at most once per _CPU_SAMPLE_MIN_INTERVAL_S and caching
+        # the result in between makes get_resource_usage() safe to call
+        # from any number of independent pollers.
+        self._cpu_cache: Dict[str, Any] = {"value": None, "ts": 0.0}
+        self._CPU_SAMPLE_MIN_INTERVAL_S = 1.0
         try:
             import psutil  # noqa: F401 -- deliberately local/lazy
             self._psutil_process = psutil.Process()
@@ -994,9 +1009,13 @@ class AIPipeline:
         if self._psutil_process is None:
             return {"cpu_percent": None, "rss_mb": None}
         try:
-            cpu = self._psutil_process.cpu_percent(interval=None)
+            now = time.monotonic()
+            if now - self._cpu_cache["ts"] >= self._CPU_SAMPLE_MIN_INTERVAL_S:
+                self._cpu_cache["value"] = self._psutil_process.cpu_percent(interval=None)
+                self._cpu_cache["ts"] = now
             rss_mb = self._psutil_process.memory_info().rss / (1024.0 * 1024.0)
-            return {"cpu_percent": round(cpu, 1), "rss_mb": round(rss_mb, 1)}
+            cpu = self._cpu_cache["value"]
+            return {"cpu_percent": round(cpu, 1) if cpu is not None else None, "rss_mb": round(rss_mb, 1)}
         except Exception:  # noqa: BLE001
             return {"cpu_percent": None, "rss_mb": None}
 

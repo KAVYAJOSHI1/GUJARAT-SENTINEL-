@@ -1,0 +1,21 @@
+{
+  "_comment": "Phase 17 measured capacity baseline, read by app/services/capacity.py. Re-generate by re-running the benchmark command below and updating this file by hand -- this is a committed snapshot, not a live feed.",
+  "source": "scripts/benchmark_pipeline.py --cameras MOCK_CAM01..05 --registry data/trafficdataset_camera_registry.json --duration 45 --no-backend --ai-workers 1 (plain FIFO FrameConsumer, default/recommended config -- see docs/PHASE17_BENCHMARK.md Sec 3 for why --fair-scheduler was NOT used for this baseline)",
+  "measured_at": "2026-09-09",
+  "measured_cameras": 5,
+  "measured_anpr_mode_processed_fps": 0.93,
+  "anpr_cost_multiplier": 3.7,
+  "worker_fps_budget": 3.441,
+  "worker_fps_budget_derivation": "measured_anpr_mode_processed_fps (0.93) * anpr_cost_multiplier (3.7) -- converts the measured ALL-ANPR-mode throughput into a detection-only-equivalent budget, which is the unit ai.capacity.compute_capacity()/backend capacity_model.compute_capacity() expects (see CapacityAssumptions.anpr_percentage). anpr_cost_multiplier itself is measured OCR p50 (~169ms, AI_ARCHITECTURE.md) / YOLO p50 (~45ms) from this same host.",
+  "measured_resource_usage": {
+    "cpu_percent_avg": 650.3,
+    "cpu_percent_max": 695.5,
+    "rss_mb_max": 4489.9,
+    "cpu_normalization_note": "raw psutil multi-core cumulative percent on this 8-core host (out of ~800% max), NOT normalized -- see ai/scheduled_consumer.py's _maybe_update_load_state() for where this project normalizes CPU for degradation-threshold comparisons"
+  },
+  "limitations": [
+    "Single 8-core CPU-only development host, no GPU -- see docs/PHASE17_BENCHMARK.md Sec 8 for the full limitations list.",
+    "Measured with only 5 cameras in one run; a larger, longer, repeated benchmark would tighten this estimate.",
+    "--fair-scheduler was measured to REDUCE this exact throughput number on this host (Sec 3) -- this baseline intentionally uses the plain/default FrameConsumer path, which is what Phase 17 currently recommends for raw AI throughput."
+  ]
+}

@@ -403,6 +403,10 @@ def main() -> None:
         help="Phase 17: single-consumer path only -- use ai.scheduled_consumer's fair, "
              "priority-weighted scheduler instead of the plain FIFO FrameConsumer.",
     )
+    ap.add_argument(
+        "--target-fps", type=float, default=None,
+        help="Phase 17: --fair-scheduler only -- default per-camera AdaptiveFrameSampler target FPS.",
+    )
     ap.add_argument("--device", default=os.getenv("SENTINEL_AI_DEVICE", "cpu"))
     ap.add_argument("--evidence-dir", default=os.getenv("SENTINEL_EVIDENCE_DIR", "evidence/benchmark"))
     ap.add_argument("--max-queue", type=int, default=500, help="ingestion frame-queue size")
