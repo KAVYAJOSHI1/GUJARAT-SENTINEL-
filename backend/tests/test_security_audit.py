@@ -117,6 +117,35 @@ def test_operator_cannot_delete_a_camera(client, operator_user, make_camera):
     assert r.status_code == 403
 
 
+def test_admin_can_delete_a_camera_with_no_dependent_records(client, admin_user, make_camera):
+    _, tok = admin_user
+    cam = make_camera(code="SEC-DEL-CLEAN")
+    r = client.delete(f"/api/v1/cameras/{cam.id}", headers=bearer(tok))
+    assert r.status_code == 204
+
+
+def test_deleting_a_camera_with_dependent_events_is_a_clean_409_not_a_crash(
+    client, admin_user, make_camera, make_vehicle_event,
+):
+    """Regression: previously an unhandled IntegrityError (a real
+    ForeignKeyViolation, found while cleaning up test-generated rehearsal
+    cameras) propagated to the generic exception handler as a bare 500.
+    Refusing to silently cascade-delete real detections/evidence is the
+    right behavior; the fix is a clean, explicit 409 instead of a 500."""
+    _, tok = admin_user
+    cam = make_camera(code="SEC-DEL-LINKED")
+    make_vehicle_event(cam, plate="GJ01ZZ0001", track_id=1)
+    r = client.delete(f"/api/v1/cameras/{cam.id}", headers=bearer(tok))
+    assert r.status_code == 409
+    assert r.json()["error"]["code"] == "CAMERA_HAS_DEPENDENT_RECORDS"
+
+    # the session must still be usable afterward -- a failed delete must
+    # never leave the DB session (or the camera row) in a broken state
+    still_there = client.get("/api/v1/cameras", headers=bearer(tok))
+    assert still_there.status_code == 200
+    assert any(c["code"] == "SEC-DEL-LINKED" for c in still_there.json())
+
+
 # --------------------------------------------------------------------- #
 # Injection-shaped input is inert (SQLAlchemy ORM parameterization)
 # --------------------------------------------------------------------- #

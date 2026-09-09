@@ -32,6 +32,21 @@ Usage:
         --admin-user admin --admin-password local-admin-pass
     .venv/bin/python scripts/hackathon_rehearsal.py --skip-pipeline-burst   # API checks only, fast
     .venv/bin/python scripts/hackathon_rehearsal.py --json-out docs/_rehearsal_raw.json
+    .venv/bin/python scripts/hackathon_rehearsal.py --cleanup-after   # remove the 50 rehearsal cameras when done
+
+CONTAINER-VS-HOST PATH CAVEAT: this script runs on the HOST (it needs the
+`ai`/`ingestion` packages and the trafficdataset video files), but if your
+backend runs inside docker-compose, the mock-camera `rtsp_url` values it
+registers are host-absolute paths that do NOT resolve from inside the
+backend container -- so the browser's mock-video PREVIEW for these
+specific rehearsal cameras will fail (the pipeline burst itself, run from
+this same host process, still reads the files fine, since it opens them
+directly with OpenCV rather than asking the backend to serve them). Use
+`--cleanup-after` (or re-run `./scripts/reset_demo.sh`, which does not
+touch these -- see its own docstring) to remove the rehearsal cameras
+once you are done, so this cosmetic gap does not linger in a shared demo
+environment. Real-camera codes (cam01, cam04, ...) with a genuine RTSP/
+HLS URL are never affected by this.
 """
 from __future__ import annotations
 
@@ -315,6 +330,31 @@ class Rehearsal:
 
         self.check("18. report generation (CSV) succeeds with real content", _report)
 
+    # -- optional cleanup -------------------------------------------------- #
+    def cleanup(self) -> None:
+        """Best-effort: DELETE (via the real, RBAC'd API -- never raw SQL)
+        every camera this run itself synced. A camera this run also ran
+        the AI pipeline burst against now has real vehicle_events/alerts
+        linked to it and will be refused with a clean 409
+        (CAMERA_HAS_DEPENDENT_RECORDS, Phase 20 Part I) -- reported, not
+        hidden; that data is real investigation evidence and this script
+        does not force its removal."""
+        cams = getattr(self, "_synced", {}).get("cameras", [])
+        if not cams:
+            print("\n(cleanup) nothing to remove -- no cameras were synced this run.")
+            return
+        removed, kept = 0, []
+        for c in cams:
+            r = requests.delete(f"{self.api}/cameras/{c['id']}", headers=self._auth_headers(), timeout=15)
+            if r.status_code == 204:
+                removed += 1
+            else:
+                kept.append((c.get("code"), r.status_code))
+        print(f"\n(cleanup) removed {removed}/{len(cams)} rehearsal cameras.")
+        if kept:
+            print(f"(cleanup) kept {len(kept)} camera(s) with real detections/alerts linked "
+                  f"(expected if you ran the pipeline burst): {kept}")
+
     # -- summary -------------------------------------------------------- #
     def summary(self) -> Dict[str, Any]:
         passed = sum(1 for r in self.results if r.passed)
@@ -336,6 +376,9 @@ def main() -> None:
     ap.add_argument("--pipeline-cameras", type=int, default=6, help="how many of the N mock cameras to actually AI-process")
     ap.add_argument("--pipeline-duration", type=float, default=25.0)
     ap.add_argument("--skip-pipeline-burst", action="store_true", help="API-only checks, no real YOLO/OCR run")
+    ap.add_argument("--cleanup-after", action="store_true",
+                    help="DELETE the rehearsal cameras this run synced when done (best-effort -- a camera the "
+                         "pipeline burst actually processed has real detections linked and is kept, reported).")
     ap.add_argument("--json-out", default=None)
     args = ap.parse_args()
 
@@ -352,6 +395,8 @@ def main() -> None:
 
     s = reh.summary()
     print(f"\n=== {s['passed']}/{s['total']} checks passed ===")
+    if args.cleanup_after:
+        reh.cleanup()
     if args.json_out:
         with open(args.json_out, "w") as f:
             json.dump(s, f, indent=2)

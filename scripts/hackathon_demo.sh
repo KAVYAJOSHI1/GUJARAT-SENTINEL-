@@ -47,6 +47,16 @@ echo "\n[2/5] resetting + reseeding deterministic demo data..."
 echo "  PASS: demo dataset reset (production seed code path, not fixtures)."
 
 # --- 4. optional: 50-camera onboarding + real pipeline burst ------------- #
+# --cleanup-after by default: the 50 rehearsal cameras' rtsp_url is a
+# host-absolute path (this script's mock-camera registry is generated on
+# the HOST, see hackathon_rehearsal.py's own docstring), which does not
+# resolve for the browser's mock-video PREVIEW from inside a dockerized
+# backend -- proving bulk onboarding works does not require leaving 50
+# cosmetically-broken cameras sitting in a shared demo environment
+# afterward. Set KEEP_REHEARSAL_CAMERAS=1 to inspect them instead.
+CLEANUP_FLAG="--cleanup-after"
+[ "${KEEP_REHEARSAL_CAMERAS:-0}" = "1" ] && CLEANUP_FLAG=""
+
 if [ "$1" = "--full" ]; then
   echo "\n[3/5] full rehearsal: 50-camera onboarding + real AI pipeline burst..."
   "$PYTHON" scripts/hackathon_rehearsal.py \
@@ -56,6 +66,7 @@ if [ "$1" = "--full" ]; then
     --ingest-key "${INGEST_API_KEY:-local-hackathon-ingest-key}" \
     --pipeline-cameras "${REHEARSAL_PIPELINE_CAMERAS:-5}" \
     --pipeline-duration "${REHEARSAL_PIPELINE_DURATION:-20}" \
+    $CLEANUP_FLAG \
     --json-out "$TMP_JSON" || { echo "  FAIL: rehearsal reported failing checks -- see above."; exit 1; }
 else
   echo "\n[3/5] verifying the demo scenario (API checks only -- pass --full for a real 50-camera + pipeline rehearsal)..."
@@ -64,6 +75,7 @@ else
     --admin-user "${ADMIN_USERNAME:-admin}" \
     --admin-password "${ADMIN_PASSWORD:-local-admin-pass}" \
     --skip-pipeline-burst \
+    $CLEANUP_FLAG \
     --json-out "$TMP_JSON" || { echo "  FAIL: verification reported failing checks -- see above."; exit 1; }
 fi
 
