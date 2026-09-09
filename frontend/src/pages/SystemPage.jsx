@@ -5,6 +5,7 @@ import { C } from "../theme.js";
 import SystemHealthPanel from "../components/observability/SystemHealthPanel.jsx";
 import AiPipelinePanel from "../components/observability/AiPipelinePanel.jsx";
 import MetricsSummaryPanel from "../components/observability/MetricsSummaryPanel.jsx";
+import CapacityPanel from "../components/observability/CapacityPanel.jsx";
 import EmptyState from "../components/ui/EmptyState.jsx";
 import ErrorBanner from "../components/ui/ErrorBanner.jsx";
 import { SkeletonRows } from "../components/ui/Skeleton.jsx";
@@ -73,6 +74,7 @@ export default function SystemPage() {
         <SystemHealthPanel health={ctx.health} healthLive={ctx.healthLive} cameras={ctx.cameras || []} lastRefresh={ctx.lastRefresh} />
         <AiPipelinePanel health={ctx.health} />
         <MetricsSummaryPanel />
+        <CapacityPanel />
       </div>
 
       <div style={panel}>
