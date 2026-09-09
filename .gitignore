@@ -77,6 +77,9 @@ data/mock_camera_registry.json
 # data/mock_camera_registry.json above is ignored.
 trafficdataset/
 data/trafficdataset_camera_registry.json
+# scripts/hackathon_rehearsal.py's generated 50-camera registry -- same
+# machine-local-absolute-path reason as above.
+data/rehearsal_camera_registry.json
 
 # Environment & Local Secrets
 .env
