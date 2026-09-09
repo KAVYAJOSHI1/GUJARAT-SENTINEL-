@@ -140,8 +140,10 @@ export function logout() {
 // <img> can't send an Authorization header, so a SHORT-LIVED media ticket
 // (purpose="media", ~120s) rides as ?token= — never the long-lived session
 // JWT. The ticket comes from the auto-refreshing cache in mediaTicket.js;
-// on a cold first render it may be "" for a moment (the <img> 401s and the
-// component shows its placeholder), then a re-render picks up the ticket.
+// on a cold first render (e.g. right after a hard page reload) it can still
+// be "" for a moment. Callers should gate the actual <img>/<video> render on
+// `useMediaTicket()` (mediaTicket.js) being truthy rather than calling this
+// unconditionally, so nothing fires a request with no credential at all.
 //
 export function evidenceUrl(eventId) {
   if (!eventId) return null;

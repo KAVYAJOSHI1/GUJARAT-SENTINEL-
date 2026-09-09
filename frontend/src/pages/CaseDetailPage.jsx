@@ -8,6 +8,7 @@ import AISummaryPanel from "../components/ops/AISummaryPanel.jsx";
 import { aiCaseSummary } from "../services/aiApi.js";
 import { C } from "../theme.js";
 import { canManageOps, evidenceUrl } from "../services/api.js";
+import { useMediaTicket } from "../services/mediaTicket.js";
 import { useToast } from "../context/ToastContext.jsx";
 import {
   addCaseNote, assignCase, attachCaseEvidence, attachCaseIncident, caseTimeline,
@@ -30,6 +31,7 @@ export default function CaseDetailPage() {
   const navigate = useNavigate();
   const { push } = useToast();
   const manage = canManageOps();
+  const mediaTicket = useMediaTicket(); // "" until a real credential exists -- gate evidence <img> render on it
 
   const [c, setC] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -187,7 +189,7 @@ export default function CaseDetailPage() {
           {evidence.map((e) => (
             <div key={e.id} style={{ width: 150, background: C.panel, border: `1px solid ${C.border}`, borderRadius: 6, overflow: "hidden" }}>
               <div style={{ height: 90, background: "#000", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                {e.has_snapshot
+                {e.has_snapshot && mediaTicket
                   ? <img src={evidenceUrl(e.vehicle_event_id)} alt="evidence" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                   : <CameraIcon size={16} color={C.dim} />}
               </div>

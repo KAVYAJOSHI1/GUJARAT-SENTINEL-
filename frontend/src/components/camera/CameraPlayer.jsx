@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, Loader2, RefreshCw, Video, VideoOff } from "lucide-react";
 import { C } from "../../theme.js";
 import { http } from "../../services/api.js";
-import { currentMediaTicket, ensureMediaTicket } from "../../services/mediaTicket.js";
+import { ensureMediaTicket, useMediaTicket } from "../../services/mediaTicket.js";
 
 const MODE_STYLE = {
   LIVE: { c: C.red, t: "LIVE" },
@@ -23,6 +23,9 @@ export default function CameraPlayer({ cameraId, height = 260 }) {
   const [attempt, setAttempt] = useState(0);
   const videoRef = useRef(null);
   const hlsRef = useRef(null);
+  // reactive so a source that cold-started with no credential retries once a
+  // real ticket lands, instead of staying on a 401'd src indefinitely
+  const mediaTicket = useMediaTicket();
 
   async function loadProfile() {
     setStatus("loading");
@@ -47,8 +50,7 @@ export default function CameraPlayer({ cameraId, height = 260 }) {
     const src = profile.sources[sourceIdx];
     if (!src) { setStatus("error"); setErr("All stream sources failed"); return; }
 
-    const mt = () => currentMediaTicket() || "";
-    const withAuth = (u) => (u.includes("?") ? `${u}&` : `${u}?`) + `token=${encodeURIComponent(mt())}`;
+    const withAuth = (u) => (u.includes("?") ? `${u}&` : `${u}?`) + `token=${encodeURIComponent(mediaTicket)}`;
     let cancelled = false;
     setStatus("loading");
     setErr("");
@@ -116,7 +118,7 @@ export default function CameraPlayer({ cameraId, height = 260 }) {
       video.removeEventListener("error", onErr);
       cleanupHls();
     };
-  }, [profile, sourceIdx, attempt]);
+  }, [profile, sourceIdx, attempt, mediaTicket]);
 
   if (!profile && status === "loading") {
     return <Shell height={height}><Loader2 className="spin" size={20} color={C.muted} /></Shell>;
@@ -167,7 +169,7 @@ export default function CameraPlayer({ cameraId, height = 260 }) {
         </Shell>
       ) : src?.kind === "snapshot" ? (
         <>
-          <img src={withImgAuth(src.url)}
+          <img src={withImgAuth(src.url, mediaTicket)}
             alt="latest frame" style={{ width: "100%", height: "100%", objectFit: "contain" }}
             onError={() => { if (sourceIdx < profile.sources.length - 1) setSourceIdx((i) => i + 1); }} />
           <div style={{ position: "absolute", bottom: 8, left: 8, zIndex: 3, background: "rgba(0,0,0,0.65)", color: C.amber, borderRadius: 3, padding: "2px 8px", fontSize: 9, fontWeight: 700 }}>
@@ -193,9 +195,8 @@ export default function CameraPlayer({ cameraId, height = 260 }) {
   );
 }
 
-function withImgAuth(u) {
-  const t = currentMediaTicket() || "";
-  return (u.includes("?") ? `${u}&` : `${u}?`) + `token=${encodeURIComponent(t)}`;
+function withImgAuth(u, ticket) {
+  return (u.includes("?") ? `${u}&` : `${u}?`) + `token=${encodeURIComponent(ticket || "")}`;
 }
 
 function Shell({ children, height }) {

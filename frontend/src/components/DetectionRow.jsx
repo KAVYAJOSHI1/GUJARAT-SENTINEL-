@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Car, Crosshair, MapPin } from "lucide-react";
 import { C } from "../theme.js";
 import { evidenceUrl, isMockCamera } from "../services/api.js";
+import { useMediaTicket } from "../services/mediaTicket.js";
 
 // One real AI detection, evidence-first (README task §5): the actual
 // evidence frame pulled from the live pipeline is the visual anchor, plate/
@@ -11,7 +12,8 @@ import { evidenceUrl, isMockCamera } from "../services/api.js";
 export default function DetectionRow({ det, onViewEvidence }) {
   const navigate = useNavigate();
   const [imgFailed, setImgFailed] = useState(false);
-  const thumb = det.id ? evidenceUrl(det.id) : null;
+  const mediaTicket = useMediaTicket(); // don't render an evidence <img> before a real credential exists
+  const thumb = det.id && mediaTicket ? evidenceUrl(det.id) : null;
   const hasPlate = det.plate && det.plate !== "UNKNOWN";
   const hasLoc = det.lat != null && det.lng != null;
   const confidencePct = Number.isFinite(det.confidence) ? `${(det.confidence * 100).toFixed(1)}%` : null;

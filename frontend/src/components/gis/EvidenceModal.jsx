@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Camera, ImageOff, MapPin, X } from "lucide-react";
 import { C } from "../../theme.js";
 import { evidenceUrl } from "../../services/investigationApi.js";
+import { useMediaTicket } from "../../services/mediaTicket.js";
 
 // Evidence Viewer Modal (DEVELOPER_README §14.8): full-frame snapshot, cropped
 // plate image, camera metadata and OCR confidence. Follows the same overlay
@@ -50,13 +51,18 @@ export default function EvidenceModal({ sighting, plate, onClose }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [sighting, onClose]);
 
+  // Re-render the instant a media ticket becomes available (e.g. right after
+  // a hard page reload) so `snapshot` below picks up the ticketed URL instead
+  // of staying on the tokenless one ImgWithFallback already marked "failed".
+  const mediaTicket = useMediaTicket();
+
   if (!sighting) return null;
 
   // Prefer the backend evidence proxy: it resolves both object-storage and
   // local file:// snapshot references (a bare file:// URL can't be loaded by
   // the browser directly). Fall back to whatever raw URL the sighting carries
   // only when there's no event id to proxy through.
-  const snapshot = evidenceUrl(sighting.eventId) || sighting.snapshotUrl;
+  const snapshot = (mediaTicket && evidenceUrl(sighting.eventId)) || sighting.snapshotUrl;
   const crop = sighting.plateCropUrl || "";
   const conf = Number.isFinite(sighting.ocrConfidence)
     ? `${(sighting.ocrConfidence * 100).toFixed(1)}%`
