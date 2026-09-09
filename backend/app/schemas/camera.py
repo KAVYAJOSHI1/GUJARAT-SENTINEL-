@@ -132,8 +132,10 @@ class CameraHealthResult(BaseModel):
 class CameraRegistryEntry(BaseModel):
     """One row of a camera catalogue / registry sync payload."""
     model_config = ConfigDict(extra="ignore")
-    code: Optional[str] = None
-    camera_id: Optional[str] = None
+    # Bounded (Phase 20 Part I): `code` is a unique-indexed DB column --
+    # see AIDetectionEventIn.camera_id's comment for the same reasoning.
+    code: Optional[str] = Field(default=None, max_length=128)
+    camera_id: Optional[str] = Field(default=None, max_length=128)
     id: Optional[str] = None
     name: Optional[str] = None
     rtsp_url: Optional[str] = None

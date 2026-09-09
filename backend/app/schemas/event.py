@@ -57,9 +57,15 @@ class AnprBlock(BaseModel):
 class AIDetectionEventIn(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    event_id: Optional[str] = None
-    camera_id: str                       # external code ("cam04") OR cameras.id UUID
-    camera_name: Optional[str] = None
+    event_id: Optional[str] = Field(default=None, max_length=128)
+    # external code ("cam04") OR cameras.id UUID. Bounded (Phase 20 Part I
+    # security audit): camera_id is both a unique-indexed DB column and an
+    # ingest-auto-onboarding key -- an unbounded string previously reached
+    # Postgres's own btree-index row-size limit on insert, surfacing as an
+    # unhandled 500 (caught cleanly by the generic exception handler, but
+    # never validated at the boundary where it belongs).
+    camera_id: str = Field(..., min_length=1, max_length=128)
+    camera_name: Optional[str] = Field(default=None, max_length=256)
     timestamp: datetime
     pts: Optional[float] = None
     track_id: Optional[int] = None
