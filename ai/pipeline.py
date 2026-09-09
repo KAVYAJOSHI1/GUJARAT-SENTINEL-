@@ -18,6 +18,7 @@ from ai.anpr.consensus import MultiFrameConsensus
 from ai.ocr.ocr_engine import OCREngine
 from ai.ocr.normalizer import PlateNormalizer
 from ai.tracking.tracker import ByteTrackTracker
+from ai.modes import ProcessingMode, mode_flags
 
 logger = logging.getLogger("AIPipeline")
 
@@ -122,6 +123,26 @@ class AIPipeline:
         except Exception:  # noqa: BLE001
             self.vehicle_embedder = None
 
+        # Phase 17 Step 4: optional asynchronous OCR execution
+        # (SENTINEL_ASYNC_OCR=1). Off by default -- OCR then runs exactly
+        # where it always has, inline in process_frame(), byte-for-byte.
+        # When enabled, the actual OCR call (the ~170ms-avg stage measured
+        # in AI_ARCHITECTURE.md, vs ~45ms for YOLO) moves onto a bounded
+        # background executor (ai.ocr_executor.OCRExecutor) so this thread
+        # can keep detecting/tracking the NEXT frame -- possibly a
+        # different camera -- instead of stalling on OCR. Results are
+        # applied (consensus mutation + event emission) back on THIS
+        # thread via _drain_ocr_results(), preserving the single-writer
+        # invariant every other piece of per-track state already relies on.
+        self.async_ocr = os.getenv("SENTINEL_ASYNC_OCR", "0").lower() in ("1", "true", "yes", "on")
+        self._ocr_executor = None
+        if self.async_ocr:
+            from ai.ocr_executor import OCRExecutor
+            self._ocr_executor = OCRExecutor(
+                self._raw_ocr_call,
+                max_queue=int(os.getenv("SENTINEL_OCR_QUEUE_SIZE", "16")),
+                num_threads=int(os.getenv("SENTINEL_OCR_THREADS", "1")),
+            )
         # Bounded in-memory buffer for retry on API *unreachability* (5xx /
         # connection errors). 4xx responses are NOT buffered -- retrying a
         # rejected payload forever never helps.
@@ -156,6 +177,7 @@ class AIPipeline:
             "events_sent_ok": 0,
             "events_dropped_queue_full": 0,
             "events_dropped_backend_rejected": 0,
+            "ocr_dropped_queue_full": 0,
             "events_dropped_buffer_full": 0,
         }
 
@@ -310,6 +332,10 @@ class AIPipeline:
         moved into the existing retry buffer rather than discarded, so a
         subsequent flush_events() still picks it up. Returns how many
         events remain buffered/unsent. Safe to call more than once."""
+        if self._ocr_executor is not None:
+            self._drain_ocr_results()
+            self._ocr_executor.shutdown(timeout=min(drain_timeout, 5.0))
+            self._drain_ocr_results()  # catch whatever finished during the join above
         self._wait_for_queue_empty(timeout=drain_timeout)
         self._sender_stop.set()
         if self._sender_thread is not None:
@@ -372,7 +398,8 @@ class AIPipeline:
         frame_timestamp: Optional[str] = None,
         pts: Optional[float] = None,
         track_ids: Optional[List[int]] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
+        mode: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Process a single video stream frame through the entire SENTINEL AI pipeline.
@@ -386,6 +413,13 @@ class AIPipeline:
                           pipeline runs detections through a per-camera
                           ByteTrackTracker and uses its persistent IDs.
         :param metadata: Additional frame metadata
+        :param mode: Phase 17 processing mode (ai.modes.ProcessingMode). Omitted
+                     (or None) defaults to ANPR -- byte-for-byte the pipeline's
+                     original, only behavior: detection + tracking + OCR always
+                     attempted. DETECTION/TRACKING skip the OCR/plate-locator
+                     path entirely (cheaper, no plate info) -- ANPR/OCR being
+                     independently throttleable per Phase 17 Step 4. A camera's
+                     mode can also be supplied via metadata["processing_mode"].
         :return: List of generated AI Detection Event dictionaries
         """
         # Internal duration timers use time.monotonic() throughout this method
@@ -421,14 +455,26 @@ class AIPipeline:
                 else:
                     frame_timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
+        effective_mode = mode or (metadata or {}).get("processing_mode") or ProcessingMode.ANPR
+        flags = mode_flags(effective_mode)
+
+        # Phase 17: apply any OCR results that finished asynchronously since
+        # the last call, on THIS (the pipeline's single owning) thread --
+        # independent of whatever camera/frame is being processed right now.
+        # Folded into every return below (instead of a bare []) so a result
+        # that happens to finish during a frame with no detections of its
+        # own is still visible in that call's return value, not just
+        # dispatched silently in the background.
+        pending_events: List[Dict[str, Any]] = self._drain_ocr_results() if self._ocr_executor is not None else []
+
         # Gracefully handle empty or malformed frame arrays
         if frame is None or not isinstance(frame, np.ndarray) or frame.size == 0 or len(frame.shape) < 2:
             logger.warning("Empty or malformed frame passed to AIPipeline. Skipping frame.")
-            return []
+            return pending_events
 
         self.stats["processed_frames"] += 1
         self._frames_by_camera[camera_id] = self._frames_by_camera.get(camera_id, 0) + 1
-        events: List[Dict[str, Any]] = []
+        events: List[Dict[str, Any]] = list(pending_events)
 
         # Step 1: Vehicle Detection
         t_det0 = time.monotonic()
@@ -436,7 +482,7 @@ class AIPipeline:
             detections = self.vehicle_detector.detect(frame)
         except Exception as e:
             logger.error(f"Error during vehicle detection: {e}")
-            return []
+            return events
         t_det = (time.monotonic() - t_det0) * 1000.0
         self.stats["vehicle_detection_time_ms"] += t_det
         self._yolo_latency_samples.append(t_det)
@@ -451,7 +497,7 @@ class AIPipeline:
                     logger.error(f"ByteTrack update failed on {camera_id}: {e}")
             t_total = (time.monotonic() - t_start) * 1000.0
             self.stats["total_pipeline_time_ms"] += t_total
-            return []
+            return events
 
         self.stats["total_vehicles"] += len(detections)
 
@@ -491,6 +537,49 @@ class AIPipeline:
             vehicle_bbox = vehicle["bbox"]
             track_id = vehicle["track_id"]
             track_key = f"{camera_id}:{track_id}"
+
+            # Phase 17 Step 4: DETECTION/TRACKING modes never touch the
+            # plate locator or OCR engine at all -- not "OCR ran and found
+            # nothing", genuinely never attempted. This is the cheap path
+            # BACKGROUND-priority cameras get by default (ai.modes).
+            if not flags.run_ocr:
+                emit_key = track_key
+                if emit_key not in self._emitted_tracks:
+                    self._emitted_tracks[emit_key] = "UNKNOWN"
+                    _md = metadata or {}
+                    event_payload = {
+                        "event_id": f"evt_{uuid.uuid4().hex[:12]}",
+                        "timestamp": frame_timestamp,
+                        "pts": pts,
+                        "camera_id": camera_id,
+                        "camera_name": _md.get("camera_name"),
+                        "track_id": track_id,
+                        "latitude": _md.get("latitude"),
+                        "longitude": _md.get("longitude"),
+                        "seq_num": _md.get("seq_num"),
+                        "vehicle": {
+                            "type": vehicle_class, "class": vehicle_class,
+                            "confidence": vehicle_conf, "bbox": vehicle_bbox, "track_id": track_id,
+                        },
+                        "license_plate": {
+                            "plate_detected": False, "text": "UNKNOWN", "plate_number": "UNKNOWN",
+                            "confidence": 0.0, "bbox": None, "raw_text": None,
+                            "consensus_applied": False, "raw_reads": [],
+                        },
+                        "evidence": {"frame_path": None, "frame_snapshot_path": None, "plate_crop_path": None},
+                        "anpr": {
+                            "status": "NOT_ATTEMPTED", "failure_reason": None,
+                            "plate_quality": 0.0, "quality": {}, "quality_score": 0.0,
+                            "ocr_confidence": 0.0, "fusion_method": None, "char_confidence": [],
+                        },
+                    }
+                    events.append(event_payload)
+                    self.stats["total_detections"] += 1
+                    self._events_by_camera[camera_id] = self._events_by_camera.get(camera_id, 0) + 1
+                    recv_mono = _md.get("received_at_s")
+                    recv_mono = float(recv_mono) if isinstance(recv_mono, (int, float)) else None
+                    self._enqueue_event(event_payload, recv_mono=recv_mono)
+                continue
 
             # Crop vehicle region
             try:
@@ -532,231 +621,334 @@ class AIPipeline:
             quality_obj = None
             located = bool(locator_res.get("confidence", 0.0) > 0.0)
 
+            _finalize_kwargs = dict(
+                camera_id=camera_id, track_id=track_id, track_key=track_key,
+                vehicle_class=vehicle_class, vehicle_conf=vehicle_conf, vehicle_bbox=vehicle_bbox,
+                vehicle_crop=vehicle_crop, plate_crop=plate_crop,
+                abs_plate_bbox=abs_plate_bbox, locator_res=locator_res, located=located,
+                frame=frame, frame_timestamp=frame_timestamp, pts=pts, metadata=metadata,
+            )
+
             if skip_ocr:
                 # Reuse cached stable consensus result
                 self.stats["ocr_skipped_count"] += 1
                 consensus_res = self.consensus_engine.get_consensus(track_id, camera_id=camera_id)
                 final_plate = consensus_res["consensus_plate"]
                 final_conf = consensus_res["confidence"]
-                raw_text = final_plate
-                enhanced_plate = plate_crop
+                ev = self._finalize_and_emit(
+                    raw_text=final_plate, final_plate=final_plate, final_conf=final_conf,
+                    fmt_score=fmt_score, quality_obj=quality_obj, consensus_res=consensus_res,
+                    enhanced_plate=plate_crop, **_finalize_kwargs,
+                )
+                if ev:
+                    events.append(ev)
+            elif self.async_ocr:
+                # Phase 17 Step 4: the expensive part (quality gate ->
+                # preprocessing -> OCR) runs on a bounded background
+                # executor instead of this thread, so detection/tracking
+                # for the NEXT frame (possibly a different camera) is never
+                # blocked on it. A full job queue means OCR genuinely can't
+                # keep up -- counted, and this vehicle falls back to its
+                # cached/UNKNOWN consensus for THIS frame rather than
+                # blocking this thread or growing an unbounded queue.
+                from ai.ocr_executor import OCRJob
+                submitted = self._ocr_executor.submit(OCRJob(
+                    camera_id=camera_id, track_id=track_id, track_key=track_key,
+                    plate_crop=plate_crop, context=dict(_finalize_kwargs),
+                ))
+                if not submitted:
+                    self.stats["ocr_dropped_queue_full"] += 1
+                    consensus_res = self.consensus_engine.get_consensus(track_id, camera_id=camera_id)
+                    final_plate = consensus_res["consensus_plate"]
+                    final_conf = consensus_res["confidence"]
+                    ev = self._finalize_and_emit(
+                        raw_text=final_plate, final_plate=final_plate, final_conf=final_conf,
+                        fmt_score=fmt_score, quality_obj=quality_obj, consensus_res=consensus_res,
+                        enhanced_plate=plate_crop, **_finalize_kwargs,
+                    )
+                    if ev:
+                        events.append(ev)
+                # else: nothing to emit for this vehicle THIS frame -- the
+                # result is applied (consensus mutation + event dispatch)
+                # later via _drain_ocr_results(), on this same owning thread.
             else:
                 # Step 4: quality gate -> multi-variant preprocessing -> OCR
                 t_ocr0 = time.monotonic()
-                if self.multivariant_ocr:
-                    variants = self.preprocessor.variants(plate_crop, max_variants=self.ocr_max_variants)
-                    if variants:
-                        ocr_res = self.ocr_engine.extract_best(variants, self.normalizer)
-                        vi = ocr_res.get("variant", 0)
-                        enhanced_plate = variants[vi] if 0 <= vi < len(variants) else variants[0]
-                    else:
-                        # crop failed the quality gate -> nothing readable
-                        ocr_res = {"raw_text": "UNKNOWN", "confidence": 0.0}
-                        enhanced_plate = self.preprocessor.preprocess(plate_crop)
-                else:
-                    enhanced_plate = self.preprocessor.preprocess(plate_crop)
-                    ocr_res = self.ocr_engine.extract_text(enhanced_plate)
+                ocr_res = self._raw_ocr_call(plate_crop)
                 t_ocr = (time.monotonic() - t_ocr0) * 1000.0
                 self.stats["ocr_time_ms"] += t_ocr
                 self._ocr_latency_samples.append(t_ocr)
 
                 raw_text = ocr_res["raw_text"]
                 ocr_conf = ocr_res["confidence"]
-
-                # Step 5: Plate Normalization (position-aware, format-checked)
-                normalized_plate = self.normalizer.normalize(raw_text)
-                fmt_score = self.normalizer.format_score(normalized_plate)
-
-                # Phase 15B: assess THIS crop's quality (cheap, single-pass).
-                try:
-                    quality_obj = self.quality_assessor.assess(plate_crop)
-                except Exception:  # noqa: BLE001 -- quality is best-effort
-                    quality_obj = None
-
-                # Step 6: Multi-Frame Consensus Voting (OCR conf + detection conf
-                # + format validity + plate-locator quality + temporal
-                # stability; stable plates lock)
-                consensus_res = self.consensus_engine.add_prediction(
-                    track_id=track_id,
-                    plate_number=normalized_plate,
-                    confidence=ocr_conf,
-                    camera_id=camera_id,
-                    detection_confidence=float(vehicle_conf),
-                    format_score=fmt_score,
-                    plate_quality=float(locator_res.get("confidence", 1.0)),
+                final_plate, final_conf, fmt_score, quality_obj, consensus_res = self._normalize_and_score(
+                    camera_id=camera_id, track_id=track_id, track_key=track_key,
+                    plate_crop=plate_crop, raw_text=raw_text, ocr_conf=ocr_conf,
+                    vehicle_conf=vehicle_conf, locator_res=locator_res,
                 )
-                final_plate = consensus_res["consensus_plate"]
-                final_conf = consensus_res["confidence"]
-
-                # Phase 15C: character-level temporal fusion refinement.
-                try:
-                    _pq = float((quality_obj.overall_score if quality_obj is not None else 0.0)
-                                or locator_res.get("confidence", 0.0))
-                    _st = self.plate_track_store.observe(
-                        camera_id, track_id, normalized_plate, ocr_conf,
-                        plate_quality=_pq, format_score=float(fmt_score),
-                    )
-                    _cl = _st.resolve()
-                    self._plate_track_meta[track_key] = _cl
-                    # Only override when the fusion layer is confidently stable
-                    # AND at least as confident as the string-level consensus
-                    # (this is where a one-char misread gets corrected).
-                    if (_cl["stable"] and _cl["plate"] != "UNKNOWN"
-                            and _cl["confidence"] >= max(final_conf, 0.75)):
-                        if _cl["plate"] != final_plate:
-                            logger.debug("plate-track fusion: %s -> %s (%s)",
-                                         final_plate, _cl["plate"], _cl["method"])
-                        final_plate = _cl["plate"]
-                        final_conf = float(_cl["confidence"])
-                except Exception:  # noqa: BLE001 -- fusion is best-effort
-                    pass
-
-            # Determine whether a valid license plate was successfully recognized
-            plate_detected = bool(final_plate != "UNKNOWN" and final_conf > 0.0)
-
-            # Phase 15B: explicit ANPR status + failure reason instead of a
-            # bare UNKNOWN. A recognised plate -> status OK, reason NONE.
-            from ai.anpr.quality import FailureReason, PlateQuality
-            _q = quality_obj if quality_obj is not None else PlateQuality()
-            _reads = consensus_res.get("raw_reads", []) if isinstance(consensus_res, dict) else []
-            if plate_detected and final_conf >= self.ocr_confidence_threshold:
-                anpr_status = "OK"
-                anpr_failure_reason = FailureReason.NONE
-            else:
-                anpr_status = "UNKNOWN"
-                try:
-                    anpr_failure_reason = self.quality_assessor.classify_failure(
-                        _q, located=located, ocr_text=raw_text,
-                        normalized_plate=(final_plate if final_plate != "UNKNOWN" else None),
-                        format_score=float(fmt_score), confidence=float(final_conf),
-                        raw_reads=_reads, conf_threshold=self.ocr_confidence_threshold,
-                    )
-                except Exception:  # noqa: BLE001
-                    anpr_failure_reason = FailureReason.LOW_CONFIDENCE
-
-            # Step 7: Save Evidence Snapshots (Optimized to avoid redundant disk writes per frame)
-            ts_str = str(int(time.time()))
-            snapshot_filename = f"{camera_id}_{ts_str}_tr{track_id}_{final_plate}.jpg"
-            crop_filename = f"{camera_id}_{ts_str}_tr{track_id}_{final_plate}_crop.jpg"
-
-            # absolute so a separately-running backend on the same host can
-            # resolve the file:// reference
-            snapshot_path = os.path.abspath(os.path.join(self.evidence_dir, snapshot_filename))
-            crop_path = os.path.abspath(os.path.join(self.evidence_dir, crop_filename))
-
-            # Write evidence to disk if new track or readable plate detected
-            evidence_key = f"{track_key}:{final_plate}"
-            if evidence_key not in self.saved_evidence_tracks:
-                try:
-                    cv2.imwrite(snapshot_path, frame)
-                    cv2.imwrite(crop_path, enhanced_plate)
-                    self.saved_evidence_tracks[evidence_key] = snapshot_path
-                except Exception as e:
-                    logger.error(f"Failed to write evidence files: {e}")
-            else:
-                # Use previously saved evidence path for consistency
-                snapshot_path = self.saved_evidence_tracks[evidence_key]
-                crop_path = snapshot_path.replace(".jpg", "_crop.jpg")
-
-            # Step 8: Build Structured AI Detection Event JSON Payload
-            _md = metadata or {}
-            event_payload = {
-                "event_id": f"evt_{uuid.uuid4().hex[:12]}",
-                "timestamp": frame_timestamp,
-                "pts": pts,
-                "camera_id": camera_id,
-                "camera_name": _md.get("camera_name"),
-                "track_id": track_id,
-                "latitude": _md.get("latitude"),
-                "longitude": _md.get("longitude"),
-                "seq_num": _md.get("seq_num"),
-                "vehicle": {
-                    "type": vehicle_class,
-                    "class": vehicle_class,
-                    "confidence": vehicle_conf,
-                    "bbox": vehicle_bbox,
-                    "track_id": track_id
-                },
-                "license_plate": {
-                    "plate_detected": plate_detected,
-                    "text": final_plate,
-                    "plate_number": final_plate,
-                    "confidence": final_conf if plate_detected else 0.0,
-                    "bbox": abs_plate_bbox,
-                    "raw_text": raw_text,
-                    "consensus_applied": len(consensus_res.get("raw_reads", [])) > 1,
-                    "raw_reads": consensus_res.get("raw_reads", [])
-                },
-                "evidence": {
-                    "frame_path": snapshot_path,
-                    "frame_snapshot_path": snapshot_path,
-                    "plate_crop_path": crop_path
-                },
-                # Phase 15B/15C: ANPR quality + failure reason + temporal fusion.
-                "anpr": {
-                    "status": anpr_status,
-                    "failure_reason": anpr_failure_reason,
-                    "plate_quality": round(float(locator_res.get("confidence", 0.0)), 4),
-                    "quality": _q.to_dict() if hasattr(_q, "to_dict") else {},
-                    "quality_score": _q.overall_score if hasattr(_q, "overall_score") else 0.0,
-                    "ocr_confidence": round(float(final_conf), 4),
-                    "fusion_method": (self._plate_track_meta.get(track_key) or {}).get("method"),
-                    "char_confidence": (self._plate_track_meta.get(track_key) or {}).get("char_confidence", []),
-                },
-            }
-
-            # Phase 15E: attach a real appearance embedding when enabled.
-            if self.vehicle_embedder is not None and self.vehicle_embedder.enabled:
-                _emb = self.vehicle_embedder.embed_bgr(vehicle_crop)
-                if _emb:
-                    event_payload["embedding"] = _emb
-                    event_payload["embedding_model"] = self.vehicle_embedder.model_name
-
-            # Optionally inline the snapshot so the backend can store it in
-            # object storage (works across container / host boundaries, unlike
-            # a bare file path). SENTINEL_SEND_SNAPSHOT=1 to enable.
-            if self.send_snapshot_b64 and evidence_key not in getattr(self, "_snapshot_sent", set()):
-                try:
-                    okj, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
-                    if okj:
-                        import base64
-                        event_payload["snapshot_base64"] = base64.b64encode(buf.tobytes()).decode("ascii")
-                        event_payload["snapshot_content_type"] = "image/jpeg"
-                        self._snapshot_sent = getattr(self, "_snapshot_sent", set())
-                        self._snapshot_sent.add(evidence_key)
-                except Exception as e:  # noqa: BLE001
-                    logger.debug("snapshot encode failed: %s", e)
-
-            # Step 9: One consolidated event per (camera, track, plate).
-            # Continuous video emits a detection every frame; without this a
-            # single vehicle passing one camera would generate hundreds of
-            # near-identical events (and journey rows). We emit the first time a
-            # track is seen, and again whenever its plate changes -- notably on
-            # the UNKNOWN -> readable transition once consensus settles.
-            emit_key = f"{track_key}"
-            last_plate = self._emitted_tracks.get(emit_key)
-            if last_plate is None or last_plate != final_plate:
-                self._emitted_tracks[emit_key] = final_plate
-                events.append(event_payload)
-                self.stats["total_detections"] += 1
-                self._events_by_camera[camera_id] = self._events_by_camera.get(camera_id, 0) + 1
-                # Hand off to the background sender (Task 2) -- NEVER a
-                # blocking network call on this thread. `recv_mono` (this
-                # frame's ingestion-side monotonic receipt time, if the
-                # ingestion bridge supplied one) lets the sender compute a
-                # real compute/end-to-end latency without adding any field
-                # to the event payload itself -- the wire schema is
-                # untouched.
-                recv_mono = None
-                _raw_recv = (metadata or {}).get("received_at_s")
-                if isinstance(_raw_recv, (int, float)):
-                    recv_mono = float(_raw_recv)
-                self._enqueue_event(event_payload, recv_mono=recv_mono)
+                ev = self._finalize_and_emit(
+                    raw_text=raw_text, final_plate=final_plate, final_conf=final_conf,
+                    fmt_score=fmt_score, quality_obj=quality_obj, consensus_res=consensus_res,
+                    enhanced_plate=ocr_res["enhanced_plate"], **_finalize_kwargs,
+                )
+                if ev:
+                    events.append(ev)
 
         t_total = (time.monotonic() - t_start) * 1000.0
         self.stats["total_pipeline_time_ms"] += t_total
 
         return events
+
+    # ------------------------------------------------------------------ #
+    #  Phase 17 Step 4: OCR extracted into pure/reusable stages so the    #
+    #  same logic runs whether OCR happens inline (default) or on         #
+    #  ai.ocr_executor.OCRExecutor's background thread(s) (opt-in,         #
+    #  SENTINEL_ASYNC_OCR=1) -- nothing below changes behavior for the     #
+    #  default (synchronous) path versus before this refactor.            #
+    # ------------------------------------------------------------------ #
+    def _raw_ocr_call(self, plate_crop) -> Dict[str, Any]:
+        """Pure: crop in, {raw_text, confidence, enhanced_plate, variant}
+        out. Touches only stateless config (self.multivariant_ocr /
+        self.ocr_max_variants) and the OCR engine/preprocessor's own
+        (read-only, per-call) inference -- no per-track/per-camera state,
+        so this is safe to call from OCRExecutor's background thread(s) as
+        well as inline on the pipeline's own thread."""
+        if self.multivariant_ocr:
+            variants = self.preprocessor.variants(plate_crop, max_variants=self.ocr_max_variants)
+            if variants:
+                ocr_res = self.ocr_engine.extract_best(variants, self.normalizer)
+                vi = ocr_res.get("variant", 0)
+                enhanced_plate = variants[vi] if 0 <= vi < len(variants) else variants[0]
+            else:
+                # crop failed the quality gate -> nothing readable
+                ocr_res = {"raw_text": "UNKNOWN", "confidence": 0.0}
+                enhanced_plate = self.preprocessor.preprocess(plate_crop)
+        else:
+            enhanced_plate = self.preprocessor.preprocess(plate_crop)
+            ocr_res = self.ocr_engine.extract_text(enhanced_plate)
+        return {
+            "raw_text": ocr_res["raw_text"],
+            "confidence": ocr_res["confidence"],
+            "enhanced_plate": enhanced_plate,
+            "variant": ocr_res.get("variant", 0),
+        }
+
+    def _normalize_and_score(
+        self, *, camera_id, track_id, track_key, plate_crop, raw_text, ocr_conf, vehicle_conf, locator_res,
+    ):
+        """Steps 5-6 + Phase 15C fusion: normalize -> quality-assess ->
+        multi-frame consensus -> character-level temporal fusion. Mutates
+        shared per-track state (consensus_engine, plate_track_store) --
+        MUST only ever be called from the pipeline's single owning thread
+        (inline synchronously, or from _drain_ocr_results()), never from
+        an OCRExecutor worker thread directly."""
+        normalized_plate = self.normalizer.normalize(raw_text)
+        fmt_score = self.normalizer.format_score(normalized_plate)
+
+        try:
+            quality_obj = self.quality_assessor.assess(plate_crop)
+        except Exception:  # noqa: BLE001 -- quality is best-effort
+            quality_obj = None
+
+        consensus_res = self.consensus_engine.add_prediction(
+            track_id=track_id,
+            plate_number=normalized_plate,
+            confidence=ocr_conf,
+            camera_id=camera_id,
+            detection_confidence=float(vehicle_conf),
+            format_score=fmt_score,
+            plate_quality=float(locator_res.get("confidence", 1.0)),
+        )
+        final_plate = consensus_res["consensus_plate"]
+        final_conf = consensus_res["confidence"]
+
+        try:
+            _pq = float((quality_obj.overall_score if quality_obj is not None else 0.0)
+                        or locator_res.get("confidence", 0.0))
+            _st = self.plate_track_store.observe(
+                camera_id, track_id, normalized_plate, ocr_conf,
+                plate_quality=_pq, format_score=float(fmt_score),
+            )
+            _cl = _st.resolve()
+            self._plate_track_meta[track_key] = _cl
+            if (_cl["stable"] and _cl["plate"] != "UNKNOWN"
+                    and _cl["confidence"] >= max(final_conf, 0.75)):
+                if _cl["plate"] != final_plate:
+                    logger.debug("plate-track fusion: %s -> %s (%s)",
+                                 final_plate, _cl["plate"], _cl["method"])
+                final_plate = _cl["plate"]
+                final_conf = float(_cl["confidence"])
+        except Exception:  # noqa: BLE001 -- fusion is best-effort
+            pass
+
+        return final_plate, final_conf, fmt_score, quality_obj, consensus_res
+
+    def _finalize_and_emit(
+        self, *, camera_id, track_id, track_key, vehicle_class, vehicle_conf, vehicle_bbox,
+        vehicle_crop, plate_crop, enhanced_plate, abs_plate_bbox, locator_res, located,
+        raw_text, final_plate, final_conf, fmt_score, quality_obj, consensus_res,
+        frame, frame_timestamp, pts, metadata,
+    ) -> Optional[Dict[str, Any]]:
+        """Steps 7-9: ANPR status/failure reason -> evidence snapshot ->
+        build the wire event -> dedupe -> dispatch. Shared by the
+        synchronous OCR path (skip_ocr, non-async OCR) and the async OCR
+        drain path (_drain_ocr_results()) -- one place, one behavior.
+        Returns the event payload if one was emitted, else None (dedup
+        suppressed it -- the plate hasn't changed since this track's last
+        emitted event)."""
+        plate_detected = bool(final_plate != "UNKNOWN" and final_conf > 0.0)
+
+        from ai.anpr.quality import FailureReason, PlateQuality
+        _q = quality_obj if quality_obj is not None else PlateQuality()
+        _reads = consensus_res.get("raw_reads", []) if isinstance(consensus_res, dict) else []
+        if plate_detected and final_conf >= self.ocr_confidence_threshold:
+            anpr_status = "OK"
+            anpr_failure_reason = FailureReason.NONE
+        else:
+            anpr_status = "UNKNOWN"
+            try:
+                anpr_failure_reason = self.quality_assessor.classify_failure(
+                    _q, located=located, ocr_text=raw_text,
+                    normalized_plate=(final_plate if final_plate != "UNKNOWN" else None),
+                    format_score=float(fmt_score), confidence=float(final_conf),
+                    raw_reads=_reads, conf_threshold=self.ocr_confidence_threshold,
+                )
+            except Exception:  # noqa: BLE001
+                anpr_failure_reason = FailureReason.LOW_CONFIDENCE
+
+        ts_str = str(int(time.time()))
+        snapshot_filename = f"{camera_id}_{ts_str}_tr{track_id}_{final_plate}.jpg"
+        crop_filename = f"{camera_id}_{ts_str}_tr{track_id}_{final_plate}_crop.jpg"
+        snapshot_path = os.path.abspath(os.path.join(self.evidence_dir, snapshot_filename))
+        crop_path = os.path.abspath(os.path.join(self.evidence_dir, crop_filename))
+
+        evidence_key = f"{track_key}:{final_plate}"
+        if evidence_key not in self.saved_evidence_tracks:
+            try:
+                cv2.imwrite(snapshot_path, frame)
+                cv2.imwrite(crop_path, enhanced_plate)
+                self.saved_evidence_tracks[evidence_key] = snapshot_path
+            except Exception as e:
+                logger.error(f"Failed to write evidence files: {e}")
+        else:
+            snapshot_path = self.saved_evidence_tracks[evidence_key]
+            crop_path = snapshot_path.replace(".jpg", "_crop.jpg")
+
+        _md = metadata or {}
+        event_payload = {
+            "event_id": f"evt_{uuid.uuid4().hex[:12]}",
+            "timestamp": frame_timestamp,
+            "pts": pts,
+            "camera_id": camera_id,
+            "camera_name": _md.get("camera_name"),
+            "track_id": track_id,
+            "latitude": _md.get("latitude"),
+            "longitude": _md.get("longitude"),
+            "seq_num": _md.get("seq_num"),
+            "vehicle": {
+                "type": vehicle_class,
+                "class": vehicle_class,
+                "confidence": vehicle_conf,
+                "bbox": vehicle_bbox,
+                "track_id": track_id
+            },
+            "license_plate": {
+                "plate_detected": plate_detected,
+                "text": final_plate,
+                "plate_number": final_plate,
+                "confidence": final_conf if plate_detected else 0.0,
+                "bbox": abs_plate_bbox,
+                "raw_text": raw_text,
+                "consensus_applied": len(consensus_res.get("raw_reads", [])) > 1,
+                "raw_reads": consensus_res.get("raw_reads", [])
+            },
+            "evidence": {
+                "frame_path": snapshot_path,
+                "frame_snapshot_path": snapshot_path,
+                "plate_crop_path": crop_path
+            },
+            "anpr": {
+                "status": anpr_status,
+                "failure_reason": anpr_failure_reason,
+                "plate_quality": round(float(locator_res.get("confidence", 0.0)), 4),
+                "quality": _q.to_dict() if hasattr(_q, "to_dict") else {},
+                "quality_score": _q.overall_score if hasattr(_q, "overall_score") else 0.0,
+                "ocr_confidence": round(float(final_conf), 4),
+                "fusion_method": (self._plate_track_meta.get(track_key) or {}).get("method"),
+                "char_confidence": (self._plate_track_meta.get(track_key) or {}).get("char_confidence", []),
+            },
+        }
+
+        if self.vehicle_embedder is not None and self.vehicle_embedder.enabled:
+            _emb = self.vehicle_embedder.embed_bgr(vehicle_crop)
+            if _emb:
+                event_payload["embedding"] = _emb
+                event_payload["embedding_model"] = self.vehicle_embedder.model_name
+
+        if self.send_snapshot_b64 and evidence_key not in getattr(self, "_snapshot_sent", set()):
+            try:
+                okj, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                if okj:
+                    import base64
+                    event_payload["snapshot_base64"] = base64.b64encode(buf.tobytes()).decode("ascii")
+                    event_payload["snapshot_content_type"] = "image/jpeg"
+                    self._snapshot_sent = getattr(self, "_snapshot_sent", set())
+                    self._snapshot_sent.add(evidence_key)
+            except Exception as e:  # noqa: BLE001
+                logger.debug("snapshot encode failed: %s", e)
+
+        # One consolidated event per (camera, track, plate) -- emit the
+        # first time a track is seen, and again whenever its plate changes.
+        emit_key = track_key
+        last_plate = self._emitted_tracks.get(emit_key)
+        if last_plate is None or last_plate != final_plate:
+            self._emitted_tracks[emit_key] = final_plate
+            self.stats["total_detections"] += 1
+            self._events_by_camera[camera_id] = self._events_by_camera.get(camera_id, 0) + 1
+            recv_mono = None
+            _raw_recv = _md.get("received_at_s")
+            if isinstance(_raw_recv, (int, float)):
+                recv_mono = float(_raw_recv)
+            self._enqueue_event(event_payload, recv_mono=recv_mono)
+            return event_payload
+        return None
+
+    def _drain_ocr_results(self) -> List[Dict[str, Any]]:
+        """Apply every OCR result completed since the last call, on THIS
+        (the pipeline's single owning) thread. Called at the top of every
+        process_frame() -- independent of which camera/frame triggered
+        this particular call, since a result may belong to any camera this
+        pipeline instance owns."""
+        if self._ocr_executor is None:
+            return []
+        emitted: List[Dict[str, Any]] = []
+        for result in self._ocr_executor.poll_results():
+            job = result.job
+            ctx = job.context
+            try:
+                self.stats["ocr_time_ms"] += result.latency_ms
+                self._ocr_latency_samples.append(result.latency_ms)
+                final_plate, final_conf, fmt_score, quality_obj, consensus_res = self._normalize_and_score(
+                    camera_id=job.camera_id, track_id=job.track_id, track_key=job.track_key,
+                    plate_crop=job.plate_crop, raw_text=result.raw_text, ocr_conf=result.confidence,
+                    vehicle_conf=ctx["vehicle_conf"], locator_res=ctx["locator_res"],
+                )
+                ev = self._finalize_and_emit(
+                    camera_id=job.camera_id, track_id=job.track_id, track_key=job.track_key,
+                    vehicle_class=ctx["vehicle_class"], vehicle_conf=ctx["vehicle_conf"],
+                    vehicle_bbox=ctx["vehicle_bbox"], vehicle_crop=ctx["vehicle_crop"],
+                    plate_crop=job.plate_crop, enhanced_plate=result.enhanced_plate,
+                    abs_plate_bbox=ctx["abs_plate_bbox"], locator_res=ctx["locator_res"], located=ctx["located"],
+                    raw_text=result.raw_text, final_plate=final_plate, final_conf=final_conf,
+                    fmt_score=fmt_score, quality_obj=quality_obj, consensus_res=consensus_res,
+                    frame=ctx["frame"], frame_timestamp=ctx["frame_timestamp"], pts=ctx["pts"],
+                    metadata=ctx["metadata"],
+                )
+                if ev:
+                    emitted.append(ev)
+            except Exception:  # noqa: BLE001 -- one bad async result must never break the pipeline
+                logger.exception("failed to finalize async OCR result for %s", job.track_key)
+        return emitted
 
     def get_benchmark_stats(self) -> Dict[str, Any]:
         """Calculates and returns pipeline latency & FPS performance metrics."""
@@ -835,6 +1027,9 @@ class AIPipeline:
             "frames_by_camera": dict(self._frames_by_camera),
             "events_by_camera": dict(self._events_by_camera),
             "resource_usage": self.get_resource_usage(),
+            "async_ocr_enabled": self.async_ocr,
+            "ocr_dropped_queue_full": self.stats.get("ocr_dropped_queue_full", 0),
+            "ocr_executor": self._ocr_executor.metrics() if self._ocr_executor is not None else None,
         })
         return metrics
 
