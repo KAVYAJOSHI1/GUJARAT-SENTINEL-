@@ -115,6 +115,52 @@ class TestFailureClassification(unittest.TestCase):
         self.assertEqual(r, FailureReason.LOW_CONFIDENCE)
 
 
+class TestStructuredQualityResult(unittest.TestCase):
+    """Phase 18 Part B -- PlateQuality.structured_result(): a human-facing
+    {"quality": ..., "score": ..., "reasons": [...]} verdict, separate
+    from classify_failure's single canonical wire failure_reason."""
+
+    def setUp(self):
+        self.qa = PlateQualityAssessor()
+
+    def test_good_plate_is_high_with_no_reasons(self):
+        q = self.qa.assess(_plate())
+        r = q.structured_result()
+        self.assertEqual(r["quality"], "HIGH")
+        self.assertGreaterEqual(r["score"], 70)
+        self.assertEqual(r["reasons"], [])
+
+    def test_tiny_plate_flags_plate_too_small(self):
+        q = self.qa.assess(_plate(w=40, h=10))
+        r = q.structured_result()
+        self.assertIn("PLATE_TOO_SMALL", r["reasons"])
+        self.assertNotEqual(r["quality"], "HIGH")
+
+    def test_blurry_plate_flags_blur_too_high(self):
+        q = self.qa.assess(_plate(blur=3.5))
+        r = q.structured_result()
+        self.assertIn("BLUR_TOO_HIGH", r["reasons"])
+
+    def test_blank_crop_is_low_quality(self):
+        q = self.qa.assess(np.full((110, 430, 3), 200, np.uint8))
+        r = q.structured_result()
+        self.assertNotEqual(r["quality"], "HIGH")
+        self.assertGreater(len(r["reasons"]), 0)
+
+    def test_score_matches_overall_score_percentage(self):
+        q = self.qa.assess(_plate())
+        r = q.structured_result()
+        self.assertEqual(r["score"], int(round(q.overall_score * 100)))
+
+    def test_reasons_never_include_unknown_labels(self):
+        # every reason string this method can ever emit must be one of a
+        # fixed, documented vocabulary -- never a surprise value.
+        vocab = {"PLATE_TOO_SMALL", "BLUR_TOO_HIGH", "LOW_CONTRAST", "BAD_ANGLE", "OCCLUDED"}
+        for crop in (_plate(), _plate(w=40, h=10), _plate(blur=4.0), None):
+            r = self.qa.assess(crop).structured_result()
+            self.assertTrue(set(r["reasons"]).issubset(vocab))
+
+
 class TestPerspectiveCorrection(unittest.TestCase):
     def test_perspective_correct_is_safe_on_axis_aligned(self):
         pp = ImagePreprocessor()
