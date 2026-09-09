@@ -6,6 +6,7 @@ alert → incident → evidence → investigation → journey/GIS → case**, wi
 AI intelligence layer reading the same rows.
 
 Companion docs: `GOVERNMENT_FEED_READINESS.md`, `SCALE_TO_80000.md`,
+`PHASE17_BENCHMARK.md`, `PHASE18_ANPR_DIAGNOSTICS.md`,
 `HACKATHON_DEMO_RUNBOOK.md`, `AI_ARCHITECTURE.md` (+ `AI_*`),
 `SYSTEM_STATUS.md` (authoritative verified/partial/future list).
 
@@ -28,7 +29,7 @@ Companion docs: `GOVERNMENT_FEED_READINESS.md`, `SCALE_TO_80000.md`,
 ```
 
 * **Backend** — FastAPI + SQLModel, PostgreSQL 15 + PostGIS 3.3, MinIO for
-  evidence blobs. Alembic migrations `0001→0008`. In-process background
+  evidence blobs. Alembic migrations `0001→0015`. In-process background
   tasks: retention sweep, camera-health watcher, AI anomaly scan.
 * **Ingestion/AI pipeline** — separate process (`scripts/run_pipeline_service.py`).
   Per-camera worker, TCP RTSP, reconnect/backoff. Emits detection events to
@@ -123,13 +124,57 @@ the pipeline. No migration, no config flag, no architectural change.
 Authoritatively tracked in `SYSTEM_STATUS.md`. Headline items:
 
 * Real wide-area feeds produce `UNKNOWN` plates (ANPR emits `UNKNOWN`,
-  never a guess). No visual Re-ID (future).
-* CPU throughput ~1 FPS aggregate across many feeds on the test host.
-* Frontend verified at build + module-transform + API level (not a
-  full rendered click-through — no browser automation available here).
+  never a guess) — measured and explained, not just observed:
+  `PHASE18_ANPR_DIAGNOSTICS.md` (97.1% UNKNOWN on 136 real-camera-code
+  frames, dominant cause OCCLUDED / too-few-character-pixels, root-cause
+  checked). No visual Re-ID for cross-camera correlation itself (appearance
+  similarity exists as a separate, explicitly-capped signal).
+* CPU throughput ~1 FPS aggregate across many feeds on the test host —
+  `SCALE_TO_80000.md` / `PHASE17_BENCHMARK.md` for the full measured
+  scheduler/capacity story.
+* Frontend verified with a real headless-browser suite (Playwright,
+  `frontend/e2e/`, `scripts/browser_test.sh`) — full click-through
+  navigation, not just build/API-level checks (superseded the earlier
+  "no browser automation available" limitation).
 * Deferred UI polish: GIS layer-toggle panel, journey-replay scrubber,
   operational-analytics charts page (aggregates exist as CSV/endpoints).
+* Real government RTSP/HLS endpoints are confirmed unreachable from this
+  development environment (both timed out) — no fresh real-feed frame
+  could be captured in Phase 18-20.
 
 ## 10. Demo sequence
 
-`HACKATHON_DEMO_RUNBOOK.md` §4 — the 2-minute click-by-click script.
+`HACKATHON_DEMO_RUNBOOK.md` §4 — the 2-minute click-by-click script, or
+`./scripts/hackathon_demo.sh` (§0 of that doc) for an automated,
+self-verifying setup.
+
+## 11. Phase 18-20 additions (ANPR diagnostics, failure resilience, security)
+
+* **ANPR diagnostics** — `scripts/anpr_diagnostics.py` +
+  `PHASE18_ANPR_DIAGNOSTICS.md`: explainable per-vehicle diagnostics
+  (crop quality, OCR result, temporal fusion, one explicit failure
+  reason) across SYNTHETIC / MOCK / REAL_HISTORICAL strata, never
+  combined into one number. `ai/anpr/quality.py::PlateQuality
+  .structured_result()` adds a multi-reason quality verdict; a real bug
+  in temporal fusion's TTL expiry (`ai/anpr/plate_track_state.py`) was
+  found and fixed by this work.
+* **50-camera rehearsal + designated-vehicle scenario** —
+  `scripts/hackathon_rehearsal.py`: bulk-onboards up to 50 mock cameras
+  with GIS + feed assignment, runs a real (small-subset) AI pipeline
+  burst, and verifies the full GJ18TC0450 demo chain (watchlist → alert
+  → journey → investigation → evidence → incident → case → report) via
+  live API calls. 18/18 checks pass end to end.
+* **Failure resilience** — `tests/test_failure_resilience.py` +
+  `backend/tests/test_failure_resilience.py`: camera decode exceptions,
+  malformed streams, dead-worker restart, database/object-storage
+  unavailability, all verified to degrade the one affected component
+  cleanly rather than crash the platform.
+* **Security hardening** — `backend/tests/test_security_audit.py`:
+  session-JWT expiry/tampering, RBAC on real mutating endpoints,
+  SQL-injection-shaped input safety, malformed/oversized requests. Two
+  real bugs found and fixed: an unbounded `camera_id` reaching Postgres's
+  btree-index limit (now a clean 422), and deleting a camera with linked
+  detections raising an unhandled 500 (now a clean 409). A repo-wide
+  secret scan found zero hardcoded credentials.
+* **Deterministic demo + health check** — `scripts/hackathon_demo.sh`,
+  `scripts/hackathon_health_check.py` (§0 of `HACKATHON_DEMO_RUNBOOK.md`).
