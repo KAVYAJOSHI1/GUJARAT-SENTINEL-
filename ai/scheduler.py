@@ -317,10 +317,11 @@ class FairCameraScheduler:
         frames received/processed/dropped, current/target FPS, priority,
         starvation count, last-processed timestamp."""
         with self._lock:
-            per_camera = {
-                cam_id: st.snapshot(queue_depth=len(self._pending_items.get(cam_id, ())))
-                for cam_id, st in self._stats.items()
-            }
+            per_camera = {}
+            for cam_id, st in self._stats.items():
+                snap = st.snapshot(queue_depth=len(self._pending_items.get(cam_id, ())))
+                snap["stale_evicted"] = self._stale_evicted.get(cam_id, 0)
+                per_camera[cam_id] = snap
             queued = [c for c, dq in self._pending_items.items() if dq]
             by_priority = {p: len(self._buckets[p]) for p in CameraPriority.ALL}
             return {
@@ -335,6 +336,7 @@ class FairCameraScheduler:
                 "totals": {
                     "frames_received": sum(s.frames_received for s in self._stats.values()),
                     "frames_processed": sum(s.frames_processed for s in self._stats.values()),
+                    "stale_evicted": sum(self._stale_evicted.values()),
                     "frames_dropped": sum(s.total_dropped() for s in self._stats.values()),
                     "starvation_events": sum(s.starvation_count for s in self._stats.values()),
                 },
