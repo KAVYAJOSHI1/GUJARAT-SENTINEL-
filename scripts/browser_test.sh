@@ -23,5 +23,6 @@ docker run --rm --network host \
   -e E2E_BASE_URL="$BASE_URL" \
   -e E2E_API_URL="$API_URL" \
   -e E2E_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
+  -e E2E_TRACE_AUTH="${E2E_TRACE_AUTH:-}" \
   -v "$PWD/frontend/e2e":/runner/specs:ro \
   sentinel-e2e "/runner/specs/$SPEC"

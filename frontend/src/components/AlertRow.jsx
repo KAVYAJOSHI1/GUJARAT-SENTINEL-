@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { ArrowUpCircle, Car, Crosshair, FolderPlus, ImageOff, MapPin } from "lucide-react";
 import { C, SEVERITY_COLOR } from "../theme.js";
 import { canManageOps, evidenceUrl } from "../services/api.js";
+import { useMediaTicket } from "../services/mediaTicket.js";
 import { createIncident, escalateAlert } from "../services/opsApi.js";
 import { useToast } from "../context/ToastContext.jsx";
 import SeverityBadge from "./SeverityBadge.jsx";
@@ -17,7 +18,8 @@ export default function AlertRow({ alert, onAck, onViewEvidence }) {
   const [imgFailed, setImgFailed] = useState(false);
   const [creating, setCreating] = useState(false);
   const borderCol = SEVERITY_COLOR[alert.severity] || C.muted;
-  const thumb = alert.eventId ? evidenceUrl(alert.eventId) : null;
+  const mediaTicket = useMediaTicket(); // don't render an evidence <img> before a real credential exists
+  const thumb = alert.eventId && mediaTicket ? evidenceUrl(alert.eventId) : null;
   const trackable = alert.vehicle && alert.vehicle !== "UNKNOWN";
   // A real backend alert id is a UUID; the WS-fallback simulator uses
   // "alert-<ts>". Only real, persisted alerts can be promoted to incidents.

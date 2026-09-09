@@ -17,6 +17,7 @@ import {
 } from "../components/ui/primitives.jsx";
 import { fmtDateTime } from "../utils/datetime.js";
 import { fetchVehicleProfile, searchVehicle, evidenceUrl } from "../services/investigationApi.js";
+import { useMediaTicket } from "../services/mediaTicket.js";
 import { runInvestigation } from "../services/aiApi.js";
 import { normalizePlate } from "../utils/plate.js";
 
@@ -470,13 +471,14 @@ export default function LiveInvestigationWorkspace() {
 // keep a text fallback for a hard network failure.
 function EvidenceImg({ eventId, label, plate }) {
   const [failed, setFailed] = useState(false);
+  const ticket = useMediaTicket(); // "" until a real credential exists -- don't render <img> before then
   return (
     <div style={{ display: "grid", gap: 3 }}>
       <div style={{ fontSize: 8.5, color: C.muted, textTransform: "uppercase", letterSpacing: 0.6 }}>{label}</div>
-      {failed ? (
+      {failed || !ticket ? (
         <div style={{ height: plate ? 70 : 130, display: "flex", alignItems: "center", justifyContent: "center",
           background: C.bg, border: `1px dashed ${C.border}`, color: C.dim, fontSize: 10 }}>
-          evidence unavailable
+          {failed ? "evidence unavailable" : "loading…"}
         </div>
       ) : (
         <img src={evidenceUrl(eventId)} alt={label} onError={() => setFailed(true)}

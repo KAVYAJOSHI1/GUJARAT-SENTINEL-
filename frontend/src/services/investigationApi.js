@@ -21,7 +21,9 @@ export const INVESTIGATION_ENDPOINTS = {
 
 // Absolute URL for an evidence snapshot file, usable as an <img src>.
 // <img> can't send an Authorization header, so a SHORT-LIVED media ticket
-// (purpose="media", ~120s) rides as ?token= — never the session JWT.
+// (purpose="media", ~120s) rides as ?token= — never the session JWT. Callers
+// should gate the actual render on `useMediaTicket()` (mediaTicket.js) being
+// truthy rather than calling this unconditionally.
 export function evidenceUrl(eventId) {
   // kick a cache warm-up (no-op if already fresh) for the next render
   ensureMediaTicket().catch(() => {});

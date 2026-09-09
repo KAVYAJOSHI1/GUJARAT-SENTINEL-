@@ -4,6 +4,7 @@ import { Crosshair, MapPinned, Video } from "lucide-react";
 import { C, CAMERA_STATUS_COLOR } from "../theme.js";
 import Pulse from "./Pulse.jsx";
 import { evidenceUrl, mockVideoUrl } from "../services/api.js";
+import { useMediaTicket } from "../services/mediaTicket.js";
 
 // Live camera preview card with status badge + metadata overlay (README §4.3).
 // The Sentinel RTSP feeds require Basic-auth the browser cannot supply and
@@ -21,12 +22,13 @@ export default function CameraCard({ cam, selected, onClick, preview, detectionC
   const isAlert = cam.status === "alert";
   const isOffline = cam.status === "offline";
   const trackablePlate = preview?.plate && preview.plate !== "UNKNOWN" ? preview.plate : null;
-  const thumb = preview?.id ? evidenceUrl(preview.id) : null;
+  const mediaTicket = useMediaTicket(); // don't render an evidence <img>/<video> before a real credential exists
+  const thumb = preview?.id && mediaTicket ? evidenceUrl(preview.id) : null;
   // MOCK cameras are a local video file -- actually playable in-browser,
   // unlike the real Sentinel RTSP feeds (Basic-auth + no CORS HLS, see the
   // module comment above). Falls back to the evidence-thumbnail look if the
   // clip fails to load for any reason.
-  const videoSrc = cam.isMock && !videoFailed ? mockVideoUrl(cam.id) : null;
+  const videoSrc = cam.isMock && !videoFailed && mediaTicket ? mockVideoUrl(cam.id) : null;
 
   useEffect(() => setVideoFailed(false), [cam.id]);
 

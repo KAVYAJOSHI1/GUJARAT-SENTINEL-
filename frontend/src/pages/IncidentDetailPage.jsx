@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { C } from "../theme.js";
 import { canManageOps, evidenceUrl } from "../services/api.js";
+import { useMediaTicket } from "../services/mediaTicket.js";
 import { useToast } from "../context/ToastContext.jsx";
 import {
   addIncidentNote,
@@ -45,6 +46,7 @@ export default function IncidentDetailPage() {
   const navigate = useNavigate();
   const { push } = useToast();
   const manage = canManageOps();
+  const mediaTicket = useMediaTicket(); // "" until a real credential exists -- gate evidence <img> render on it
 
   const [inc, setInc] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -217,7 +219,7 @@ export default function IncidentDetailPage() {
           {evidence.map((e) => (
             <div key={e.id} style={{ width: 150, background: C.panel, border: `1px solid ${C.border}`, borderRadius: 6, overflow: "hidden" }}>
               <div style={{ height: 90, background: "#000", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                {e.has_snapshot
+                {e.has_snapshot && mediaTicket
                   ? <img src={evidenceUrl(e.vehicle_event_id)} alt="evidence" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                   : <CameraIcon size={16} color={C.dim} />}
               </div>
