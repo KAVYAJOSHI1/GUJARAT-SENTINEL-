@@ -143,7 +143,14 @@ class PlateTrackState:
         }
 
     def expired(self, now: Optional[float] = None, ttl: float = 30.0) -> bool:
-        return (now or time.time()) - self.last_seen > ttl
+        # Phase 18: `now or time.time()` was a real bug -- 0.0 is a
+        # perfectly legitimate timestamp (e.g. PTS/relative-time callers
+        # starting at zero) but is falsy in Python, so it silently fell
+        # through to the CURRENT wall-clock time instead, making every
+        # track look ~decades old and evicting the entire store on the
+        # very next observe() call. `is not None` is the correct check.
+        effective_now = now if now is not None else time.time()
+        return effective_now - self.last_seen > ttl
 
 
 class PlateTrackStore:
