@@ -29,7 +29,7 @@ from app.services.minio_service import get_minio_service
 from app.services.plate_utils import normalize_plate
 from app.services.vehicle_types import canonical_vehicle_type
 from app.services.watchlist_engine import process_event_against_watchlist
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 logger = logging.getLogger("sentinel.events")
 
@@ -72,6 +72,37 @@ async def ingest_ai_detection(
     db: Session = Depends(get_db),
     _auth: str = Depends(require_ingest_auth),
 ):
+    # Phase 18 Part H: idempotent re-delivery. The pipeline's own retry
+    # path (ai/pipeline.py _post_one) re-POSTs an event on ANY connection
+    # error or 5xx -- including the case where the first attempt actually
+    # committed server-side but the response never made it back. Without
+    # this check that redelivery silently created a second vehicle_events
+    # row (a second alert, a duplicated journey sighting) for one real
+    # detection. A missing/empty event_id (older callers, synthetic
+    # payloads) skips this check entirely -- unaffected.
+    if payload.event_id:
+        existing = db.execute(
+            select(VehicleEvent).where(VehicleEvent.event_id == payload.event_id)
+        ).scalar_one_or_none()
+        if existing is not None:
+            logger.info("duplicate event_id=%s ignored (existing vehicle_event id=%s)",
+                        payload.event_id, existing.id)
+            return AIDetectionEventOut(
+                id=existing.id,
+                event_id=existing.event_id,
+                camera_id=existing.camera_id,
+                camera_code=existing.camera_code,
+                track_id=existing.track_id,
+                plate_number=existing.plate_number,
+                plate_number_normalized=existing.plate_number_normalized,
+                timestamp=existing.timestamp,
+                snapshot_url=existing.snapshot_url,
+                watchlist_match=False,
+                alert_id=None,
+                alert_suppressed_by_cooldown=False,
+                duplicate=True,
+            )
+
     camera = resolve_camera(
         db,
         payload.camera_id,
@@ -93,6 +124,7 @@ async def ingest_ai_detection(
     lon = payload.longitude
     _anpr = payload.resolved_anpr()
     event = VehicleEvent(
+        event_id=payload.event_id,
         plate_number=plate_raw,
         plate_number_normalized=plate_normalized,
         camera_id=camera.id,

@@ -175,5 +175,9 @@ class AIDetectionEventOut(BaseModel):
     watchlist_match: bool
     alert_id: Optional[str] = None
     alert_suppressed_by_cooldown: bool = False
+    # Phase 18 Part H: true iff this event_id was already recorded and the
+    # response below reflects that EXISTING row -- no new vehicle_events
+    # row, no re-run watchlist/alert side effects. See events.py.
+    duplicate: bool = False
 
     model_config = ConfigDict(from_attributes=True)
