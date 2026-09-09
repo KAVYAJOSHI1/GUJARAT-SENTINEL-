@@ -5,6 +5,47 @@ key** (deterministic AI provider). One command up, one command to reset.
 
 ---
 
+## 0. Phase 20 — one command, verified, not asserted
+
+```bash
+./scripts/hackathon_demo.sh            # ~15s: reset + reseed + verify (no real AI run)
+./scripts/hackathon_demo.sh --full     # ~60s: also onboard 50 mock cameras + a real
+                                        #       short YOLO+ByteTrack+ANPR pipeline burst
+```
+
+Gets the demo into a known-good state and **proves it** before an
+evaluator touches the keyboard: verifies the docker stack (starts it if
+needed), resets + reseeds the deterministic dataset via the real
+production seed code path (`scripts/reset_demo.sh`), runs
+`scripts/hackathon_rehearsal.py` (Phase 19 Part F/G) against the live
+backend, runs `scripts/hackathon_health_check.py` (backend / database /
+object storage / AI pipeline / camera registry / watchlist / alerts /
+demo dataset / a real WebSocket handshake), then prints:
+
+```
+SENTINEL DEMO READY
+
+Cameras: 8
+Vehicle: GJ18TC0450
+Sightings: 5
+Watchlist: MATCH
+Alert: GENERATED
+Journey: READY
+Investigation: READY
+Incident: READY INC-2026-9001
+Case: READY CASE-2026-9001
+Report: READY
+```
+
+Every line is read back from a real, just-executed check — a failing
+check prints `NOT VERIFIED`, never a fabricated `READY`. The 50 rehearsal
+cameras `--full` onboards are removed again automatically when the run
+finishes (their video paths are host-absolute and don't resolve for the
+browser's mock-video preview from inside the docker backend — set
+`KEEP_REHEARSAL_CAMERAS=1` to inspect them instead).
+
+---
+
 ## 1. Start (fresh, seeded)
 
 ```bash

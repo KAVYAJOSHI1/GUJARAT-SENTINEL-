@@ -154,3 +154,37 @@ The frontend command centre and alert feed update in real time. No change.
 * **CPU throughput** ~1 FPS aggregate across many feeds on the test host
   (see `SCALE_TO_80000.md`). Real-time 30+ live feeds needs GPU + the
   horizontal design in that doc.
+
+## 10. Phase 18 — why `UNKNOWN`, explained and measured
+
+`scripts/anpr_diagnostics.py` (Phase 18 Part A) turns the bare "plates are
+UNKNOWN" observation above into a reproducible, explainable measurement.
+Full detail and methodology: **[`PHASE18_ANPR_DIAGNOSTICS.md`](PHASE18_ANPR_DIAGNOSTICS.md)**.
+
+* **Real endpoints confirmed unreachable from this development
+  environment as of 2026-09-09** — both a raw TCP connect to
+  `103.250.160.189:8554` and an HTTPS request to `cctv.corp8.cloud` timed
+  out completely. No fresh real-feed frame could be captured this phase;
+  nothing in this document claims otherwise.
+* Re-analyzing 136 archived real-camera-code frames (from the Phase 11
+  smoke test referenced in §8) with the current pipeline: **97.1% UNKNOWN**,
+  dominant cause **OCCLUDED (80% of failures)** — root-cause-checked (not
+  assumed) to mean "too few character-shaped pixels in the located plate
+  region," consistent with small/distant crops from wide-area footage, not
+  literal dirt/glare occlusion.
+* This stratum is labeled **REAL_HISTORICAL / PROVENANCE-UNCERTAIN**
+  (capture circumstances can't be independently re-verified) and
+  **UNLABELED / QUALITATIVE** (no ground-truth plate list exists) — never
+  presented as a certified live-feed accuracy figure.
+
+## 11. Phase 19 — failure resilience, verified not just designed
+
+`tests/test_failure_resilience.py` proves (not just documents) the
+ingestion-side resilience properties this document has always claimed:
+a `StreamWorker` whose decoder raises mid-stream (not just returns False)
+is treated as a dropped frame and keeps running; a genuinely malformed/
+corrupt video file fails to open cleanly (never raises) and the camera
+still reaches OFFLINE/RECONNECTING; `StreamManager.sync_cameras()`
+restarts a dead worker without touching a healthy one running alongside
+it. See `docs/PHASE18_ANPR_DIAGNOSTICS.md` and the Phase 19/20 commit
+history for the full failure/security test suite.

@@ -16,6 +16,15 @@
 > not the schema) is the real bottleneck to 80,000 cameras — Phase 17
 > makes that bottleneck precisely measurable and gives it a scaling
 > formula instead of a guess.
+>
+> **Phase 18** measured *why* real footage returns `UNKNOWN` (see
+> [`PHASE18_ANPR_DIAGNOSTICS.md`](PHASE18_ANPR_DIAGNOSTICS.md)) — the
+> capacity model's `anpr_percentage` / `anpr_cost_multiplier` assumptions
+> (§5/§6 below and `ai/capacity.py`) already account for ANPR being the
+> expensive path per camera; Phase 18 confirms that expense is not wasted
+> on this dataset's footage (OCR genuinely attempts and genuinely mostly
+> fails on low-detail wide-area crops), not that the assumption itself
+> needs to change.
 
 ---
 
