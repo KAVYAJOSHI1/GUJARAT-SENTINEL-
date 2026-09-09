@@ -61,6 +61,51 @@ class PlateQuality:
         return {k: (round(v, 4) if isinstance(v, float) else v)
                 for k, v in asdict(self).items()}
 
+    # ------------------------------------------------------------------ #
+    #  Phase 18 Part B -- structured quality result                       #
+    # ------------------------------------------------------------------ #
+    def structured_result(self) -> Dict[str, Any]:
+        """A human-facing quality verdict, separate from
+        ``PlateQualityAssessor.classify_failure``'s single canonical wire
+        ``failure_reason`` (unchanged, still one value). This lists EVERY
+        weak contributing factor, not just the one root cause a caller
+        picks -- useful for an investigator/evaluator asking "why is this
+        LOW quality", not just "why is this UNKNOWN".
+
+            {"quality": "LOW", "score": 31, "reasons": ["PLATE_TOO_SMALL", "BLUR_TOO_HIGH"]}
+
+        Thresholds and reason names were checked against real footage
+        (Phase 18 -- see docs/PHASE18_ANPR_DIAGNOSTICS.md) before being
+        picked; two example reason names from that review (``BAD_ANGLE``,
+        ``LOW_CONTRAST``) were tested and found to rarely fire as the sole
+        or dominant factor on this project's available real footage (angle
+        skew only co-occurred with already-severe occlusion in <5% of
+        samples; contrast was not actually low in the vast majority of
+        low-quality real crops) -- they are still included here since a
+        single crop CAN genuinely be angle- or contrast-limited, just not
+        assumed to dominate by default."""
+        score_pct = int(round(self.overall_score * 100))
+        if score_pct >= 70:
+            bucket = "HIGH"
+        elif score_pct >= 40:
+            bucket = "MEDIUM"
+        else:
+            bucket = "LOW"
+
+        reasons = []
+        if self.resolution_score < 0.5:
+            reasons.append("PLATE_TOO_SMALL")
+        if self.blur_score < 0.5:
+            reasons.append("BLUR_TOO_HIGH")
+        if self.contrast_score < 0.35:
+            reasons.append("LOW_CONTRAST")
+        if self.angle_score < 0.6:
+            reasons.append("BAD_ANGLE")
+        if self.occlusion_score < 0.35:
+            reasons.append("OCCLUDED")
+
+        return {"quality": bucket, "score": score_pct, "reasons": reasons}
+
 
 # Minimum pixels/character for EasyOCR to be reliable on plates (empirical).
 _PX_PER_CHAR = 11

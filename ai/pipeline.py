@@ -585,6 +585,7 @@ class AIPipeline:
                         "anpr": {
                             "status": "NOT_ATTEMPTED", "failure_reason": None,
                             "plate_quality": 0.0, "quality": {}, "quality_score": 0.0,
+                            "quality_verdict": None,
                             "ocr_confidence": 0.0, "fusion_method": None, "char_confidence": [],
                         },
                     }
@@ -888,6 +889,10 @@ class AIPipeline:
                 "plate_quality": round(float(locator_res.get("confidence", 0.0)), 4),
                 "quality": _q.to_dict() if hasattr(_q, "to_dict") else {},
                 "quality_score": _q.overall_score if hasattr(_q, "overall_score") else 0.0,
+                # Phase 18 Part B: human-facing verdict + every contributing
+                # weak factor (not just the one root cause `failure_reason`
+                # picks) -- {"quality": "LOW", "score": 31, "reasons": [...]}.
+                "quality_verdict": _q.structured_result() if hasattr(_q, "structured_result") else None,
                 "ocr_confidence": round(float(final_conf), 4),
                 "fusion_method": (self._plate_track_meta.get(track_key) or {}).get("method"),
                 "char_confidence": (self._plate_track_meta.get(track_key) or {}).get("char_confidence", []),
