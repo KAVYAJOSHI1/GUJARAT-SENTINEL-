@@ -18,6 +18,7 @@ never silently treated as if it were measured.
 from __future__ import annotations
 
 import json
+import multiprocessing
 import os
 from datetime import datetime, timedelta
 from typing import Optional
@@ -106,7 +107,18 @@ def system_capacity(db: Session, *, target_cameras: int = 80_000) -> dict:
             # the true maxsize isn't itself reported.
             queue_ratio = min(1.0, ps.event_queue_depth / max(1, ps.event_queue_max_depth))
 
-    degradation = classify_load(cpu_percent, queue_ratio)
+    # PipelineStatus.cpu_percent is psutil's raw, MULTI-CORE cumulative
+    # percent (can exceed 100% -- see AIPipeline.get_resource_usage() /
+    # AI_ARCHITECTURE.md's own "652% avg" convention), but classify_load's
+    # thresholds are written for a NORMALIZED 0-100%-of-total-capacity
+    # scale. Normalized here using the BACKEND's own core count -- correct
+    # for this project's single-host docker-compose PoC (pipeline and
+    # backend share one host); would need the pipeline's own core count
+    # (not currently pushed) to stay correct in a true multi-host
+    # deployment -- see docs/SCALE_TO_80000.md limitations.
+    cpu_cores = multiprocessing.cpu_count() or 1
+    normalized_cpu = (cpu_percent / cpu_cores) if cpu_percent is not None else None
+    degradation = classify_load(normalized_cpu, queue_ratio)
 
     summary = _load_benchmark_summary()
     baseline = _baseline_from_summary(summary)

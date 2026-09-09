@@ -230,17 +230,18 @@ class PipelineService:
         like the plain FrameConsumer path: every camera at NORMAL priority,
         ANPR mode, unrestricted sampling)."""
         assert isinstance(self.consumer, ScheduledFrameConsumer)
+        default_target_fps = getattr(self.args, "target_fps", None)
         for e in self.entries:
             cam_id = str(e.get("camera_id") or e.get("id"))
             priority = e.get("priority")
             mode = e.get("processing_mode")
             sampling = None
-            target_fps = e.get("target_fps")
+            target_fps = e.get("target_fps", default_target_fps)
             if target_fps is not None:
                 sampling = SamplingConfig(
                     target_fps=float(target_fps),
                     min_fps=float(e.get("min_fps", 0.5)),
-                    max_fps=float(e.get("max_fps", 15.0)),
+                    max_fps=float(e.get("max_fps", max(15.0, float(target_fps) * 3))),
                 )
             if priority or mode or sampling:
                 self.consumer.configure_camera(cam_id, priority=priority, mode=mode, sampling=sampling)
@@ -561,6 +562,11 @@ def main():
         help="Phase 17: single-consumer path only (--ai-workers=1, default) -- swap the plain FIFO "
              "FrameConsumer for ai.scheduled_consumer's bounded, priority-weighted fair scheduler + "
              "adaptive sampling. Same one consumer thread, no added CPU parallelism.",
+    )
+    ap.add_argument(
+        "--target-fps", type=float, default=None,
+        help="Phase 17: --fair-scheduler only -- default per-camera AdaptiveFrameSampler target FPS "
+             "for any camera whose registry entry doesn't specify its own target_fps.",
     )
     ap.add_argument("--device", default=os.getenv("SENTINEL_AI_DEVICE", "cpu"))
     ap.add_argument("--evidence-dir", default=os.getenv("SENTINEL_EVIDENCE_DIR", "evidence/live"))

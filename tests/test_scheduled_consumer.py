@@ -151,5 +151,45 @@ class TestMetricsShape(unittest.TestCase):
         self.assertEqual(m["load_state"], "HEALTHY")
 
 
+class _CpuReportingPipeline(_RecordingPipeline):
+    def __init__(self, cpu_percent):
+        super().__init__()
+        self._cpu_percent = cpu_percent
+
+    def get_metrics(self):
+        return {"resource_usage": {"cpu_percent": self._cpu_percent}, "event_queue_depth": 0, "event_queue_maxsize": 500}
+
+
+class TestCpuNormalization(unittest.TestCase):
+    """Regression test for a real bug this Phase 17 pass's own benchmark
+    run surfaced: psutil's raw MULTI-CORE cumulative cpu_percent (can
+    exceed 100 -- see AIPipeline.get_resource_usage()) was being compared
+    directly against ai.degradation's NORMALIZED 0-100% thresholds,
+    falsely triggering OVERLOADED (and a near-total sampling collapse)
+    almost immediately during any real multi-core inference workload."""
+
+    def test_raw_multicore_cpu_does_not_falsely_overload(self):
+        import os
+        cores = os.cpu_count() or 1
+        if cores < 2:
+            self.skipTest("normalization is a no-op on a single-core host")
+        q: "queue.Queue" = queue.Queue()
+        # 50% of total capacity, expressed the way psutil actually reports
+        # it on this host (e.g. 400% raw on an 8-core machine).
+        pipeline = _CpuReportingPipeline(cpu_percent=50.0 * cores)
+        consumer = ScheduledFrameConsumer(q, pipeline, poll_timeout_s=0.1, load_update_interval_s=0.0)
+        consumer._maybe_update_load_state()
+        self.assertEqual(consumer.get_metrics()["load_state"], "HEALTHY")
+
+    def test_raw_multicore_cpu_correctly_flags_genuine_overload(self):
+        import os
+        cores = os.cpu_count() or 1
+        q: "queue.Queue" = queue.Queue()
+        pipeline = _CpuReportingPipeline(cpu_percent=95.0 * cores)
+        consumer = ScheduledFrameConsumer(q, pipeline, poll_timeout_s=0.1, load_update_interval_s=0.0)
+        consumer._maybe_update_load_state()
+        self.assertEqual(consumer.get_metrics()["load_state"], "OVERLOADED")
+
+
 if __name__ == "__main__":
     unittest.main()

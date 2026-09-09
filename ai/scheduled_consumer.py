@@ -45,6 +45,7 @@ benchmarked head-to-head under identical load.
 from __future__ import annotations
 
 import logging
+import os
 import queue
 import threading
 import time
@@ -215,8 +216,23 @@ class ScheduledFrameConsumer:
             return
         snap = self.scheduler.snapshot()
         ocr = metrics.get("ocr_executor") or {}
+        raw_cpu = (metrics.get("resource_usage") or {}).get("cpu_percent")
+        # AIPipeline.get_resource_usage() reports psutil's raw, MULTI-CORE
+        # cumulative percent (up to ncores*100 -- e.g. "652% avg" in
+        # AI_ARCHITECTURE.md/SCALABILITY.md's own convention). That's the
+        # right number for a human-readable dashboard metric, but
+        # ai.degradation's thresholds (70%/90%) are written for a
+        # NORMALIZED 0-100%-of-total-capacity scale -- comparing the raw
+        # value directly would falsely trip OVERLOADED any time this
+        # process alone used more than ~1 core, i.e. almost immediately
+        # during any real inference (measured: this exact bug produced a
+        # permanent, spurious OVERLOADED state and a near-total sampling
+        # collapse in an early Phase 17 benchmark run -- see
+        # docs/PHASE17_BENCHMARK.md's limitations section).
+        cpu_cores = os.cpu_count() or 1
+        normalized_cpu = (raw_cpu / cpu_cores) if raw_cpu is not None else None
         inputs = DegradationInputs(
-            cpu_percent=(metrics.get("resource_usage") or {}).get("cpu_percent"),
+            cpu_percent=normalized_cpu,
             event_queue_depth=metrics.get("event_queue_depth"),
             event_queue_maxsize=metrics.get("event_queue_maxsize"),
             ocr_queue_depth=ocr.get("queue_depth"),
