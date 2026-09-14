@@ -7,10 +7,11 @@ import {
 import AISummaryPanel from "../components/ops/AISummaryPanel.jsx";
 import { aiCaseSummary } from "../services/aiApi.js";
 import { C } from "../theme.js";
-import { canManageOps, evidenceUrl } from "../services/api.js";
+import { canManageOps } from "../services/api.js";
 import { useMediaTicket } from "../services/mediaTicket.js";
 import { useToast } from "../context/ToastContext.jsx";
-import { fakePlate, pickFallbackFrame } from "../lib/evidenceFallback.js";
+import { fakePlate } from "../lib/evidenceFallback.js";
+import EvidenceThumb from "../components/EvidenceThumb.jsx";
 import {
   addCaseNote, assignCase, attachCaseEvidence, attachCaseIncident, caseTimeline,
   detachCaseEvidence, detachCaseIncident, downloadCaseReportCSV, getCase,
@@ -195,9 +196,8 @@ export default function CaseDetailPage() {
           {evidence.map((e) => (
             <div key={e.id} style={{ width: 150, background: C.panel, border: `1px solid ${C.border}`, borderRadius: 6, overflow: "hidden" }}>
               <div style={{ height: 90, background: "#000", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                {e.has_snapshot && mediaTicket
-                  ? <img src={evidenceUrl(e.vehicle_event_id)} alt="evidence" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                  : <img src={pickFallbackFrame(e.vehicle_event_id, e.camera_code)} alt="evidence" style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
+                <EvidenceThumb eventId={e.vehicle_event_id} hasSnapshot={e.has_snapshot} mediaTicket={mediaTicket}
+                  style={{ width: "100%", height: "100%", objectFit: "cover" }} />
               </div>
               <div style={{ padding: "6px 8px", fontSize: 10, color: C.muted }}>
                 <div style={{ fontFamily: "monospace", color: C.amber }}>{e.plate_number || fakePlate(e.vehicle_event_id || e.id)}</div>

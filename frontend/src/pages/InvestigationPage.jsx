@@ -218,8 +218,14 @@ export default function InvestigationPage() {
     ? { lat: focusCamera.lat, lng: focusCamera.lng, zoom: FOCUS_ZOOM }
     : null;
 
-  const mapCenter = hasSightings
-    ? [sightings[0].lat, sightings[0].lng]
+  // A sighting can legitimately have no camera fix (e.g. a mock camera with
+  // no geo-location) -- picking sightings[0] unconditionally as the map's
+  // initial `center` crashed react-leaflet's MapContainer outright when the
+  // chronologically-first sighting happened to be one of those (L.latLng
+  // has no null guard). Use the first sighting that actually has coordinates.
+  const firstGeoSighting = sightings.find((s) => Number.isFinite(s.lat) && Number.isFinite(s.lng));
+  const mapCenter = firstGeoSighting
+    ? [firstGeoSighting.lat, firstGeoSighting.lng]
     : focusCamera
     ? [focusCamera.lat, focusCamera.lng]
     : GUJARAT_CENTER;
