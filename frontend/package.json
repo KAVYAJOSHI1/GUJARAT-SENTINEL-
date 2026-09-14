@@ -11,15 +11,18 @@
   },
   "dependencies": {
     "axios": "^1.7.9",
+    "gsap": "^3.12.5",
     "hls.js": "^1.7.2",
     "jspdf": "^2.5.2",
     "leaflet": "^1.9.4",
     "leaflet-polylinedecorator": "^1.6.0",
+    "lenis": "^1.1.20",
     "lucide-react": "^0.469.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-leaflet": "^4.2.1",
-    "react-router-dom": "^6.28.1"
+    "react-router-dom": "^6.28.1",
+    "three": "^0.169.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",
