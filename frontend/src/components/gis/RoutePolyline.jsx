@@ -33,9 +33,21 @@ export default function RoutePolyline({ sightings = [], fit = true, activeId = n
     const latlngs = points.map((s) => [s.lat, s.lng]);
     const layer = L.layerGroup();
 
+    let rafId = null;
     if (latlngs.length >= 2) {
-      const line = L.polyline(latlngs, { color: ACCENT, weight: 3, opacity: 0.9 });
+      // Dashed + animated offset ("marching ants") so a reconstructed
+      // journey visibly travels along the route rather than sitting as a
+      // static line — the same beat as the pitch video's hero scene.
+      const line = L.polyline(latlngs, { color: ACCENT, weight: 3, opacity: 0.9, dashArray: "10 8" });
       layer.addLayer(line);
+
+      let offset = 0;
+      const animate = () => {
+        offset = (offset - 0.6 + 18) % 18;
+        line.setStyle({ dashOffset: String(offset) });
+        rafId = requestAnimationFrame(animate);
+      };
+      rafId = requestAnimationFrame(animate);
 
       // Preferred: leaflet-polylinedecorator arrowheads along the path.
       const hasDecorator = typeof L.polylineDecorator === "function" && L.Symbol?.arrowHead;
@@ -107,6 +119,7 @@ export default function RoutePolyline({ sightings = [], fit = true, activeId = n
     layer.addTo(map);
 
     return () => {
+      if (rafId != null) cancelAnimationFrame(rafId);
       map.removeLayer(layer);
     };
     // Deliberately NOT keyed on `sightings` (a fresh array/object each render

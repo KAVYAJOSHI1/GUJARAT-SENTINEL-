@@ -5,6 +5,7 @@ import { C } from "../theme.js";
 import ErrorBanner from "../components/ui/ErrorBanner.jsx";
 import GisMap from "../components/gis/GisMap.jsx";
 import CameraMarker from "../components/gis/CameraMarker.jsx";
+import ClusteredCameraLayer from "../components/gis/ClusteredCameraLayer.jsx";
 import { fetchCamerasGeoJSON } from "../services/investigationApi.js";
 import { CITY_ZOOM, GUJARAT_CENTER, GUJARAT_ZOOM } from "../lib/mockGisData.js";
 
@@ -26,7 +27,7 @@ export default function MapPage() {
     fetchCamerasGeoJSON().then((res) => {
       if (cancelled) return;
       setLive(res.live);
-      if (res.data?.length) setCameras(res.data);
+      if (res.data?.length) setCameras(res.data.filter((c) => !c.isMock));
       else if (layoutCameras.length) setCameras(layoutCameras);
     });
     return () => {
@@ -69,13 +70,18 @@ export default function MapPage() {
         zoom={focus ? CITY_ZOOM : GUJARAT_ZOOM}
         height="calc(100vh - 200px)"
       >
-        {cameras.map((cam) => (
+        <ClusteredCameraLayer
+          cameras={cameras}
+          excludeId={focus?.id}
+          onOpen={(c) => navigate(`/investigation?cam=${encodeURIComponent(c.id)}`)}
+        />
+        {focus && (
           <CameraMarker
-            key={cam.id}
-            camera={cam}
+            camera={focus}
+            highlighted
             onOpen={(c) => navigate(`/investigation?cam=${encodeURIComponent(c.id)}`)}
           />
-        ))}
+        )}
       </GisMap>
     </div>
   );

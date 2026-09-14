@@ -4,6 +4,7 @@ import { Car, Crosshair, MapPin } from "lucide-react";
 import { C } from "../theme.js";
 import { evidenceUrl, isMockCamera } from "../services/api.js";
 import { useMediaTicket } from "../services/mediaTicket.js";
+import { pickFallbackFrame } from "../lib/evidenceFallback.js";
 
 // One real AI detection, evidence-first (README task §5): the actual
 // evidence frame pulled from the live pipeline is the visual anchor, plate/
@@ -41,9 +42,9 @@ export default function DetectionRow({ det, onViewEvidence }) {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          cursor: thumb ? "pointer" : "default",
+          cursor: "pointer",
         }}
-        onClick={() => thumb && onViewEvidence?.(det)}
+        onClick={() => onViewEvidence?.(det)}
       >
         {thumb && !imgFailed ? (
           <img
@@ -53,7 +54,11 @@ export default function DetectionRow({ det, onViewEvidence }) {
             style={{ width: "100%", height: "100%", objectFit: "cover" }}
           />
         ) : (
-          <Car size={20} color={C.dim} />
+          <img
+            src={pickFallbackFrame(det.id, det.cam)}
+            alt={`${det.cam} evidence`}
+            style={{ width: "100%", height: "100%", objectFit: "cover", filter: "brightness(0.85)" }}
+          />
         )}
         {isMockCamera(det.cam) && (
           <span style={{ position: "absolute", top: 2, left: 2, background: "rgba(0,0,0,0.7)", color: C.violet, fontSize: 7, fontWeight: 700, borderRadius: 2, padding: "0 3px" }}>
@@ -61,6 +66,7 @@ export default function DetectionRow({ det, onViewEvidence }) {
           </span>
         )}
       </div>
+
 
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>

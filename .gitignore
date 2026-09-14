@@ -100,3 +100,7 @@ Thumbs.db
 *.log
 logs/
 cookies.txt
+
+# local live-video gateway (contains real RTSP credentials)
+mediamtx.yml
+docker-compose.override.yml

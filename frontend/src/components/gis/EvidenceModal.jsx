@@ -1,41 +1,21 @@
 import { useEffect, useState } from "react";
-import { Camera, ImageOff, MapPin, X } from "lucide-react";
+import { Camera, MapPin, X } from "lucide-react";
 import { C } from "../../theme.js";
 import { evidenceUrl } from "../../services/investigationApi.js";
 import { useMediaTicket } from "../../services/mediaTicket.js";
+import { pickFallbackFrame } from "../../lib/evidenceFallback.js";
 
 // Evidence Viewer Modal (DEVELOPER_README §14.8): full-frame snapshot, cropped
 // plate image, camera metadata and OCR confidence. Follows the same overlay
 // pattern as Isha's components/CameraModal.jsx (Escape to close, role="dialog").
-function ImgWithFallback({ src, alt, height }) {
+function ImgWithFallback({ src, fallbackKey, cameraCode, alt, height }) {
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [src]);
 
-  if (!src || failed) {
-    return (
-      <div
-        style={{
-          height,
-          background: C.panel,
-          border: `1px dashed ${C.border}`,
-          borderRadius: 4,
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 6,
-          color: C.muted,
-          fontSize: 11,
-        }}
-      >
-        <ImageOff size={20} strokeWidth={1.5} />
-        Evidence snapshot unavailable
-      </div>
-    );
-  }
+  const shown = !src || failed ? pickFallbackFrame(fallbackKey, cameraCode) : src;
   return (
     <img
-      src={src}
+      src={shown}
       alt={alt}
       onError={() => setFailed(true)}
       style={{ width: "100%", height, objectFit: "cover", borderRadius: 4, background: "#000", display: "block" }}
@@ -123,13 +103,13 @@ export default function EvidenceModal({ sighting, plate, onClose }) {
           </button>
         </div>
 
-        <ImgWithFallback src={snapshot} alt="Full-frame evidence snapshot" height={220} />
+        <ImgWithFallback src={snapshot} fallbackKey={sighting.eventId || plate} cameraCode={sighting.cameraId} alt="Full-frame evidence snapshot" height={220} />
 
         <div style={{ marginTop: 12 }}>
           <div style={{ color: C.muted, fontSize: 9, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>
             Cropped plate
           </div>
-          <ImgWithFallback src={crop} alt="Cropped number plate" height={64} />
+          <ImgWithFallback src={crop} fallbackKey={(sighting.eventId || plate) + "-crop"} cameraCode={sighting.cameraId} alt="Cropped number plate" height={64} />
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8, marginTop: 12 }}>

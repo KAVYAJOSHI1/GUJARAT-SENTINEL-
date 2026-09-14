@@ -38,6 +38,38 @@
   font-family: var(--font-sans, "Inter", sans-serif);
 }
 
+/* Colour-grade the stock CartoDB "dark_all" tiles toward the app's own
+   palette (theme.js accent is blue-teal, not CartoDB's neutral grey) so the
+   map reads as part of this product rather than a generic demo basemap.
+   Tiles only -- markers/overlays sit in separate panes and are untouched. */
+.gis-map .leaflet-tile-pane {
+  filter: hue-rotate(178deg) saturate(1.35) brightness(0.92) contrast(1.05);
+}
+
+/* Marker-cluster bubbles (leaflet.markercluster) — dark command-center
+   styling instead of the plugin's default yellow/orange circles. */
+.gis-map .gis-cluster {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: rgba(79, 156, 217, 0.16);
+  border: 1.5px solid #4f9cd9;
+  color: #e5e9ee;
+  font-family: var(--font-mono, monospace);
+  font-weight: 700;
+  font-size: 12px;
+}
+.gis-map .gis-cluster.has-alert {
+  border-color: #d9a441;
+  background: rgba(217, 164, 65, 0.18);
+}
+.gis-map .gis-cluster.has-offline {
+  border-color: #e0574c;
+}
+
 /* Zoom / attribution controls */
 .gis-map .leaflet-bar a,
 .gis-map .leaflet-bar a:hover {
@@ -81,13 +113,19 @@
   border: none;
 }
 
-/* Camera status marker (L.divIcon) */
+/* Camera status marker (L.divIcon) — a colour-coded ring holding a small
+   camera glyph, so a pin reads as "a camera" rather than an unlabeled dot. */
 .gis-cam-marker {
-  width: 14px;
-  height: 14px;
+  position: relative;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
   border: 2px solid #12161c;
   box-shadow: 0 0 0 1px rgba(229, 233, 238, 0.25);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #12161c;
 }
 /* Status convention (command-center palette, kept in sync with theme.js
    CAMERA_STATUS_COLOR): GREEN = online, RED = offline, AMBER = active
@@ -101,6 +139,27 @@
 }
 .gis-cam-marker.is-offline {
   background: #e0574c;
+}
+/* Continuous soft pulse behind an unacknowledged alert camera — same
+   "living system" language as Pulse.jsx's alert badge, reused here so the
+   map itself reads as live, not just a static snapshot of status. */
+.gis-cam-pulse {
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(217, 164, 65, 0.75);
+  animation: gisCamPulse 1.8s ease-out infinite;
+  pointer-events: none;
+}
+@keyframes gisCamPulse {
+  0% {
+    transform: scale(0.75);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(1.9);
+    opacity: 0;
+  }
 }
 /* Context markers around a highlighted one — recede so the selection pops. */
 .gis-cam-marker.is-dim {

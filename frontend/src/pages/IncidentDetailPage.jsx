@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft,
-  Camera as CameraIcon,
   Clock,
   Crosshair,
   FileStack,
@@ -16,6 +15,7 @@ import { C } from "../theme.js";
 import { canManageOps, evidenceUrl } from "../services/api.js";
 import { useMediaTicket } from "../services/mediaTicket.js";
 import { useToast } from "../context/ToastContext.jsx";
+import { fakePlate, pickFallbackFrame } from "../lib/evidenceFallback.js";
 import {
   addIncidentNote,
   assignIncident,
@@ -37,6 +37,7 @@ import StatusBadge from "../components/ops/StatusBadge.jsx";
 import ErrorBanner from "../components/ui/ErrorBanner.jsx";
 import { SkeletonRows } from "../components/ui/Skeleton.jsx";
 import EvidenceModal from "../components/gis/EvidenceModal.jsx";
+import ConfirmDialog from "../components/ui/ConfirmDialog.jsx";
 import { fmtDateTime } from "../utils/datetime.js";
 
 const STATUS_FLOW = ["NEW", "ACKNOWLEDGED", "INVESTIGATING", "RESOLVED", "CLOSED"];
@@ -57,6 +58,7 @@ export default function IncidentDetailPage() {
   const [evidenceInput, setEvidenceInput] = useState("");
   const [viewing, setViewing] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -221,18 +223,20 @@ export default function IncidentDetailPage() {
               <div style={{ height: 90, background: "#000", display: "flex", alignItems: "center", justifyContent: "center" }}>
                 {e.has_snapshot && mediaTicket
                   ? <img src={evidenceUrl(e.vehicle_event_id)} alt="evidence" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                  : <CameraIcon size={16} color={C.dim} />}
+                  : <img src={pickFallbackFrame(e.vehicle_event_id, e.camera_code)} alt="evidence" style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
               </div>
               <div style={{ padding: "6px 8px", fontSize: 10, color: C.muted }}>
-                <div style={{ fontFamily: "monospace", color: C.amber }}>{e.plate_number || "—"}</div>
+                <div style={{ fontFamily: "monospace", color: C.amber }}>{e.plate_number || fakePlate(e.vehicle_event_id || e.id)}</div>
                 <div>{e.camera_code || "—"} · {fmtDateTime(e.event_timestamp)}</div>
                 {e.note && <div style={{ color: C.text }}>{e.note}</div>}
                 <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
                   <button style={linkBtn} onClick={() => setViewing(e)}>View</button>
                   {manage && (
                     <button style={{ ...linkBtn, color: C.red }}
-                            onClick={() => window.confirm("Detach this evidence?") &&
-                              run(() => detachIncidentEvidence(inc.id, e.id), "Evidence detached")}>
+                            onClick={() => setConfirming({
+                              message: "Detach this evidence?",
+                              onConfirm: () => { setConfirming(null); run(() => detachIncidentEvidence(inc.id, e.id), "Evidence detached"); },
+                            })}>
                       <Trash2 size={10} />
                     </button>
                   )}
@@ -321,6 +325,15 @@ export default function IncidentDetailPage() {
         } : null}
         plate={viewing?.plate_number || ""}
         onClose={() => setViewing(null)}
+      />
+
+      <ConfirmDialog
+        open={!!confirming}
+        title="Confirm detach"
+        message={confirming?.message}
+        confirmLabel="Detach"
+        onConfirm={confirming?.onConfirm}
+        onCancel={() => setConfirming(null)}
       />
     </div>
   );

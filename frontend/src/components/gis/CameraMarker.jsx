@@ -19,14 +19,20 @@ const STATUS_LABEL = {
 const statusClass = (status) =>
   status === "alert" ? "is-alert" : status === "offline" ? "is-offline" : "is-active";
 
-function makeIcon(status, dim, mock) {
-  const size = dim ? 10 : 14;
+// Small camera glyph (currentColor, inherits the marker's ring color) so a
+// pin reads as "a camera" at a glance instead of an unlabeled colored dot.
+const CAMERA_GLYPH =
+  '<svg viewBox="0 0 24 24" fill="none" width="60%" height="60%"><rect x="2" y="7" width="14" height="11" rx="2.5" stroke="currentColor" stroke-width="2.4"/><path d="M16 10.5L22 7v10l-6-3.5" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round"/></svg>';
+
+export function makeIcon(status, dim, mock) {
+  const size = dim ? 14 : 20;
+  const alertPulse = status === "alert" && !dim ? '<span class="gis-cam-pulse"></span>' : "";
   return L.divIcon({
     className: "",
-    html: `<div class="gis-cam-marker ${statusClass(status)}${dim ? " is-dim" : ""}${mock ? " is-mock" : ""}"></div>`,
+    html: `<div class="gis-cam-marker ${statusClass(status)}${dim ? " is-dim" : ""}${mock ? " is-mock" : ""}">${alertPulse}${CAMERA_GLYPH}</div>`,
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
-    popupAnchor: [0, -8],
+    popupAnchor: [0, -10],
   });
 }
 

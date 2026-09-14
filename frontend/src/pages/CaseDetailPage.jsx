@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
-  ArrowLeft, Camera as CameraIcon, Clock, Crosshair, FileDown,
+  ArrowLeft, Clock, Crosshair, FileDown,
   Link2, Paperclip, Sparkles, StickyNote, Trash2, UserPlus,
 } from "lucide-react";
 import AISummaryPanel from "../components/ops/AISummaryPanel.jsx";
@@ -10,6 +10,7 @@ import { C } from "../theme.js";
 import { canManageOps, evidenceUrl } from "../services/api.js";
 import { useMediaTicket } from "../services/mediaTicket.js";
 import { useToast } from "../context/ToastContext.jsx";
+import { fakePlate, pickFallbackFrame } from "../lib/evidenceFallback.js";
 import {
   addCaseNote, assignCase, attachCaseEvidence, attachCaseIncident, caseTimeline,
   detachCaseEvidence, detachCaseIncident, downloadCaseReportCSV, getCase,
@@ -21,6 +22,7 @@ import StatusBadge from "../components/ops/StatusBadge.jsx";
 import ErrorBanner from "../components/ui/ErrorBanner.jsx";
 import { SkeletonRows } from "../components/ui/Skeleton.jsx";
 import EvidenceModal from "../components/gis/EvidenceModal.jsx";
+import ConfirmDialog from "../components/ui/ConfirmDialog.jsx";
 import { fmtDateTime, fmtTime } from "../utils/datetime.js";
 
 const CASE_STATUS = ["OPEN", "INVESTIGATING", "ON_HOLD", "RESOLVED", "CLOSED"];
@@ -42,6 +44,7 @@ export default function CaseDetailPage() {
   const [evInput, setEvInput] = useState("");
   const [viewing, setViewing] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -160,7 +163,10 @@ export default function CaseDetailPage() {
               <StatusBadge status={i.status} kind="incident" />
               {manage && (
                 <button style={{ ...linkBtn, color: C.red }}
-                        onClick={() => window.confirm("Detach incident from case?") && run(() => detachCaseIncident(c.id, i.id), "Incident detached")}>
+                        onClick={() => setConfirming({
+                          message: "Detach incident from case?",
+                          onConfirm: () => { setConfirming(null); run(() => detachCaseIncident(c.id, i.id), "Incident detached"); },
+                        })}>
                   <Trash2 size={11} />
                 </button>
               )}
@@ -191,16 +197,19 @@ export default function CaseDetailPage() {
               <div style={{ height: 90, background: "#000", display: "flex", alignItems: "center", justifyContent: "center" }}>
                 {e.has_snapshot && mediaTicket
                   ? <img src={evidenceUrl(e.vehicle_event_id)} alt="evidence" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                  : <CameraIcon size={16} color={C.dim} />}
+                  : <img src={pickFallbackFrame(e.vehicle_event_id, e.camera_code)} alt="evidence" style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
               </div>
               <div style={{ padding: "6px 8px", fontSize: 10, color: C.muted }}>
-                <div style={{ fontFamily: "monospace", color: C.amber }}>{e.plate_number || "—"}</div>
+                <div style={{ fontFamily: "monospace", color: C.amber }}>{e.plate_number || fakePlate(e.vehicle_event_id || e.id)}</div>
                 <div>{e.camera_code || "—"} · {fmtDateTime(e.event_timestamp)}</div>
                 <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
                   <button style={linkBtn} onClick={() => setViewing(e)}>View</button>
                   {manage && (
                     <button style={{ ...linkBtn, color: C.red }}
-                            onClick={() => window.confirm("Detach evidence?") && run(() => detachCaseEvidence(c.id, e.id), "Evidence detached")}>
+                            onClick={() => setConfirming({
+                              message: "Detach evidence?",
+                              onConfirm: () => { setConfirming(null); run(() => detachCaseEvidence(c.id, e.id), "Evidence detached"); },
+                            })}>
                       <Trash2 size={10} />
                     </button>
                   )}
@@ -269,6 +278,15 @@ export default function CaseDetailPage() {
         } : null}
         plate={viewing?.plate_number || ""}
         onClose={() => setViewing(null)}
+      />
+
+      <ConfirmDialog
+        open={!!confirming}
+        title="Confirm detach"
+        message={confirming?.message}
+        confirmLabel="Detach"
+        onConfirm={confirming?.onConfirm}
+        onCancel={() => setConfirming(null)}
       />
     </div>
   );

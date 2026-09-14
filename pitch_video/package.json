@@ -1,0 +1,18 @@
+{
+  "name": "sentinel-pitch-video",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SENTINEL — 75s YC-style pitch video, built with Remotion. Brand: real Orqis theme from frontend/src/styles/index.css.",
+  "scripts": {
+    "start": "remotion studio src/index.jsx",
+    "render": "remotion render src/index.jsx Sentinel out/sentinel-pitch.mp4",
+    "still": "remotion still src/index.jsx Sentinel out/still.png"
+  },
+  "dependencies": {
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "remotion": "4.0.524",
+    "@remotion/cli": "4.0.524",
+    "@remotion/google-fonts": "4.0.524"
+  }
+}

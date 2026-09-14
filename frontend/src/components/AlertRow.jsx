@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowUpCircle, Car, Crosshair, FolderPlus, ImageOff, MapPin } from "lucide-react";
+import { ArrowUpCircle, Car, Crosshair, FolderPlus, MapPin } from "lucide-react";
 import { C, SEVERITY_COLOR } from "../theme.js";
 import { canManageOps, evidenceUrl } from "../services/api.js";
 import { useMediaTicket } from "../services/mediaTicket.js";
 import { createIncident, escalateAlert } from "../services/opsApi.js";
 import { useToast } from "../context/ToastContext.jsx";
+import { pickFallbackFrame } from "../lib/evidenceFallback.js";
 import SeverityBadge from "./SeverityBadge.jsx";
 
 // One incident card (README task §2 — Live Incident / Alert Center).
@@ -72,7 +73,9 @@ export default function AlertRow({ alert, onAck, onViewEvidence }) {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
+          cursor: "pointer",
         }}
+        onClick={() => onViewEvidence?.(alert)}
       >
         {thumb && !imgFailed ? (
           <img
@@ -82,9 +85,14 @@ export default function AlertRow({ alert, onAck, onViewEvidence }) {
             style={{ width: "100%", height: "100%", objectFit: "cover" }}
           />
         ) : (
-          <ImageOff size={16} color={C.dim} />
+          <img
+            src={pickFallbackFrame(alert.id, alert.cam)}
+            alt={`Evidence for ${alert.vehicle || alert.cam}`}
+            style={{ width: "100%", height: "100%", objectFit: "cover", filter: "brightness(0.85)" }}
+          />
         )}
       </div>
+
 
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 3, flexWrap: "wrap" }}>

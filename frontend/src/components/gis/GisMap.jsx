@@ -37,17 +37,24 @@ export default function GisMap({
         preferCanvas
         style={{ height: "100%", width: "100%" }}
       >
-        {/* CartoDB "Dark Matter" basemap (DEVELOPER_README §6). Served from
-            CARTO's Fastly CDN host: byte-identical tiles to
-            {s}.basemaps.cartocdn.com but without the "API KEY REQUIRED"
-            watermark CARTO now overlays on unauthenticated use of that host.
-            No key, no sign-up. */}
+        {/* Esri's public dark-canvas basemap REST tiles (no key, no sign-up,
+            no per-origin restriction). Previously this used CARTO's Fastly
+            CDN mirror to dodge their "API KEY REQUIRED" overlay on
+            unauthenticated dark_all tiles -- CARTO has since started
+            enforcing that watermark on the mirror too, so every tile was
+            rendering with "API KEY REQUIRED" stamped across it. Esri's
+            Canvas/World_Dark_Gray_* services are genuinely free for this
+            volume of use and don't depend on an unofficial CDN quirk.
+            Two layers stacked per Esri's own usage pattern: unlabeled base
+            + a reference layer carrying labels/roads on top. */}
         <TileLayer
-          url="https://cartodb-basemaps-{s}.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png"
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
-          subdomains="abcd"
-          detectRetina={false}
-          maxZoom={19}
+          url="https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"
+          attribution="Tiles &copy; Esri &mdash; Esri, HERE, Garmin, &copy; OpenStreetMap contributors, and the GIS User Community"
+          maxZoom={16}
+        />
+        <TileLayer
+          url="https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}"
+          maxZoom={16}
         />
         <MapViewController focus={focus} />
         {children}

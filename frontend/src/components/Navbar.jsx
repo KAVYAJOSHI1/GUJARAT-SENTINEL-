@@ -91,7 +91,12 @@ export default function Navbar({ wsStatus, unackCount = 0, critCount = 0, notifU
       gap: 14, flexWrap: "wrap", position: "sticky", top: 0, zIndex: 200,
     }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 0" }}>
-        <img src={LOGO_URL} alt="Gujarat Police" style={{ width: 32, height: 32, objectFit: "contain" }} />
+        <img
+          src={LOGO_URL}
+          alt="Gujarat Police"
+          style={{ width: 32, height: 32, objectFit: "contain" }}
+          onError={(e) => (e.currentTarget.style.display = "none")}
+        />
         <div>
           <div style={{ fontWeight: 700, fontSize: 14, letterSpacing: 0.3, color: C.text }}>SENTINEL</div>
           <div style={{ color: C.muted, fontSize: 9, letterSpacing: 2, textTransform: "uppercase" }}>

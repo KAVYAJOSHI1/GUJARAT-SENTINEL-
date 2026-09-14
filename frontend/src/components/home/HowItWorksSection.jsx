@@ -10,13 +10,13 @@ const STAGES = [
     icon: Cable,
     title: "Stream Ingestion",
     body: "RTSP over TCP, WebRTC and HLS, with PTS timestamping and exponential backoff reconnects — built for erratic camera networks, not lab conditions.",
-    image: null,
+    image: "/home/live-monitoring.jpg",
   },
   {
     icon: ScanLine,
     title: "AI Detection & ANPR",
     body: "YOLOv8 vehicle detection feeds EasyOCR plate reads, with multi-frame consensus voting to reject misreads. A plate we can't confirm is reported UNKNOWN — never guessed.",
-    image: null,
+    image: "/home/watchlist.jpg",
   },
   {
     icon: Crosshair,
@@ -31,6 +31,7 @@ const STAGES = [
     image: "/home/alerts.jpg",
   },
 ];
+
 
 /** Act 3: how it actually works, end to end — pinned so the visitor's
  * scroll speed controls the pace of the pipeline, not an autoplay timer. */

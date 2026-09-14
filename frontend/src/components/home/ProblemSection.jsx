@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import gsap from "gsap";
 import ScrollTrigger from "gsap/ScrollTrigger";
 import FeedTile from "./FeedTile.jsx";
+import { pickFallbackFrame } from "../../lib/evidenceFallback.js";
 
 gsap.registerPlugin(ScrollTrigger);
 
@@ -12,6 +13,7 @@ gsap.registerPlugin(ScrollTrigger);
 const NOISE_TILES = Array.from({ length: 18 }, (_, i) => ({
   code: `CAM-${100 + i * 7}`,
   status: i % 9 === 0 ? "offline" : i % 5 === 0 ? "degraded" : "online",
+  image: pickFallbackFrame(`noise-${i}`, `CAM-${String((i % 30) + 1).padStart(2, "0")}`),
 }));
 
 /** Act 1: the feed multiplies. No correlation, no memory between cameras —
@@ -48,9 +50,10 @@ export default function ProblemSection() {
       </div>
       <div className="hp-noise-grid">
         {NOISE_TILES.map((t) => (
-          <FeedTile key={t.code} code={t.code} status={t.status} className="hp-noise-tile" />
+          <FeedTile key={t.code} code={t.code} status={t.status} image={t.image} className="hp-noise-tile" />
         ))}
       </div>
     </section>
   );
 }
+

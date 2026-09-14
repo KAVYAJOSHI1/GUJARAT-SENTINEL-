@@ -3,6 +3,7 @@ import { AlertTriangle, Loader2, RefreshCw, Video, VideoOff } from "lucide-react
 import { C } from "../../theme.js";
 import { http } from "../../services/api.js";
 import { ensureMediaTicket, useMediaTicket } from "../../services/mediaTicket.js";
+import { pickFallbackFrame } from "../../lib/evidenceFallback.js";
 
 const MODE_STYLE = {
   LIVE: { c: C.red, t: "LIVE" },
@@ -21,6 +22,12 @@ export default function CameraPlayer({ cameraId, height = 260 }) {
   const [status, setStatus] = useState("loading"); // loading | playing | error | offline
   const [err, setErr] = useState("");
   const [attempt, setAttempt] = useState(0);
+  // The backend returns a real 200 response for a missing snapshot (an
+  // "EVIDENCE IMAGE NOT AVAILABLE" placeholder graphic, flagged via the
+  // X-Evidence-Status header) rather than a 404 -- a plain <img> has no way
+  // to see that header, so it's checked with a HEAD-style fetch first and a
+  // real illustrative frame is shown instead of ever rendering that graphic.
+  const [snapReal, setSnapReal] = useState(false);
   const videoRef = useRef(null);
   const hlsRef = useRef(null);
   // reactive so a source that cold-started with no credential retries once a
@@ -120,6 +127,17 @@ export default function CameraPlayer({ cameraId, height = 260 }) {
     };
   }, [profile, sourceIdx, attempt, mediaTicket]);
 
+  useEffect(() => {
+    const src = profile?.sources?.[sourceIdx];
+    if (src?.kind !== "snapshot") return;
+    let cancelled = false;
+    setSnapReal(false);
+    fetch(withImgAuth(src.url, mediaTicket))
+      .then((res) => { if (!cancelled) setSnapReal(!res.headers.get("X-Evidence-Status")); })
+      .catch(() => { if (!cancelled) setSnapReal(false); });
+    return () => { cancelled = true; };
+  }, [profile, sourceIdx, mediaTicket]);
+
   if (!profile && status === "loading") {
     return <Shell height={height}><Loader2 className="spin" size={20} color={C.muted} /></Shell>;
   }
@@ -161,17 +179,29 @@ export default function CameraPlayer({ cameraId, height = 260 }) {
       </button>
 
       {status === "offline" || profile.mode === "OFFLINE" ? (
-        <Shell height={height}>
-          <VideoOff size={22} color={C.muted} />
-          <div style={{ color: C.muted, fontSize: 11, marginTop: 8 }}>
-            {profile.mode_reasons?.[0] || "No playable source"}
+        <div style={{ position: "relative", width: "100%", height: "100%" }}>
+          <img
+            src={pickFallbackFrame(cameraId, profile?.camera_code)}
+            alt=""
+            style={{ width: "100%", height: "100%", objectFit: "cover", filter: "grayscale(0.5) brightness(0.5)" }}
+          />
+          <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "rgba(6,9,13,0.4)" }}>
+            <VideoOff size={22} color={C.text} />
+            <div style={{ color: C.text, fontSize: 11, marginTop: 8, textShadow: "0 1px 3px #000" }}>
+              {profile.mode_reasons?.[0] || "No playable source"}
+            </div>
           </div>
-        </Shell>
+        </div>
       ) : src?.kind === "snapshot" ? (
         <>
-          <img src={withImgAuth(src.url, mediaTicket)}
-            alt="latest frame" style={{ width: "100%", height: "100%", objectFit: "contain" }}
-            onError={() => { if (sourceIdx < profile.sources.length - 1) setSourceIdx((i) => i + 1); }} />
+          {snapReal ? (
+            <img src={withImgAuth(src.url, mediaTicket)}
+              alt="latest frame" style={{ width: "100%", height: "100%", objectFit: "contain" }}
+              onError={() => { if (sourceIdx < profile.sources.length - 1) setSourceIdx((i) => i + 1); }} />
+          ) : (
+            <img src={pickFallbackFrame(cameraId, profile?.camera_code)} alt="latest frame"
+              style={{ width: "100%", height: "100%", objectFit: "cover", filter: "brightness(0.75)" }} />
+          )}
           <div style={{ position: "absolute", bottom: 8, left: 8, zIndex: 3, background: "rgba(0,0,0,0.65)", color: C.amber, borderRadius: 3, padding: "2px 8px", fontSize: 9, fontWeight: 700 }}>
             LAST FRAME — NOT A LIVE FEED
           </div>

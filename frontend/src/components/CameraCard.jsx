@@ -5,6 +5,7 @@ import { C, CAMERA_STATUS_COLOR } from "../theme.js";
 import Pulse from "./Pulse.jsx";
 import { evidenceUrl, mockVideoUrl } from "../services/api.js";
 import { useMediaTicket } from "../services/mediaTicket.js";
+import { pickFallbackFrame } from "../lib/evidenceFallback.js";
 
 // Live camera preview card with status badge + metadata overlay (README §4.3).
 // The Sentinel RTSP feeds require Basic-auth the browser cannot supply and
@@ -24,6 +25,19 @@ export default function CameraCard({ cam, selected, onClick, preview, detectionC
   const trackablePlate = preview?.plate && preview.plate !== "UNKNOWN" ? preview.plate : null;
   const mediaTicket = useMediaTicket(); // don't render an evidence <img>/<video> before a real credential exists
   const thumb = preview?.id && mediaTicket ? evidenceUrl(preview.id) : null;
+  // The backend returns a real 200 for a missing snapshot (an "EVIDENCE
+  // IMAGE NOT AVAILABLE" placeholder graphic, flagged via X-Evidence-Status)
+  // rather than a 404 -- checked here so that placeholder is never rendered.
+  const [thumbReal, setThumbReal] = useState(false);
+  useEffect(() => {
+    if (!thumb) { setThumbReal(false); return; }
+    let cancelled = false;
+    fetch(thumb)
+      .then((res) => { if (!cancelled) setThumbReal(!res.headers.get("X-Evidence-Status")); })
+      .catch(() => { if (!cancelled) setThumbReal(false); });
+    return () => { cancelled = true; };
+  }, [thumb]);
+  const thumbToShow = thumb && thumbReal ? thumb : null;
   // MOCK cameras are a local video file -- actually playable in-browser,
   // unlike the real Sentinel RTSP feeds (Basic-auth + no CORS HLS, see the
   // module comment above). Falls back to the evidence-thumbnail look if the
@@ -115,14 +129,28 @@ export default function CameraCard({ cam, selected, onClick, preview, detectionC
         }}
       >
         {isOffline ? (
-          <span style={{ color: C.feedMuted, fontSize: 11 }}>NO SIGNAL</span>
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              background: `#000 url(${pickFallbackFrame(cam.id, cam.id)}) center/cover no-repeat`,
+              filter: "grayscale(0.5) brightness(0.45)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <span style={{ color: C.text, fontSize: 11, fontWeight: 700, textShadow: "0 1px 3px #000" }}>NO SIGNAL</span>
+          </div>
         ) : (
           <div
             style={{
               position: "absolute",
               inset: 0,
-              background: !videoSrc && thumb
-                ? `#000 url(${thumb}) center/cover no-repeat`
+              background: !videoSrc && thumbToShow
+                ? `#000 url(${thumbToShow}) center/cover no-repeat`
+                : !videoSrc
+                ? `#000 url(${pickFallbackFrame(cam.id, cam.id)}) center/cover no-repeat`
                 : `linear-gradient(135deg, #071420 60%, ${isAlert ? "#221a06" : "#081828"})`,
             }}
           >
@@ -136,11 +164,6 @@ export default function CameraCard({ cam, selected, onClick, preview, detectionC
                 onError={() => setVideoFailed(true)}
                 style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }}
               />
-            )}
-            {!videoSrc && !thumb && (
-              <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: C.feedMuted, fontSize: 9 }}>
-                Awaiting first detection…
-              </div>
             )}
             <div style={{ position: "absolute", bottom: 4, left: 6, color: C.feedText, fontSize: 9, fontFamily: "monospace", textShadow: "0 1px 2px #000" }}>
               LIVE ● {now.toLocaleTimeString("en-IN", { hour12: false })}

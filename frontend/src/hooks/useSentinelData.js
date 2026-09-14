@@ -72,7 +72,7 @@ export function useSentinelData() {
       fetchSystemHealth(),
     ]);
     setStats(s.data);
-    setCameras(c.data);
+    setCameras(c.data.filter((cam) => !cam.isMock));
     setAlerts(a.data);
     setDetections(d.data);
     setHealth(h.data);
@@ -102,7 +102,7 @@ export function useSentinelData() {
         fetchSystemHealth(),
       ]);
       setStats(s.data);
-      setCameras(c.data);
+      setCameras(c.data.filter((cam) => !cam.isMock));
       setDetections(d.data);
       setHealth(h.data);
       setHealthLive(h.live);

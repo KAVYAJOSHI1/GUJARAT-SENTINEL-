@@ -13,6 +13,7 @@ import EmptyState from "../components/ui/EmptyState.jsx";
 import ErrorBanner from "../components/ui/ErrorBanner.jsx";
 import { SkeletonRows } from "../components/ui/Skeleton.jsx";
 import { Pager } from "./IncidentsPage.jsx";
+import ConfirmDialog from "../components/ui/ConfirmDialog.jsx";
 import { fmtDateTime } from "../utils/datetime.js";
 
 const PAGE = 25;
@@ -36,6 +37,7 @@ export default function WatchlistPage() {
   const [form, setForm] = useState({ plate_number: "", offense_category: "STOLEN", priority_level: "MEDIUM", reason: "", description: "", effective_from: "", expires_at: "" });
   const [importResult, setImportResult] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -201,7 +203,10 @@ export default function WatchlistPage() {
                                   }}>edit</button>
                           {w.active
                             ? <button style={{ ...linkBtn, color: C.red }} disabled={busy}
-                                      onClick={() => window.confirm("Deactivate this entry?") && act(() => deactivateWatchlistEntry(w.id), "Deactivated")}>disable</button>
+                                      onClick={() => setConfirming({
+                                        message: "Deactivate this entry?",
+                                        onConfirm: () => { setConfirming(null); act(() => deactivateWatchlistEntry(w.id), "Deactivated"); },
+                                      })}>disable</button>
                             : <button style={{ ...linkBtn, color: C.green }} disabled={busy}
                                       onClick={() => act(() => activateWatchlistEntry(w.id), "Activated")}>activate</button>}
                         </div>
@@ -216,6 +221,15 @@ export default function WatchlistPage() {
       </div>
 
       <Pager offset={offset} total={total} onPage={setOffset} loading={loading} page={PAGE} />
+
+      <ConfirmDialog
+        open={!!confirming}
+        title="Confirm deactivate"
+        message={confirming?.message}
+        confirmLabel="Deactivate"
+        onConfirm={confirming?.onConfirm}
+        onCancel={() => setConfirming(null)}
+      />
     </div>
   );
 }

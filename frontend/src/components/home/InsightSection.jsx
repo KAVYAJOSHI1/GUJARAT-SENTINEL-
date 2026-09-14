@@ -3,6 +3,7 @@ import gsap from "gsap";
 import ScrollTrigger from "gsap/ScrollTrigger";
 import { C } from "../../theme.js";
 import { useReducedMotion } from "./MotionContext.jsx";
+import { pickFallbackFrame } from "../../lib/evidenceFallback.js";
 
 gsap.registerPlugin(ScrollTrigger);
 
@@ -94,8 +95,13 @@ export default function InsightSection() {
         <div className="hp-insight-track" style={{ "--tile-w": `${TILE_W}px`, "--gap": `${GAP}px` }}>
           {STOPS.map((s, i) => (
             <div key={s.code} className={`hp-insight-tile hp-insight-tile-${i}`}>
-              <div className="hp-tile-scan hp-insight-scan">
-                <span className="hp-insight-static-badge">
+              <div className="hp-tile-frame" style={{ width: "100%", height: 160, position: "relative", overflow: "hidden", borderRadius: 4 }}>
+                <img
+                  src={pickFallbackFrame(s.code, s.code)}
+                  alt=""
+                  style={{ width: "100%", height: "100%", objectFit: "cover", filter: "brightness(0.7)" }}
+                />
+                <span className="hp-insight-static-badge" style={{ position: "absolute", top: 10, left: 10, zIndex: 2 }}>
                   {PLATE} · {CONFIDENCE}
                 </span>
               </div>
@@ -125,3 +131,4 @@ export default function InsightSection() {
     </section>
   );
 }
+

@@ -46,5 +46,6 @@ export const CAMERA_STATUS_COLOR = {
   offline: C.red,
 };
 
-export const LOGO_URL =
-  "https://sentinel.gujarat.gov.in/public/logos/gujarat%20police%20logo.png";
+// Bundled locally (frontend/public/) so the header never depends on a live
+// external request during a demo or screen recording.
+export const LOGO_URL = "/gujarat-police-logo.png";
