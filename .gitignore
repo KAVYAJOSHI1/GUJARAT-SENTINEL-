@@ -108,3 +108,17 @@ cookies.txt
 mediamtx.yml
 docker-compose.override.yml
 
+# Presentation / pitch / screenshot assets — not source code or docs,
+# kept out of git so the repo only carries code + markdown. The
+# demo_assets/clips/*.mp4 exception above is unrelated (functional demo
+# video the app itself plays) and stays tracked.
+*.pptx
+*.docx
+*.pdf
+screenshots/
+screen_shot/
+HLD-diagram-final.png
+Workflow-integration-diagram-final.png
+pitch_video/*.mp4
+pitch_video/*.mov
+
