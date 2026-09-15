@@ -1,0 +1,203 @@
+{
+  "timeline": [
+    {
+      "name": "Landing Page",
+      "route": "/",
+      "purpose": "Full smooth scroll through the entire cinematic landing page",
+      "start": 0,
+      "end": 64.71
+    },
+    {
+      "name": "Login",
+      "route": "/",
+      "purpose": "Signing in via the landing page's own inline form",
+      "start": 64.71,
+      "end": 71.49
+    },
+    {
+      "name": "Command Center",
+      "route": "/command-center",
+      "purpose": "Statewide overview: alerts, cameras, map, quick actions",
+      "start": 71.49,
+      "end": 85.77
+    },
+    {
+      "name": "Live Monitoring Wall",
+      "route": "/live-monitoring",
+      "purpose": "Multi-camera honest-playback wall",
+      "start": 85.77,
+      "end": 100.47
+    },
+    {
+      "name": "Camera Network",
+      "route": "/cameras",
+      "purpose": "Operational camera grid with live status",
+      "start": 100.47,
+      "end": 107.81
+    },
+    {
+      "name": "Camera Detail Modal",
+      "route": "/cameras (modal)",
+      "purpose": "Per-camera health, metadata, detection frame",
+      "start": 107.81,
+      "end": 118.31
+    },
+    {
+      "name": "Camera Management",
+      "route": "/cameras/manage",
+      "purpose": "Admin registry: source, health, coordinates",
+      "start": 118.32,
+      "end": 125.18
+    },
+    {
+      "name": "Camera Reliability Intelligence",
+      "route": "/camera-intelligence",
+      "purpose": "Health-based reliability + video quality scoring",
+      "start": 125.18,
+      "end": 134.15
+    },
+    {
+      "name": "Global Search (Command Palette)",
+      "route": "any page",
+      "purpose": "Ctrl+K instant entity search",
+      "start": 134.15,
+      "end": 139.45
+    },
+    {
+      "name": "Advanced Investigation Search",
+      "route": "/search",
+      "purpose": "Structured filters + plain-English AI search",
+      "start": 139.45,
+      "end": 150.44
+    },
+    {
+      "name": "Alert Log",
+      "route": "/alerts",
+      "purpose": "Watchlist + anomaly alerts, escalation workflow",
+      "start": 150.44,
+      "end": 161.62
+    },
+    {
+      "name": "Watchlist Management",
+      "route": "/watchlists",
+      "purpose": "Wanted/stolen plate registry",
+      "start": 161.62,
+      "end": 168.75
+    },
+    {
+      "name": "Vehicle Investigation Workspace",
+      "route": "/workspace",
+      "purpose": "Unified sightings + evidence + timeline + map",
+      "start": 168.75,
+      "end": 189.18
+    },
+    {
+      "name": "GIS Investigation Console",
+      "route": "/investigation",
+      "purpose": "Chronological journey plotted on the map",
+      "start": 189.18,
+      "end": 206.64
+    },
+    {
+      "name": "Investigation Graph",
+      "route": "/graph",
+      "purpose": "Deterministic entity relationship graph",
+      "start": 206.64,
+      "end": 281.01
+    },
+    {
+      "name": "Traffic Intelligence",
+      "route": "/traffic",
+      "purpose": "Live vehicle-flow aggregates + heatmap",
+      "start": 281.01,
+      "end": 289.66
+    },
+    {
+      "name": "AI Anomaly Detection",
+      "route": "/anomalies",
+      "purpose": "Wrong-way, restricted-zone, stopped-vehicle detection",
+      "start": 289.66,
+      "end": 298.96
+    },
+    {
+      "name": "ANPR Intelligence",
+      "route": "/anpr-intelligence",
+      "purpose": "Plate-recognition throughput and quality",
+      "start": 298.96,
+      "end": 305.53
+    },
+    {
+      "name": "AI Copilot",
+      "route": "/copilot",
+      "purpose": "Deterministic natural-language investigation assistant",
+      "start": 305.53,
+      "end": 317.99
+    },
+    {
+      "name": "Incident Detail",
+      "route": "/incidents/88708683-c1ec-45d7-a64d-db61177a3690",
+      "purpose": "Full incident workflow: evidence, AI summary, notes",
+      "start": 317.99,
+      "end": 329.12
+    },
+    {
+      "name": "Case Detail",
+      "route": "/cases/199198c8-8dc4-4b7a-966a-8f3ac22df6e6",
+      "purpose": "Case grouping incidents + evidence, report export",
+      "start": 329.12,
+      "end": 339.24
+    },
+    {
+      "name": "Reports Center",
+      "route": "/reports",
+      "purpose": "One-click CSV/PDF operational reports",
+      "start": 339.24,
+      "end": 345.81
+    },
+    {
+      "name": "My Work Queue",
+      "route": "/my-work",
+      "purpose": "Personal urgent/overdue work bucket",
+      "start": 345.81,
+      "end": 350.41
+    },
+    {
+      "name": "Operations Dashboard",
+      "route": "/dashboard",
+      "purpose": "Legacy dense single-page ops view",
+      "start": 350.41,
+      "end": 353.57
+    },
+    {
+      "name": "GIS Camera Map",
+      "route": "/map",
+      "purpose": "Standalone clustered camera map",
+      "start": 353.57,
+      "end": 359.95
+    },
+    {
+      "name": "System / Observability",
+      "route": "/system",
+      "purpose": "Pipeline health, capacity model, notifications",
+      "start": 359.95,
+      "end": 368.67
+    },
+    {
+      "name": "Admin Audit Log",
+      "route": "/admin",
+      "purpose": "Append-only privileged-action record",
+      "start": 368.67,
+      "end": 402.06
+    },
+    {
+      "name": "Final System Overview",
+      "route": "/command-center",
+      "purpose": "Closing shot of the complete platform",
+      "start": 402.06,
+      "end": 406.77
+    }
+  ],
+  "totalDuration": 406.766,
+  "consoleErrors": [],
+  "sectionErrors": []
+}

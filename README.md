@@ -10,9 +10,11 @@
 
 ## 1. Executive Overview
 
-**SENTINEL** is a CCTV video analytics and intelligence platform prototype built for the **Gujarat Police Innovation Hackathon 2026**. As implemented today it is a **single-node Docker Compose PoC** (see `SENTINEL_System_Audit_Report.md` for a full, code-verified teardown): it ingests real Sentinel RTSP camera feeds plus optional local mock-camera clips, runs automated vehicle detection, ANPR, and OCR, correlates detections across cameras by matched plate string, matches sightings against a watchlist, and visualizes vehicle trajectories on PostGIS-powered Leaflet maps.
+**SENTINEL** is a CCTV video analytics and intelligence platform prototype built for the **Gujarat Police Innovation Hackathon 2026**. As implemented today it is a **single-node Docker Compose PoC** (see `SENTINEL_System_Audit_Report.md` for a full, code-verified teardown): it ingests real Sentinel RTSP camera feeds plus optional local mock-camera clips, runs automated vehicle detection, ANPR, and OCR, correlates detections across cameras by matched plate string and (optionally) visual re-identification, matches sightings against a watchlist, escalates through a full incident/case investigation workflow, answers natural-language questions through a deterministic-first AI copilot, and visualizes vehicle trajectories on PostGIS-powered Leaflet maps and a synchronised evidence/journey/timeline workspace.
 
-The architecture is designed with the seams (stateless backend, per-camera isolation, a clean ingestion/AI/backend contract) a larger deployment would need — **ROADMAP, not implemented today**: `SCALABILITY.md`'s statewide **~80,000 camera** / Kubernetes / Kafka / Triton architecture is a target design, evaluated against no infrastructure that exists in this repository yet (no K8s manifests, no Kafka topics, `device="cpu"` hardcoded everywhere). The system currently runs as one process pool against `docker-compose.yml`, correctly scoped to its stated **~50-camera PoC** target.
+What started as the 7-phase ANPR + watchlist pipeline documented in §3 below has since grown, on this same branch (`penultimate`), into a full command-center application: an **operational layer** (incidents, cases, notifications, audit trail, saved searches, a work queue), an **AI intelligence layer** (copilot, natural-language search, AI summaries, anomaly detection — all deterministic-first, no LLM required), an **advanced video-intelligence layer** (visual re-ID, cross-camera correlation, traffic/heatmap analytics, wrong-way and restricted-zone detection, a multi-step investigation agent), **real-video hardening** (honest LIVE/DEGRADED/RECORDED/OFFLINE camera playback, explicit ANPR failure reasons, character-level temporal fusion), a unified **SENTINEL Command Center** front end, and a transparent **capacity/scale-engineering pass** that measures — never assumes — how this exact codebase behaves under load and what it would honestly take to reach the ~80,000-camera roadmap. §3i onward documents each of these the same way §3–3h does: IMPLEMENTED vs. ROADMAP, every number traceable to a script or test you can re-run.
+
+The architecture is designed with the seams (stateless backend, per-camera isolation, a clean ingestion/AI/backend contract) a larger deployment would need — **ROADMAP, not implemented today**: `SCALABILITY.md` / `docs/SCALE_TO_80000.md`'s statewide **~80,000 camera** / Kubernetes / Kafka / Triton architecture is a target design, evaluated against no infrastructure that exists in this repository yet (no K8s manifests, no Kafka topics, `device="cpu"` hardcoded everywhere, "regions" in `ai/regions.py` are a labeled-SIMULATED grouping with no real network boundary). The system currently runs as one process pool against `docker-compose.yml`, correctly scoped to its stated **~50-camera PoC** target — §3m's own transparent capacity model, fed by real measurements on this hardware, is explicit that reaching 80,000 cameras needs materially more workers (and ideally GPUs) than exist here today.
 
 ---
 
@@ -22,9 +24,15 @@ The architecture is designed with the seams (stateless backend, per-camera isola
 | :--- | :--- | :--- |
 | **Stream Ingestion** | RTSP over TCP, WebRTC, HLS, PTS Timestamping, Exponential Backoff | Resilient ingestion across erratic network environments |
 | **AI Analytics** | YOLOv8 Vehicle Detection + EasyOCR (PaddleOCR optional) + Multi-Frame Consensus | ANPR accuracy is **not yet benchmarked against a real labeled dataset** (none exists locally — real-camera accuracy therefore *cannot* be stated statistically, only qualitatively). `scripts/evaluate_anpr.py` has a synthetic-font mode (measured this pass: **87.5% exact / 98.3% char**, up from 70.8% / 85.8% — but rendered fonts are out-of-distribution and its own output refuses to let those be quoted as real accuracy) and a real-`--dataset` mode for when labeled footage exists. No ">95%" or any accuracy figure should be cited as real until that run is done. See §3d below and `SENTINEL_System_Audit_Report.md` §3. |
-| **Cross-Camera Correlation** | ByteTrack Spatial-Temporal Indexing + Normalized Plate Matching | Chronological vehicle journey reconstruction across cameras |
-| **Watchlist & Alerts** | FastAPI Engine + 5-Min Cooldown Deduplication + WebSockets | Sub-second alert delivery to command center operators |
-| **GIS & Investigation** | PostGIS Spatial Point Layers + Leaflet Polyline Vector Mapping | Interactive visual map trajectories & automated PDF evidence reports |
+| **Cross-Camera Correlation** | ByteTrack Spatial-Temporal Indexing + Normalized Plate Matching + optional visual Re-ID | Chronological vehicle journey reconstruction across cameras, incl. plate-unread vehicles (§3j) |
+| **Watchlist & Alerts** | FastAPI Engine + 5-Min Cooldown Deduplication + WebSockets + escalation/assignment | Sub-second alert delivery to command center operators, with an auditable escalation trail |
+| **GIS & Investigation** | PostGIS Spatial Point Layers + Leaflet Polyline Vector Mapping + Investigation Workspace | Interactive visual map trajectories, synced evidence/journey/timeline, automated PDF evidence reports |
+| **Operational Layer** | Incidents, cases, notifications, saved searches, officer work queue, audit trail (§3i) | Structured investigation workflow, not just raw alerts |
+| **AI Copilot & NL Search** | Deterministic-first tool-calling copilot + natural-language vehicle search + AI summaries + stopped-vehicle anomaly detection (§3i) | Works with **zero external LLM**; an optional LLM only re-words fact-checked answers, never runs its own SQL |
+| **Video Intelligence** | Cross-camera correlation, traffic/heatmap analytics, wrong-way & restricted-zone detection, camera reliability scoring, multi-step investigation agent (§3j) | Answers "where else has this vehicle been" and "what's anomalous right now" from evidence, not guesswork |
+| **Real-Video Playback** | LIVE/DEGRADED/RECORDED/OFFLINE-labeled camera player, explicit ANPR failure reasons, character-level temporal plate fusion (§3k) | Operators always see what kind of feed they're looking at — never a silent fake-live loop |
+| **Command Center** | Unified landing dashboard, grouped nav + Ctrl+K palette, live monitoring wall, sectioned work queue (§3l) | One coherent app instead of a set of disconnected pages |
+| **Scale & Security Hardening** | Fair per-camera scheduler, transparent 80k-camera capacity model, ANPR failure diagnostics, idempotent event ingestion, RBAC/JWT/SQLi/path-traversal audit (§3m–3o) | Every scale/security claim is a measured number or a passing test, not an assertion |
 
 ---
 
@@ -452,6 +460,343 @@ pipeline shows `unknown` until it runs with a reachable `--backend-url`
 
 ---
 
+## 3i. Operational Investigations & Deterministic AI Layer (IMPLEMENTED)
+
+Two additive layers on top of the "protected" camera→YOLO→ByteTrack→ANPR→
+vehicle_events→watchlist→alert pipeline above (its internals were not
+touched):
+
+**Operational layer** (migrations `0006`/`0007`) — `incidents`,
+`incident_notes`/`evidence`, `cases`, `case_notes`/`evidence`,
+`notifications`, `saved_searches`, `camera_health_history`; watchlist
+gained `description`/`effective_from`/`updated_by_user_id` + full CRUD +
+CSV import/export; alerts gained assign/escalate/resolve + an `ESCALATED`
+status. New APIs: `/incidents/*`, `/cases/*`, `/notifications/*`,
+`/admin/audit`, `/admin/users`, `/search/*` (unified advanced + global
+quick search, `pg_trgm` GIN partial-plate indexes), `/saved-searches/*`,
+`/work-queue`, `/reports/*` (9 CSVs), `/alerts/{id}/escalate|assign|resolve`.
+Frontend: `/incidents`, `/cases`, `/system`, `/admin`, `/search`,
+`/watchlists`, `/my-work`, `/reports`. RBAC: any authenticated role can
+view; ADMIN/OFFICER can mutate; the audit center is ADMIN-only. Every
+operational row links to an alert/vehicle_event/camera/user by FK — it
+never denormalises pipeline state, and evidence is always a pointer to a
+real `vehicle_events` row, never a copied file.
+
+**AI layer** (migration `0008`) — **deterministic-first**: `AI_LLM_PROVIDER`
+defaults to `deterministic` (works with **zero external LLM**); an
+optional `openai` provider only re-words an already fact-checked answer
+and can pick one of a fixed tool set — it never gets DB access and never
+writes SQL, and any LLM error falls back to the deterministic path.
+`backend/app/services/ai/` (`nlq.py`, `tools.py`, `llm.py`, `copilot.py`,
+`summary.py`, `behavior.py`, `confidence.py`). APIs:
+`/ai/{investigate,search,status,suggestions}`,
+`/ai/{incidents,cases}/{id}/summary`, `/ai/anomalies[/scan,/{id}/review]`.
+A **stopped-vehicle anomaly detector** runs a grouped aggregate purely
+over `vehicle_events` (never video) against configurable
+seconds/detections/displacement thresholds and raises a real
+`Alert(source=ANOMALY)` through the existing alert workflow. Frontend:
+`/copilot`, `/anomalies`, an NL box on `/search`, an AI Summary panel on
+incident/case detail. Offline demo data is idempotent
+(`scripts/seed_ai_demo.py`, `SEED_AI_DEMO=1`).
+
+**Hackathon-readiness polish** on top of both: `/vehicles/search` now
+returns a `journey.transitions[]` block — one **INFERRED** move per
+consecutive camera pair, with great-circle `distance_meters` +
+`estimated_speed_kmh` computed only when both cameras are geolocated and
+suppressed (with a note) when the numbers would be physically nonsensical
+(<50 m apart, dt≤0, >200 km/h). Sightings are always labelled `CONFIRMED`
+vs. transitions `INFERRED` — the UI never blurs a real detection into a
+guessed movement. A read-only camera console (`/cameras/manage`) and
+`./scripts/reset_demo.sh` (`--full` for a complete teardown+rebuild) round
+out demo operability.
+
+Tests as of this pass: backend **191 passed** (+4 for the polish alone).
+No pipeline/ANPR/ingestion/security-model changes in this section.
+
+---
+
+## 3j. Advanced Video Intelligence — Phase 14 (IMPLEMENTED)
+
+A 7-commit layer answering "what else can we tell from the video, beyond
+plate matching" — additive, no rewrite of any Phase 1–7 pipeline code. It
+deliberately works within a real constraint: **no ML libraries in the
+backend container** (torch/cv2/numpy stay pipeline-only) and
+**`postgis:15-3.3` has no pgvector** — so visual re-identification uses a
+pluggable embedding backend behind one interface: a deterministic
+`attr-baseline-v1` (pure-Python, weighted type+colour+plate-seeded texture
+unit vector — no neural network, no training data needed) by default, or
+an optional real `TorchEmbeddingBackend` (mobilenet_v3_small/resnet50,
+GPU-auto) added in Phase 15E; either way, matching is a bounded
+brute-force cosine search, never a fabricated similarity score.
+
+| Capability | What it does | API / migration |
+| :--- | :--- | :--- |
+| **Visual Re-ID** | Cosine-similarity vehicle matching by appearance, for vehicles whose plate was never read | `/ai/reid/*`, `GET /ai/reid/status`; migration `0009` `vehicle_embeddings` |
+| **Cross-camera correlation** | Learns real camera-to-camera transition-time statistics from observed traffic, used to sanity-check journeys | `/ai/correlation/*`; migration `0010` `camera_transition_stats` |
+| **Traffic & heatmap** | Aggregate density/flow analytics rendered on the GIS layer | `/analytics/traffic/*` |
+| **Wrong-way / restricted-zone detection** | Direction-of-travel and zone-boundary anomaly scans, config'd per camera | `/ai/anomalies/scan` (`kinds=[]`), `PATCH /cameras/{id}/behavior-config`; migration `0011` adds `WRONG_WAY`/`RESTRICTED_ZONE` anomaly kinds |
+| **Multi-step investigation agent** | 13 bounded, **read-only** tools an operator (or the copilot's DEEP mode) can chain to answer a compound question, plus explicit gap detection ("what's missing from this trail") | `/ai/investigation/{run,gaps}` |
+| **Camera reliability & investigation graph** | Per-camera health/quality scoring; a graph view linking vehicles↔cameras↔incidents↔cases | `/ai/camera-intelligence[/{code}]`, `/ai/graph` |
+
+Frontend gained `/traffic`, `/camera-intelligence`, `/graph`, a Visual
+Matches panel on `/investigation`, a DEEP toggle on `/copilot`, and
+per-anomaly-kind labels on `/anomalies`. All background loops (transition
+recompute, extended anomaly scans) are off by default in tests. **Test-DB
+gotcha**: migration `0011` alters an existing enum/table in place, which
+`create_all`-based test setup does not apply — the test database must be
+recreated after that migration lands. Tests: backend **269 passed**
+(+77 this phase); acceptance smoke `p14smoke.py` (28 checks).
+
+---
+
+## 3k. Real Video Intelligence & Live Demo Hardening — Phase 15 (IMPLEMENTED)
+
+Eight commits (15A–15H) moving from "the pipeline can process a video
+file" to "an operator sees an honestly-labelled real feed." Migrations
+`0012` (camera stream URLs), `0013` (ANPR quality/failure-reason columns,
+backfilled `"OK"` on existing rows), `0014` (`is_demo` flags) — each
+verified to round-trip cleanly.
+
+- **Honest camera playback** (`app/services/camera_stream.py`,
+  `CameraPlayer.jsx`, `hls.js`): a `GET /cameras/{id}/stream` profile
+  picks the best real source in order **webrtc > hls > recorded >
+  snapshot** and reports an explicit mode — **LIVE / DEGRADED / RECORDED
+  / OFFLINE** — never a silent fallback that looks live when it isn't. A
+  bare snapshot is always labelled *"LAST FRAME — NOT A LIVE FEED."*
+- **Explicit ANPR failure reasons** (`ai/anpr/quality.py`): every
+  unreadable plate now classifies *why* — `NO_PLATE` / `LOW_RESOLUTION` /
+  `BLUR` / `OCCLUDED` / `OCR_DISAGREEMENT` / `INVALID_FORMAT` /
+  `LOW_CONFIDENCE` — instead of a bare `UNKNOWN`. Feeds directly into the
+  Phase 18 diagnostics below.
+- **Character-level temporal fusion** (`ai/anpr/plate_track_state.py`): a
+  bounded, TTL/LRU-limited per-track store builds character-level
+  consensus across a vehicle's multiple OCR reads and only overrides the
+  existing consensus when the fused result is both stable and
+  higher-confidence — it never lowers accuracy.
+- **Consolidated vehicle profile & workspace**: `GET /vehicles/profile`
+  + the first `/workspace` investigation view (later rebuilt in Phase 16).
+- **Real Torch Re-ID backend** (`REID_BACKEND=attribute|torch`,
+  `GET /ai/reid/status`) — reports its actual backend/device/embedding
+  dimension; the backend container (no torch installed) correctly reports
+  `attribute/cpu`, never a fabricated GPU claim.
+- **Video-quality scoring** — a distinct axis from camera *reliability*
+  (`video_quality_score` 0–100, GOOD/FAIR/POOR/UNKNOWN), surfaced in
+  `/ai/camera-intelligence`.
+- **System metrics & ANPR dashboard**: `GET /system/metrics/summary`,
+  `GET /analytics/anpr` + `/anpr-intelligence` page; `feed_source()`
+  (`app/services/feed_source.py`) badges every sighting **DEMO > MOCK >
+  REAL**, so nothing pretends a seeded demo row is a live detection.
+
+Tests: backend **306 passed** (+~40); AI/ingestion **169 passed, 8
+skipped** (+26). Acceptance smoke `p15smoke.py`. See
+`docs/REAL_VIDEO_PIPELINE.md`, `docs/VEHICLE_REID.md`.
+
+---
+
+## 3l. SENTINEL Command Center — Phase 16 (IMPLEMENTED)
+
+Turned the app from a set of separate pages into one command-center
+product. No new migration (schema head stays at `0014` through this
+phase). Five commits, 16A/B/C/F/G/H:
+
+- **`GET /api/v1/command-center/summary`** — one bounded, read-only
+  aggregation composed from the existing system-metrics + indexed
+  queries; renders as the new landing page (`CommandCenterPage.jsx`), with
+  the original Phase 10 dashboard preserved at `/dashboard`. A shared
+  primitives library (`primitives.jsx`) gives every panel across the app
+  the same badges/cards/buttons.
+- **Grouped navigation + command palette**: `Navbar.jsx` groups every
+  route under COMMAND / INVESTIGATE / INTELLIGENCE / OPERATIONS / ADMIN
+  (all existing routes preserved, none removed); `CommandPalette.jsx`
+  (Ctrl+K) routes to any entity or hands a typed phrase straight to the
+  copilot; `?` opens a shortcut cheat-sheet.
+- **Two real bugs fixed here, not just features added**: the live
+  dashboard WebSocket was silently failing its handshake in Chromium
+  because `ConnectionManager.connect()` never echoed back the offered
+  subprotocol; and a missing/unresolvable evidence snapshot returned a
+  bare 404 instead of an honest placeholder image + `X-Evidence-Status`
+  header (HTTP 200), which had been breaking evidence carousels.
+- **Rebuilt `/workspace`** (`LiveInvestigationWorkspace.jsx`): one header
+  (vehicle + plate + status badges) driving a synchronised evidence
+  carousel ⇄ journey map ⇄ timeline via a single selected-index state,
+  with CONFIRMED sightings in solid green and INFERRED transitions in
+  dashed amber everywhere — never visually conflated. `?evt=` persists the
+  selection in the URL.
+- **Live monitoring wall** (`/live-monitoring`, 1×1 to 4×4 grid) — each
+  tile shows its own honest `CameraPlayer` mode, FPS, AI status, and any
+  active alert overlay, with an ALERTS-ONLY filter.
+- **Sectioned officer work queue** (`/my-work`) — URGENT / ESCALATED /
+  ASSIGNED TO ME / OVERDUE / RECENT, with RBAC-gated `[OPEN]`/`[ACK]`/
+  `[ASSIGN ME]` actions.
+- **Headless-browser validation**: `Dockerfile.e2e` +
+  `scripts/browser_test.sh` + `frontend/e2e/*.mjs` run a real Chromium
+  against the live stack.
+
+Tests: backend **331 passed** (was 309), AI/ingestion **169 passed**,
+browser suite **23/23 passed**.
+
+---
+
+## 3m. Real-Time Multi-Camera Scheduling & Transparent Capacity Model — Phase 17 (MEASURED)
+
+Directly answers the FIFO-starvation finding from §3b ("only ~5 of 30
+cameras ever got a processed frame") for the **default, recommended**
+single-consumer configuration (`SENTINEL_AI_WORKERS=1`) — §3c's
+multi-process worker pool already fixed the same bug, but only for a path
+already measured **not** recommended on constrained hardware.
+
+- `ai/scheduler.py` (`FairCameraScheduler`): bounded per-camera queues,
+  4 priority classes via smooth-weighted round robin, named drop reasons.
+  At equal priority it reproduces §3c's existing round-robin/latest-wins
+  behaviour exactly — nothing about the current default changes unless
+  configured otherwise.
+- `ai/sampling.py` (adaptive per-camera FPS), `ai/modes.py`
+  (`DETECTION`/`TRACKING`/`ANPR`/`ALERT` — default `ANPR` is
+  byte-for-byte the original pipeline, verified against the full existing
+  test suite), `ai/ocr_executor.py` (bounded async OCR, opt-in via
+  `SENTINEL_ASYNC_OCR=1`), `ai/degradation.py` (HEALTHY/DEGRADED/OVERLOADED
+  from measurable thresholds), `ai/scheduled_consumer.py` (opt-in
+  fair-scheduled alternative to the default FIFO consumer, **same
+  one-thread CPU profile** — `--fair-scheduler` / `SENTINEL_FAIR_SCHEDULER=1`).
+- `ai/capacity.py` + `ai/regions.py`: the actual transparent worked
+  calculation the roadmap needs — `measured_worker_capacity × workers =
+  estimated_capacity`, every assumption (target FPS, ANPR%, redundancy,
+  headroom, GPU speedup) named, overridable, and echoed back rather than
+  silently folded into a number that looks measured. `GET
+  /api/v1/system/capacity` (JWT-auth) serves it from a committed benchmark
+  file with an explicitly-labeled conservative fallback.
+
+**MEASURED on one 8-core CPU-only workstation, 2026-09-09**
+(`docs/PHASE17_BENCHMARK.md` — reproduce with `scripts/benchmark_phase17.py`):
+
+| Tier | Result |
+| :--- | :--- |
+| Scheduler fairness alone (no decode/AI), 10–500 simulated cameras | ~1.0 aggregate FPS sustained at every tier, near-zero RSS growth — the scheduling layer itself is fair and memory-bounded |
+| Real decode only (no AI), real mock-video streams | 30–50 concurrent streams decode cleanly at full real-time per-camera FPS with **zero drops**; at 100 configured only 60 reached ONLINE within 20s (a connection-startup limit, not steady-state decode capacity) — 250/500 not attempted, honestly, rather than extrapolated |
+| Transparent 80k-camera capacity model, this hardware | At a demanding 2 FPS/camera ANPR-heavy target: **131,293 workers required** — i.e. more workers than cameras, an unflattering but correct restatement of the CPU ceiling in §3b. At a lighter 0.5 FPS / 10% ANPR target: **23,031 workers**. An 8× GPU speedup (explicitly `gpu_speedup_verified: false` — no GPU was available to test) brings that to **2,879 GPUs**. None of these numbers should be read as "SENTINEL supports N cameras today" — they are what the transparent formula outputs from a real baseline plus named assumptions. |
+
+Honest limitations stated in the doc itself: `--fair-scheduler` measured
+**worse** than plain FIFO for raw AI throughput on this host (GIL
+contention, not fully root-caused); AI-PROCESSED throughput was only
+re-validated at N≤10 (re-running the already-known N=30 CPU ceiling from
+§3b would add nothing); the regional split/bandwidth/storage estimates
+are architectural placeholders, not measurements. See
+`docs/SCALE_TO_80000.md` for the deployment-shape discussion these
+numbers feed into.
+
+---
+
+## 3n. ANPR Diagnostics — Why Real Footage Returns UNKNOWN — Phase 18 (MEASURED)
+
+Answers, with intermediate evidence rather than a bare UNKNOWN, why real
+Sentinel camera footage under-reads plates. `scripts/anpr_diagnostics.py`
+runs the real detect → locate → quality-assess → OCR → normalise →
+temporal-fusion chain and reports every intermediate value, across
+**three strata that are never combined into one number**
+(`docs/PHASE18_ANPR_DIAGNOSTICS.md`):
+
+| Stratum | n | Plate located | UNKNOWN rate | Notes |
+| :--- | :-: | :-: | :-: | :--- |
+| SYNTHETIC (rendered plates, ground truth known) | 30 | 100% | 0% | 70.0% exact / 96.1% char accuracy — measures pipeline wiring only, out-of-distribution font |
+| REAL_HISTORICAL (archived real Sentinel-camera JPEGs, no ground truth) | 136 detections | 100% (of 135 detected) | **97.1%** | `OCCLUDED` is the dominant cause (105/132, 80%), then `LOW_RESOLUTION` (16), `LOW_CONFIDENCE` (9) |
+
+The real government RTSP/HLS endpoints were confirmed unreachable from
+this development environment during this phase (a raw TCP connect and an
+HTTPS request both timed out) — the REAL_HISTORICAL stratum reuses 282
+JPEGs captured in an earlier session's RTSP smoke test and is labelled
+**PROVENANCE-UNCERTAIN**, never presented as certified live-feed accuracy.
+This phase also fixed a real bug found by testing:
+`PlateTrackState.expired()`'s `now or time.time()` treated a legitimate
+`0.0` timestamp as falsy and evicted the entire plate-track store on the
+next call — fixed to an explicit `is not None` check.
+
+**Conclusion, stated plainly in the doc**: real-camera ANPR misses are
+overwhelmingly explained by genuine occlusion/low-resolution surveillance
+framing, not a fixable OCR bug — a fine-tuned plate detector/OCR head
+needs a labeled Sentinel dataset that does not exist locally (§3d's own
+conclusion, now with the evidence behind it).
+
+---
+
+## 3o. Failure Resilience, Idempotency & Government Demo Hardening — Phases 19–20 (IMPLEMENTED)
+
+The last hardening pass before submission, organized around one
+principle: **one camera failure must not take down the platform**, plus a
+final security/idempotency audit.
+
+- **Duplicate-event idempotency** (migration `0015`): the AI pipeline
+  retries `POST /events/ai-detection` on any connection error or 5xx —
+  including the case where the first attempt actually committed
+  server-side but the response never arrived. `vehicle_events.event_id`
+  (nullable, unique) plus a pre-insert existence check now makes retried
+  delivery of the *same* real detection a no-op instead of a duplicate row
+  and a duplicate watchlist alert.
+- **Failure-injection tests** (`tests/test_failure_resilience.py`): a
+  decoder that raises mid-stream is treated as a dropped frame, not a
+  crash; a genuinely corrupt video file fails to open cleanly and the
+  worker still reaches OFFLINE/RECONNECTING; `StreamManager.sync_cameras()`
+  restarts a dead worker without touching a healthy one running alongside
+  it.
+- **50-camera rehearsal + designated-vehicle scenario**
+  (`scripts/hackathon_rehearsal.py`) — bulk-onboards 50 MOCK cameras from
+  this repo's own dataset, verifies GIS + feed assignment on all 50, then
+  runs a real (unmodified) AI pipeline burst against a small, explicitly-
+  printed subset — never silently presented as "50 cameras fully
+  AI-processed" (§3m already measured the honest ceiling).
+- **Security audit** (`backend/tests/test_security_audit.py`): JWT expiry/
+  tamper/wrong-secret/malformed/deactivated-user all rejected cleanly;
+  per-role RBAC verified on real mutating endpoints (OPERATOR blocked from
+  camera/watchlist writes, OFFICER permitted); SQL-injection-shaped and
+  path-traversal-shaped inputs proven inert; a real bug found and fixed —
+  an unbounded `camera_id` could hit Postgres's own btree row-size limit
+  and 500 instead of a clean 422, now capped with `Field(max_length=128)`.
+  A repo-wide secret scan found zero hardcoded credentials.
+- **One-command deterministic demo** (`scripts/hackathon_demo.sh`,
+  `scripts/hackathon_health_check.py`) — resets/reseeds the demo dataset,
+  verifies the designated-vehicle scenario, runs a full read-only
+  infrastructure health check (backend/DB/camera registry/object
+  storage/AI pipeline/watchlist/alerts/demo dataset/**real WebSocket
+  handshake**), then prints an honest summary — a failing check prints
+  "NOT VERIFIED", never a fabricated "READY".
+- **Camera-delete 409**: deleting a camera with dependent
+  detections/alerts/evidence now returns a clean `409
+  CAMERA_HAS_DEPENDENT_RECORDS` instead of an unhandled 500 — refusing to
+  silently cascade-delete real investigation evidence.
+
+**Latest measured full-suite result in this section: backend 365 passed,
+AI/ingestion 269 passed / 8 skipped, zero regressions** (commit `4e51f20`).
+See `docs/GOVERNMENT_FEED_READINESS.md`, `docs/HACKATHON_DEMO_RUNBOOK.md`.
+
+---
+
+## 3p. Landing Experience & Submission Polish (IMPLEMENTED)
+
+Final pre-submission pass, UI/asset-only — no backend, pipeline, or
+security-model changes:
+
+- A cinematic scroll-narrative pre-login landing page
+  (`frontend/src/components/home/`, GSAP + ScrollTrigger + Lenis) replaces
+  the placeholder landing screen, entirely scoped to its own `.hp-root` so
+  the authenticated command-center theme is untouched. Its product-reveal
+  and how-it-works sections embed real screenshots captured from a
+  locally-running SENTINEL instance seeded with this repo's own
+  deterministic demo dataset, and its correlation animation replays the
+  real seeded `GJ18TC0450` journey — not mockups.
+- `mediaTicket.js` evidence/media-ticket fetching was made reactive
+  (`useMediaTicket()` pub-sub hook) — a hard page reload used to leave
+  evidence images permanently broken because a component could render
+  before the async ticket resolved and latch a non-retrying failure state.
+- Demo-runbook and doc numbers (migration head, test counts, ANPR strata)
+  reconciled against the state actually measured above; failure-demo and
+  backup-plan sections added to `docs/HACKATHON_DEMO_RUNBOOK.md` for live
+  evaluation.
+- `pitch_video/` and `screenshots/`/`screen_shot/` hold the recorded
+  product-demo video and screenshot suite produced for submission
+  (`scripts/`, Playwright-based recording/capture scripts) — evaluation
+  assets, not application code.
+
+---
+
 ## 4. Team & Repository Branch Matrix
 
 ```text
@@ -472,6 +817,11 @@ pipeline shows `unknown` until it runs with a reachable `--backend-url`
                                   ▼
                                testing
 ```
+
+Everything from §3i onward (operational layer through submission polish)
+was built after the initial cross-team merge, directly on `penultimate`
+— the platform's current default branch and the one this README
+describes.
 
 ---
 
@@ -496,3 +846,17 @@ Explore the complete technical blueprints contained in this repository branch:
 - [`4_DAY_EXECUTION.md`](4_DAY_EXECUTION.md): Day 1–4 day-by-day implementation roadmap.
 - [`SUBMISSION_REQUIREMENTS.md`](SUBMISSION_REQUIREMENTS.md): Hackathon evaluation rubric compliance.
 - [`TEAM_TASKS.md`](TEAM_TASKS.md): Detailed task breakdown for each team member.
+- [`SYSTEM_STATUS.md`](SYSTEM_STATUS.md): Living status log of every phase, deferred item, and known gap.
+
+**Phase 8+ deep-dive docs** (`docs/`), each following the same
+IMPLEMENTED-vs-ROADMAP / reproducible-command discipline as §3i–3p above:
+
+- [`docs/HACKATHON_ARCHITECTURE.md`](docs/HACKATHON_ARCHITECTURE.md) / [`docs/HACKATHON_DEMO_RUNBOOK.md`](docs/HACKATHON_DEMO_RUNBOOK.md): the 2-minute demo script, failure-demo, and backup plan.
+- [`docs/AI_INVESTIGATION_COPILOT.md`](docs/AI_INVESTIGATION_COPILOT.md) / [`docs/AI_SEARCH.md`](docs/AI_SEARCH.md) / [`docs/AI_DEMO_RUNBOOK.md`](docs/AI_DEMO_RUNBOOK.md): the deterministic-first copilot, NL search, and its own demo flow.
+- [`docs/AI_BEHAVIOR_ANALYTICS.md`](docs/AI_BEHAVIOR_ANALYTICS.md) / [`docs/BEHAVIOR_ANALYTICS.md`](docs/BEHAVIOR_ANALYTICS.md): stopped-vehicle, wrong-way, and restricted-zone anomaly detection.
+- [`docs/ADVANCED_VIDEO_INTELLIGENCE.md`](docs/ADVANCED_VIDEO_INTELLIGENCE.md) / [`docs/VEHICLE_REID.md`](docs/VEHICLE_REID.md) / [`docs/CROSS_CAMERA_INTELLIGENCE.md`](docs/CROSS_CAMERA_INTELLIGENCE.md) / [`docs/TRAFFIC_INTELLIGENCE.md`](docs/TRAFFIC_INTELLIGENCE.md) / [`docs/CAMERA_RELIABILITY.md`](docs/CAMERA_RELIABILITY.md) / [`docs/INVESTIGATION_AGENT.md`](docs/INVESTIGATION_AGENT.md): Phase 14's Re-ID, correlation, traffic, reliability, and agent components.
+- [`docs/REAL_VIDEO_PIPELINE.md`](docs/REAL_VIDEO_PIPELINE.md) / [`docs/LIVE_INVESTIGATION.md`](docs/LIVE_INVESTIGATION.md) / [`docs/ANPR_PIPELINE.md`](docs/ANPR_PIPELINE.md): Phase 15's honest camera playback, workspace, and ANPR quality pipeline.
+- [`docs/PHASE17_BENCHMARK.md`](docs/PHASE17_BENCHMARK.md) / [`docs/SCALE_TO_80000.md`](docs/SCALE_TO_80000.md): the fair scheduler and the transparent, measured 80,000-camera capacity model.
+- [`docs/PHASE18_ANPR_DIAGNOSTICS.md`](docs/PHASE18_ANPR_DIAGNOSTICS.md): the SYNTHETIC/MOCK/REAL_HISTORICAL ANPR failure-reason breakdown behind §3n.
+- [`docs/GOVERNMENT_FEED_READINESS.md`](docs/GOVERNMENT_FEED_READINESS.md): real RTSP/HLS endpoint reachability status and what's still required to go live on government feeds.
+- [`docs/gis_metadata.md`](docs/gis_metadata.md): camera GIS coordinate/registry metadata reference.

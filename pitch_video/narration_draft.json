@@ -1,0 +1,142 @@
+{
+  "Landing Page": {
+    "onScreen": "The cinematic SENTINEL landing page — hero headline, real seeded stats, scroll-narrative sections.",
+    "say": "This is SENTINEL — a command platform built for Gujarat Police to turn an ordinary camera network into an active investigation tool. Everything you're about to see is the real, running product, not a mockup.",
+    "keyPoints": ["Brand/first impression", "Real seeded stats shown on the hero, not placeholder numbers", "Sets up the story the rest of the video proves"]
+  },
+  "Login": {
+    "onScreen": "Signing in as an operator into the command center.",
+    "say": "Access is role-based — operators, officers, and admins each see a different set of controls. We're signing in now as an administrator.",
+    "keyPoints": ["JWT-based auth", "RBAC: OPERATOR / OFFICER / ADMIN"]
+  },
+  "Command Center": {
+    "onScreen": "The primary landing dashboard after login — KPI tiles, live map, active alerts, camera health.",
+    "say": "This is where a shift starts. One screen tells you how many cameras are online, whether anything's degraded, how many alerts need attention, and shows every camera live on the map. Nothing here is static — it's polling the real system continuously.",
+    "keyPoints": ["Single-glance operational awareness", "Live polling, not a snapshot", "Every number traces back to a real table"]
+  },
+  "Live Monitoring Wall": {
+    "onScreen": "A multi-camera video wall, switching grid density.",
+    "say": "This is the live monitoring wall. Every tile shows its actual playback state honestly — live, recorded, or offline — so an operator never mistakes a stale frame for a live feed. You can scale the wall from one camera up to a full grid.",
+    "keyPoints": ["Honest LIVE/DEGRADED/RECORDED/OFFLINE badges — never fakes a live feed", "Scales grid density"]
+  },
+  "Camera Network": {
+    "onScreen": "The camera grid showing status, location, and detection activity per camera.",
+    "say": "Here's the camera network at a glance — where each camera is, whether it's online, and what it's seeing right now.",
+    "keyPoints": ["Per-camera status + location + recent activity"]
+  },
+  "Camera Detail Modal": {
+    "onScreen": "A camera detail popup: latest detection frame, metadata, health history.",
+    "say": "Clicking into a camera gives you its full picture — the latest frame it captured, its coordinates, frame rate, and a history of every time it's gone offline or come back.",
+    "keyPoints": ["Per-camera metadata + health transition history"]
+  },
+  "Camera Management": {
+    "onScreen": "The admin camera registry table.",
+    "say": "This is the administrative side — the full camera registry, where a camera actually gets onboarded, edited, or retired from the network.",
+    "keyPoints": ["Admin CRUD over the camera catalogue"]
+  },
+  "Camera Reliability Intelligence": {
+    "onScreen": "A reliability + video-quality scoring table across all cameras.",
+    "say": "Sentinel doesn't just ask 'is the camera online' — it tracks reliability over time, and separately, whether the footage that camera produces is actually usable for plate reading. A camera can be online and still be giving you unusable video, and this is where that shows up before it becomes a blind spot.",
+    "keyPoints": ["Reliability score vs. video-quality score are two separate, honest axes", "Explicitly not a failure predictor — a stability statistic"]
+  },
+  "Global Search (Command Palette)": {
+    "onScreen": "Pressing Ctrl+K and typing a plate number to jump straight to it.",
+    "say": "From anywhere in the platform, an operator can hit a keyboard shortcut and search a plate, a camera, an incident, or a case number directly — no need to know which page it lives on.",
+    "keyPoints": ["Universal keyboard-driven search across every entity type"]
+  },
+  "Advanced Investigation Search": {
+    "onScreen": "The structured filter search, followed by a plain-English AI search query.",
+    "say": "For deeper investigations, there's a full filter console — plate, camera, time window, confidence, whether it has an alert. And for a faster ask, you can just type it in plain English, and Sentinel parses it into the same real filters underneath — no external AI call, no guessing.",
+    "keyPoints": ["Structured filters", "Plain-English query parsed deterministically into the same filters"]
+  },
+  "Alert Log": {
+    "onScreen": "The alert log — watchlist hits and AI-flagged anomalies, with action buttons.",
+    "say": "Every watchlist match and every AI-flagged anomaly lands here. An operator can acknowledge it, pull up the evidence, escalate it, or turn it directly into a tracked incident.",
+    "keyPoints": ["Alert → acknowledge / escalate / promote to incident workflow"]
+  },
+  "Watchlist Management": {
+    "onScreen": "The wanted/stolen vehicle watchlist table.",
+    "say": "This is the list every single detection gets checked against in real time — wanted and stolen vehicles, with priority and an effective time window.",
+    "keyPoints": ["The matching source-of-truth for real-time alerting"]
+  },
+  "Vehicle Investigation Workspace": {
+    "onScreen": "Searching a plate and landing in the unified workspace — sightings, evidence carousel, map, and timeline together.",
+    "say": "This is the heart of an investigation. Search one plate, and Sentinel brings together every camera that has seen it, the evidence frame from each sighting, and a timeline — all synced together in one screen. This is what separates a camera network from an investigation platform: one camera saw a car; Sentinel shows you everywhere it's been.",
+    "keyPoints": ["Unified evidence + map + timeline, synced", "The platform's core differentiator"]
+  },
+  "GIS Investigation Console": {
+    "onScreen": "The same plate traced as a route on the Gujarat map.",
+    "say": "The same journey, laid out geographically — the exact route the vehicle took across the city's cameras, in order.",
+    "keyPoints": ["Chronological route on a real map"]
+  },
+  "Investigation Graph": {
+    "onScreen": "A node graph connecting the vehicle to its cameras, alerts, incident, case, and evidence.",
+    "say": "And here's the same investigation as a connected graph — the vehicle, every alert it triggered, the cameras that saw it, and the case it's now part of, all linked. This is built deterministically from what's actually stored — nothing here is inferred or guessed by a model.",
+    "keyPoints": ["Deterministic graph, not an LLM guess", "Every node links to its real record"]
+  },
+  "Traffic Intelligence": {
+    "onScreen": "Live traffic volume, vehicle-type breakdown, and a density heatmap.",
+    "say": "Beyond individual vehicles, Sentinel aggregates traffic patterns across the whole network — volume, peak hours, congestion, and where traffic is concentrated on the map. This runs off the same detection data, no separate video processing.",
+    "keyPoints": ["Live SQL aggregation, not a second video pipeline"]
+  },
+  "AI Anomaly Detection": {
+    "onScreen": "A list of AI-flagged wrong-way driving, restricted-zone entry, and stopped vehicles.",
+    "say": "Sentinel also watches for behavior that a plate lookup alone won't catch — a vehicle going the wrong way, entering a restricted zone, or sitting still somewhere it shouldn't. Each one comes with the reasoning behind the flag, not just a black-box score.",
+    "keyPoints": ["Explainable anomaly detection with stated reasoning"]
+  },
+  "ANPR Intelligence": {
+    "onScreen": "Plate-recognition success rate, failure-reason breakdown, and per-camera quality.",
+    "say": "This is where we're honest about plate-reading performance — the read success rate, exactly why a plate failed to read when it does, and which cameras are performing best and worst.",
+    "keyPoints": ["Transparent about failure modes, not just a headline accuracy number"]
+  },
+  "AI Copilot": {
+    "onScreen": "Asking the Copilot a plain-English question and getting a full journey answer.",
+    "say": "Instead of clicking through pages, an investigator can just ask. This runs fully deterministically off recorded Sentinel data — it never invents a fact — and it works completely offline if needed.",
+    "keyPoints": ["Deterministic-first, offline-capable", "Never fabricates — answers only from persisted records"]
+  },
+  "Incident Detail": {
+    "onScreen": "A full incident record — evidence attached, AI summary generated, status workflow.",
+    "say": "Once an alert becomes real police work, it's tracked here as an incident — evidence attached, a generated summary of what happened, and a full audit trail of status changes and assignment.",
+    "keyPoints": ["Alert → tracked, assignable incident with evidence + audit trail"]
+  },
+  "Case Detail": {
+    "onScreen": "A case grouping the incident, multiple pieces of evidence, and a report export.",
+    "say": "A case groups one or more incidents and all their evidence around a single line of enquiry, and it exports directly into a report an officer can file.",
+    "keyPoints": ["Incident(s) + evidence -> exportable case report"]
+  },
+  "Reports Center": {
+    "onScreen": "One-click CSV/PDF report generation across every operational category.",
+    "say": "Every one of these workflows also rolls up into a report — vehicle detections, watchlist matches, camera health, a full vehicle journey — generated on demand.",
+    "keyPoints": ["Operational reporting across the whole platform"]
+  },
+  "My Work Queue": {
+    "onScreen": "A personal queue of urgent, overdue, and assigned work.",
+    "say": "For an individual officer, this is the single list of what actually needs their attention right now, pulled from alerts, incidents, and cases together.",
+    "keyPoints": ["Cross-entity personal work queue"]
+  },
+  "Operations Dashboard": {
+    "onScreen": "The denser legacy single-page operations view.",
+    "say": "For operators who want everything on one dense screen rather than navigating between pages, this view keeps the camera grid, alerts, and stats together.",
+    "keyPoints": ["Alternative dense single-page layout"]
+  },
+  "GIS Camera Map": {
+    "onScreen": "A full-screen clustered map of the camera network.",
+    "say": "And the full camera network, geographically, with clustering so it scales cleanly as more cameras come online.",
+    "keyPoints": ["Standalone full-network map, clustering for scale"]
+  },
+  "System / Observability": {
+    "onScreen": "Backend/AI pipeline health, capacity model, and the notification center.",
+    "say": "Under the hood, this is where the system watches itself — pipeline throughput, processing latency, and how current load compares to what the architecture is designed to scale toward.",
+    "keyPoints": ["Self-observability", "Capacity model clearly separated from current measured load"]
+  },
+  "Admin Audit Log": {
+    "onScreen": "An append-only log of every privileged action taken in the system.",
+    "say": "And for accountability, every sensitive action — a login, an evidence access, a watchlist change — is recorded here, permanently.",
+    "keyPoints": ["Append-only audit trail for accountability"]
+  },
+  "Final System Overview": {
+    "onScreen": "Back to the Command Center, holding on the complete, live platform.",
+    "say": "From a single camera to a fully connected investigation — detection, correlation, evidence, and case, all in one platform. This is Sentinel.",
+    "keyPoints": ["Closing beat — ties the whole walkthrough back to one coherent system"]
+  }
+}
