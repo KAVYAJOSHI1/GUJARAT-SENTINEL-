@@ -15,6 +15,7 @@ const TITLES = {
   "/command-center": "Command Center",
   "/dashboard": "Operations Dashboard",
   "/live-monitoring": "Live Monitoring",
+  "/live-camera-ai": "Live Camera & AI",
   "/copilot": "AI Investigation Copilot",
   "/my-work": "My Work",
   "/cameras": "Camera Network",

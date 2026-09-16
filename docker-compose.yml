@@ -163,6 +163,28 @@ services:
     depends_on:
       - backend
 
+  # Live Camera & AI page (compose profile "ai") -- exactly ONE real RTSP
+  # camera (CAM_AHM_001 by default). Isolated from the `pipeline` service
+  # above: it owns its own single camera connection and serves MJPEG +
+  # status directly to the new frontend page (frontend/src/pages/
+  # LiveCameraAIPage.jsx), it does not touch the Camera registry/DB.
+  live-camera-ai:
+    build:
+      context: .
+      dockerfile: Dockerfile.live-camera-ai
+    container_name: sentinel-live-camera-ai
+    profiles: ["ai"]
+    environment:
+      LIVE_CAMERA_ID: ${LIVE_CAMERA_ID:-CAM_AHM_001}
+      # Blank -> the page honestly shows OFFLINE, never a fake stream.
+      LIVE_CAMERA_RTSP_URL: ${LIVE_CAMERA_RTSP_URL:-}
+      LIVE_CAMERA_HTTP_PORT: ${LIVE_CAMERA_HTTP_PORT:-8600}
+      LIVE_CAMERA_CORS_ORIGINS: '${LIVE_CAMERA_CORS_ORIGINS:-["http://localhost:3000","http://localhost:5173"]}'
+      SENTINEL_RTSP_USERNAME: ${SENTINEL_RTSP_USERNAME:-}
+      SENTINEL_RTSP_PASSWORD: ${SENTINEL_RTSP_PASSWORD:-}
+    ports:
+      - "${LIVE_CAMERA_HTTP_PORT:-8600}:8600"
+
 volumes:
   postgis_data:
   minio_data:

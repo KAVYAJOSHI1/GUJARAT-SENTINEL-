@@ -1,0 +1,6 @@
+# Shell scripts run as Docker container entrypoints (e.g. backend/docker-
+# entrypoint.sh) must keep LF line endings -- a CRLF shebang breaks `exec`
+# inside the Linux container ("no such file or directory"). Without this,
+# Windows' core.autocrlf=true silently reintroduces CRLF on the next
+# checkout/add and re-breaks the Docker build.
+*.sh text eol=lf

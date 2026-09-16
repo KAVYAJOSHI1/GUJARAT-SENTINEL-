@@ -17,6 +17,7 @@ const NAV = [
     items: [
       { to: "/", label: "Command Center", end: true },
       { to: "/live-monitoring", label: "Live Monitoring" },
+      { to: "/live-camera-ai", label: "Live Camera & AI" },
       { to: "/alerts", label: "Alerts" },
       { to: "/dashboard", label: "Operations Dashboard" },
     ],

@@ -27,6 +27,7 @@ import InvestigationGraphPage from "./pages/InvestigationGraphPage.jsx";
 import LiveInvestigationWorkspace from "./pages/LiveInvestigationWorkspace.jsx";
 import InvestigationPage from "./pages/InvestigationPage.jsx";
 import MapPage from "./pages/MapPage.jsx";
+import LiveCameraAIPage from "./pages/LiveCameraAIPage.jsx";
 
 // Route table, exported without a router so it can be mounted under any
 // router (BrowserRouter in the app, MemoryRouter in smoke tests).
@@ -40,6 +41,12 @@ export function AppRoutes() {
         <Route path="command-center" element={<CommandCenterPage />} />
         <Route path="dashboard" element={<Dashboard />} />
         <Route path="live-monitoring" element={<LiveMonitoringPage />} />
+
+        {/* Live Camera & AI — single real RTSP camera (CAM_AHM_001) +
+            real YOLO vehicle detection, served by the standalone
+            scripts/live_camera_ai_service.py. Isolated new page: does not
+            touch the existing multi-camera dashboard/registry above. */}
+        <Route path="live-camera-ai" element={<LiveCameraAIPage />} />
         <Route path="cameras" element={<CamerasPage />} />
         <Route path="cameras/manage" element={<CameraManagementPage />} />
         <Route path="alerts" element={<AlertsPage />} />
