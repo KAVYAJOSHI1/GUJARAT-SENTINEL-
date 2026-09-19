@@ -1,0 +1,68 @@
+# SENTINEL — local environment (git-ignored, never committed).
+# Copied from .env.example with real local credentials filled in.
+
+# --- docker compose: Postgres/PostGIS ---
+POSTGRES_USER=sentinel
+POSTGRES_PASSWORD=change-me-in-dot-env
+POSTGRES_DB=sentinel
+
+# --- docker compose: MinIO object storage (evidence snapshots) ---
+MINIO_ROOT_USER=minioadmin
+MINIO_ROOT_PASSWORD=change-me-in-dot-env
+
+# --- docker compose host ports (override to avoid clashes with local services) ---
+POSTGRES_HOST_PORT=5432
+MINIO_HOST_PORT=9000
+MINIO_CONSOLE_HOST_PORT=9001
+BACKEND_HOST_PORT=8000
+FRONTEND_HOST_PORT=3000
+
+# --- first-start seed / auth ---
+ADMIN_USERNAME=admin
+ADMIN_EMAIL=admin@sentinel.local
+ADMIN_PASSWORD=
+SEED_WATCHLIST_PLATE=GJ18TC0450
+SEED_WATCHLIST_CATEGORY=Stolen Vehicle (demo)
+INGEST_API_KEY=dev-ingest-key
+
+# --- AI pipeline (docker compose --profile ai) ---
+PIPELINE_REGISTRY=data/camera_registry.json
+PIPELINE_CAMERAS=cam04,cam06
+OCR_ENGINE=easyocr
+
+# --- backend security hardening (see SECURITY.md §2) ---
+SENTINEL_ENV=development
+CORS_ALLOW_ORIGINS='["http://localhost:3000"]'
+VEHICLE_EVENT_RETENTION_DAYS=30
+UVICORN_RELOAD=1
+
+# --- real Sentinel RTSP feeds (bare-metal / non-demo runs) ---
+# Real credentials -- this file is git-ignored, never commit it.
+SENTINEL_RTSP_USERNAME=rishitlad09%40gmail.com
+SENTINEL_RTSP_PASSWORD=TCSP-962P-M6H9
+SENTINEL_RTSP_BASE=rtsp://103.250.160.189:8554/stream
+OPENCV_FFMPEG_CAPTURE_OPTIONS=rtsp_transport;tcp
+
+# --- bare-metal AI pipeline -> backend (scripts/run_pipeline_service.py) ---
+SENTINEL_BACKEND_URL=http://localhost:8000/api/v1/events/ai-detection
+SENTINEL_INGEST_API_KEY=dev-ingest-key
+
+# --- Live Camera & AI page (scripts/live_camera_ai_service.py) ---
+# Single-camera branch (feature/live-camera-ai) vars -- kept here too so
+# switching back to that branch still works without editing .env again.
+LIVE_CAMERA_ID=CAM_AHM_001
+LIVE_CAMERA_RTSP_URL=rtsp://rishitlad09%40gmail.com:TCSP-962P-M6H9@103.250.160.189:8554/stream/cam01
+
+# Multi-camera (30) branch (feature/live-camera-ai-30) config. RTSP URLs are
+# generated as {LIVE_CAMERA_RTSP_TEMPLATE or SENTINEL_RTSP_BASE}/{stream_id}
+# -- no per-camera URLs hard-coded anywhere. Credentials come from
+# SENTINEL_RTSP_USERNAME/PASSWORD above (already set), injected server-side
+# via ingestion.rtsp_auth -- never placed in the template itself.
+LIVE_CAMERA_COUNT=30
+LIVE_CAMERA_ID_PREFIX=CAM_AHM
+LIVE_CAMERA_STREAM_PREFIX=cam
+# Leave blank to fall back to SENTINEL_RTSP_BASE + "/{stream_id}" (already
+# configured above and confirmed working against the real cam01..cam30).
+LIVE_CAMERA_RTSP_TEMPLATE=
+LIVE_CAMERA_HTTP_PORT=8600
+LIVE_CAMERA_CORS_ORIGINS=["http://localhost:3000","http://localhost:5173"]
