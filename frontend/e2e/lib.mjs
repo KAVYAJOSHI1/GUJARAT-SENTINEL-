@@ -43,12 +43,15 @@ export async function newBrowser() {
 
 export async function login(page) {
   await page.goto(BASE + "/", { waitUntil: "domcontentloaded", timeout: 20000 });
-  // login form
+  // login form lives in the landing page's FinalCtaSection; the nav bar also
+  // has a "Sign in" button that just scrolls there, so target the real
+  // submit button by type rather than by name (it reads "Enter Command
+  // Center", not "sign in").
   await page.waitForSelector('input', { timeout: 10000 });
   const inputs = page.locator("input");
   await inputs.nth(0).fill("admin");
   await inputs.nth(1).fill(PW);
-  await page.getByRole("button", { name: /sign in|log ?in/i }).click();
+  await page.locator('button[type="submit"]').click();
   await page.waitForLoadState("networkidle", { timeout: 15000 });
   await page.waitForTimeout(800);
 }
