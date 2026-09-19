@@ -35,6 +35,7 @@ const TITLES = {
   "/investigation": "Vehicle Investigation",
   "/graph": "Investigation Graph",
   "/workspace": "Investigation Workspace",
+  "/live-camera-ai": "Live Camera & AI",
 };
 
 function titleFor(pathname) {

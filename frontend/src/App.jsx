@@ -27,6 +27,7 @@ import InvestigationGraphPage from "./pages/InvestigationGraphPage.jsx";
 import LiveInvestigationWorkspace from "./pages/LiveInvestigationWorkspace.jsx";
 import InvestigationPage from "./pages/InvestigationPage.jsx";
 import MapPage from "./pages/MapPage.jsx";
+import LiveCameraAIPage from "./pages/LiveCameraAIPage.jsx";
 
 // Route table, exported without a router so it can be mounted under any
 // router (BrowserRouter in the app, MemoryRouter in smoke tests).
@@ -67,6 +68,7 @@ export function AppRoutes() {
         <Route path="anpr-intelligence" element={<AnprIntelligencePage />} />
         <Route path="graph" element={<InvestigationGraphPage />} />
         <Route path="workspace" element={<LiveInvestigationWorkspace />} />
+        <Route path="live-camera-ai" element={<LiveCameraAIPage />} />
 
         <Route path="system" element={<SystemPage />} />
         <Route path="admin" element={<AdminPage />} />

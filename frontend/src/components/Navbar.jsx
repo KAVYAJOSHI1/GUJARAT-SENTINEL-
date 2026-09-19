@@ -47,6 +47,7 @@ const NAV = [
     items: [
       { to: "/cameras", label: "Camera Network" },
       { to: "/cameras/manage", label: "Camera Management" },
+      { to: "/live-camera-ai", label: "Live Camera & AI" },
       { to: "/my-work", label: "My Work" },
       { to: "/reports", label: "Reports" },
       { to: "/map", label: "GIS Map" },
